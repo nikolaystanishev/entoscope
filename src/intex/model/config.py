@@ -124,7 +124,7 @@ class Filter:
         return _filter
 
     def included(self, location: str, max_value: int) -> set[int]:
-        if any(location not in term for term in self.inclusion_terms):
+        if not self.inclusion_terms or any(location not in term for term in self.inclusion_terms):
             return set(range(max_value))
         return set().union(*(self._resolve(term[location], location, max_value) for term in self.inclusion_terms))
 
@@ -214,7 +214,8 @@ class Incremental:
         for name, values in self.values.items():
             new_rows = []
             for _, row in index_df.iterrows():
-                if name in row.keys():
+                row = row.astype(object)
+                if name in row:
                     if not isinstance(row[name], list):
                         row[name] = [row[name]]
                     new_rows.append(row)
@@ -223,11 +224,14 @@ class Incremental:
 
                 for i in range(1, len(values) + 1):
                     new_row = deepcopy(row)
-                    new_row[name] += [values[:i]]
+                    new_row[name] = new_row[name] + values[:i]
                     new_rows.append(new_row)
 
             if len(new_rows) > 0:
-                index_df = pd.DataFrame(new_rows)
+                columns = list(new_rows[0].index)
+                index_df = pd.DataFrame(
+                    {col: pd.Series([row[col] for row in new_rows], dtype=object) for col in columns}
+                )
 
         return index_df
 
