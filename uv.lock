@@ -750,7 +750,6 @@ dependencies = [
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pandas-stubs" },
-    { name = "torch" },
     { name = "transformer-lens" },
 ]
 
@@ -765,7 +764,6 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "pandas-stubs", specifier = "~=2.3.3" },
-    { name = "torch", specifier = ">=2.7.1" },
     { name = "transformer-lens", specifier = ">=3.4.0" },
 ]
 
