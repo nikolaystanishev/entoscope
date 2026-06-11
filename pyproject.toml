@@ -11,7 +11,8 @@ dependencies = [
     "numpy>=2.2.6",
     "pandas>=2.3.3",
     "pandas-stubs~=2.3.3",
-    "transformer-lens>=3.4.0",
+    "torch>=2.12.0",
+    "transformer-lens>=4.0.0a1",
 ]
 
 [build-system]
