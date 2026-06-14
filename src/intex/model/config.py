@@ -13,6 +13,8 @@ from transformer_lens import HookedTransformer
 
 from intex.util.collections import range_combinations
 
+ACTIVATION_NAME_COLUMN = "activation_name"
+
 
 class ModelLocation(str, Enum):
     LAYER = "layer"
@@ -22,20 +24,20 @@ class ModelLocation(str, Enum):
 
 
 class ModelLayerLocation(str, Enum):
-    EMBEDDING = "hook_embed"
-    RESIDUAL_PRE = "resid_pre"
-    RESIDUAL_MID = "resid_mid"
-    RESIDUAL_POST = "resid_post"
-    ATTENTION_Q = "q"
-    ATTENTION_K = "k"
-    ATTENTION_V = "v"
-    ATTENTION_PATTERN = "pattern"
-    ATTENTION_Z = "z"
-    ATTENTION_OUT = "attn_out"
-    MLP_PRE = "mlp_pre"
-    MLP_PRE_LINEAR = "pre_linear"
-    MLP_POST = "mlp_post"
-    MLP_OUT = "mlp_out"
+    EMBEDDING = "embed"  # [batch, position, neuron]
+    RESIDUAL_PRE = "resid.pre"  # [batch, position, neuron]
+    RESIDUAL_MID = "resid.mid"  # [batch, position, neuron]
+    RESIDUAL_POST = "resid.post"  # [batch, position, neuron]
+    ATTENTION_Q = "attn.q"  # [batch, position, head, neuron]
+    ATTENTION_K = "attn.k"  # [batch, position, head, neuron]
+    ATTENTION_V = "attn.v"  # [batch, position, head, neuron]
+    ATTENTION_PATTERN = "attn.pattern"  # [batch, head, dest_position /query/, src_position /key/]
+    ATTENTION_Z = "attn.z"  # [batch, position, head, neuron]
+    ATTENTION_OUT = "attn.out"  # [batch, position, neuron]
+    MLP_PRE = "mlp.pre"  # [batch, position, neuron]
+    MLP_PRE_LINEAR = "mlp.pre_linear"  # [batch, position, neuron]
+    MLP_POST = "mlp.post"  # [batch, position, neuron]
+    MLP_OUT = "mlp.out"  # [batch, position, neuron]
 
 
 @dataclass
@@ -266,6 +268,7 @@ class Combination:
 
 class ModelLocatorConfigMixin:
     def __init__(self, config: dict):
+        self.activation_name = ModelLayerLocation(config["activation_name"])
         self.location: list[ModelLocation] = list(map(ModelLocation, config.get("location", [])))
         self.filter = Filter.from_config(config)
 
@@ -275,14 +278,9 @@ class ModelLocatorConfigMixin:
             Combination.from_config(config),
         ]
 
-    def parse(
-        self,
-        model: HookedTransformer,
-        layer_location: ModelLayerLocation,
-        prompt_size: int,
-    ) -> ModelLocationIndex:
+    def parse(self, model: HookedTransformer, prompt_size: int) -> ModelLocationIndex:
         location_to_max_value = {
-            el: MODEL_LOCATION_MAPPER[el](model, layer_location, prompt_size) for el in self.location
+            el: MODEL_LOCATION_MAPPER[el](model, self.activation_name, prompt_size) for el in self.location
         }
         index_df = make_df_from_ranges(
             self.location, [self._location_range(el, location_to_max_value[el]) for el in self.location]
@@ -291,6 +289,8 @@ class ModelLocatorConfigMixin:
 
         for transform in self.transforms:
             index_df = transform.apply(index_df)
+
+        index_df[ACTIVATION_NAME_COLUMN] = self.activation_name.value
 
         return ModelLocationIndex(index_df, self.location)
 
