@@ -25,7 +25,6 @@ class PatchingElementConfig(ModelLocatorConfigMixin):
     def __init__(self, config: dict):
         ModelLocatorConfigMixin.__init__(self, config)
         self.type = PatchingType(config["type"])
-        self.metric = PatchingMetric(config.get("metric"))
 
         self.value: float = config.get("value", 0.0)
 
@@ -37,15 +36,18 @@ class SinglePatchingConfig:
 
     def prepare(self, model: HookedTransformer, patching_input: PatchingInput) -> PatchingIndex:
         return PatchingIndex(
+            self.source.type,
+            self.target.type,
             self.source.parse(model, patching_input.source_tokens.shape[1]),
             self.target.parse(model, patching_input.target_tokens.shape[1]),
         )
 
 
 class PatchingConfig(AbstractConfig):
-    def __init__(self, config_id: str, config: list):
+    def __init__(self, config_id: str, config: dict):
         self.config_id: str = config_id
-        self.patching_configs = list(map(SinglePatchingConfig, config))
+        self.metric = PatchingMetric(config.get("metric"))
+        self.patching_configs = list(map(SinglePatchingConfig, config.get("patch", [])))
 
     def prepare(self, model: HookedTransformer, patching_input: PatchingInput):
         patching_index = [patching_config.prepare(model, patching_input) for patching_config in self.patching_configs]

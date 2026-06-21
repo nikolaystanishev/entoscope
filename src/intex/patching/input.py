@@ -29,8 +29,8 @@ class PatchingInput(OperationInput):
     _source_probabilities: torch.Tensor | None = None
     _target_probabilities: torch.Tensor | None = None
 
-    def get_index(self, model: HookedTransformer) -> list[PatchingIndex]:
-        if self.index is None:
+    def get_index(self, model: HookedTransformer | None = None) -> list[PatchingIndex]:
+        if self.index is None and model is not None:
             self.config.prepare(model, self)
         assert self.index is not None
         return self.index

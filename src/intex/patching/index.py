@@ -8,6 +8,7 @@ from transformer_lens.utilities import get_act_name
 
 from intex.model.config import ACTIVATION_NAME_COLUMN, ModelLayerLocation, ModelLocationIndex, make_df_from_ranges
 from intex.operation.index import Index
+from intex.patching.config import PatchingType
 from intex.patching.slicer import ActivationSlicer
 from intex.util.collections import dataframe_to_list, zip_fill
 
@@ -59,6 +60,8 @@ class IndexElement:
 class SinglePatchingIndex:
     def __init__(
         self,
+        source_patching_type: PatchingType,
+        target_patching_type: PatchingType,
         source_index_names: list[str],
         target_index_names: list[str],
         source_index: list[int],
@@ -68,10 +71,11 @@ class SinglePatchingIndex:
         self.source = IndexElement(source_index_names, source_index)
         self.target = IndexElement(target_index_names, target_index)
         self.output = tuple(output_index)
-        self.batch_index = None
+
+        self.source_patching_type = source_patching_type
+        self.target_patching_type = target_patching_type
 
     def set_batch_index(self, batch_index: int) -> "SinglePatchingIndex":
-        self.batch_index = batch_index
         self.source.set_batch_index(batch_index)
         self.target.set_batch_index(batch_index)
 
@@ -79,9 +83,17 @@ class SinglePatchingIndex:
 
 
 class PatchingIndex(Index):
-    def __init__(self, source_index: ModelLocationIndex, target_index: ModelLocationIndex):
+    def __init__(
+        self,
+        source_patching_type: PatchingType,
+        target_patching_type: PatchingType,
+        source_index: ModelLocationIndex,
+        target_index: ModelLocationIndex,
+    ):
         self.source_index = source_index
         self.target_index = target_index
+        self.source_patching_type = source_patching_type
+        self.target_patching_type = target_patching_type
 
         output_index_df = (
             self.target_index.df if len(self.target_index.df) >= len(self.source_index.df) else self.source_index.df
@@ -94,15 +106,25 @@ class PatchingIndex(Index):
         return torch.zeros(self.index_axis_range, device=device)
 
     def to_csv(self, path: str):
+
         combined_df = pd.concat(
-            [self.source_index.df.add_prefix("source_"), self.target_index.df.add_prefix("target_")], axis=1
+            [
+                self.source_index.df.add_prefix("source_"),
+                self.target_index.df.add_prefix("target_"),
+                self.output_index_df.add_prefix("index_"),
+            ],
+            axis=1,
         )
         combined_df.to_csv(path, index=False)
 
     def __iter__(self):
         return map(
             lambda el: SinglePatchingIndex(
-                self.source_index.df.columns.to_list(), self.target_index.df.columns.to_list(), *el
+                self.source_patching_type,
+                self.target_patching_type,
+                self.source_index.df.columns.to_list(),
+                self.target_index.df.columns.to_list(),
+                *el,
             ),
             zip_fill(
                 dataframe_to_list(self.source_index.df),

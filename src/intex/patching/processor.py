@@ -4,7 +4,7 @@ from collections.abc import Callable
 import numpy as np
 import torch
 
-from intex.patching.config import PatchingType, SinglePatchingConfig
+from intex.patching.config import PatchingType
 from intex.patching.index import IndexElement, SinglePatchingIndex
 from intex.patching.input import PatchingInput
 
@@ -94,23 +94,23 @@ class ReplaceTargetStrategy(TargetStrategy):
         return target_activation
 
 
-class PatchSetter:
+class PatchProcessor:
+    @staticmethod
     def patch(
-        self,
         index: SinglePatchingIndex,
         patching_input: PatchingInput,
         target_activation: torch.Tensor,
-        config: SinglePatchingConfig,
     ) -> torch.Tensor:
-        return TargetStrategy.get(config.target.type).set(
+        return TargetStrategy.get(index.target_patching_type).set(
             index.target,
             target_activation,
-            SourceStrategy.get(config.source.type).extract(index.source, patching_input),
+            SourceStrategy.get(index.source_patching_type).extract(index.source, patching_input),
         )
 
 
-class HookedPatchSetter(PatchSetter):
-    def hook(self, index: SinglePatchingIndex, patching_input: PatchingInput) -> tuple[str, Callable]:
-        return index.target.transformer_activation(), lambda target_activation, hook: self.patch(
+class HookedPatchProcessor(PatchProcessor):
+    @classmethod
+    def hook(cls, index: SinglePatchingIndex, patching_input: PatchingInput) -> tuple[str, Callable]:
+        return index.target.transformer_activation(), lambda target_activation, hook: cls.patch(
             index, patching_input, target_activation
         )

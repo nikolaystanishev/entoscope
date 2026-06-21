@@ -33,10 +33,6 @@ class AbstractMetric(abc.ABC):
     def compute(patching_input: PatchingInput, logits: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
 
-    @classmethod
-    def __call__(cls, patching_input: PatchingInput, logits: torch.Tensor) -> torch.Tensor:
-        return cls.compute(patching_input, logits)
-
     @staticmethod
     def get(metric: PatchingMetric) -> type["AbstractMetric"]:
         match metric:
