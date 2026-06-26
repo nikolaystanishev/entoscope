@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import torch
-from jaxtyping import Int
+from jaxtyping import Float, Int
 from transformer_lens import ActivationCache, HookedTransformer
 
 from intex.operation.input import OperationInput
@@ -12,15 +12,14 @@ from intex.patching.metric import LogitDiffMixin
 
 @dataclass
 class PatchingInput(OperationInput):
-    source_tokens: Int[torch.Tensor, "batch pos"]
+    source_tokens: Int[torch.Tensor, "batch pos"] | None
     target_tokens: Int[torch.Tensor, "batch pos"]
-    source_logits: torch.Tensor | None
-    target_logits: torch.Tensor | None
+    source_logits: Float[torch.Tensor, "batch pos d_vocab"] | None
+    target_logits: Float[torch.Tensor, "batch pos d_vocab"] | None
     source_generation: int | None
     target_generation: int | None
     source_cache: ActivationCache | None
     target_cache: ActivationCache | None
-    target_prompt: str = ""
     config: PatchingConfig = None
     index: list[PatchingIndex] | None = None
 
@@ -31,7 +30,10 @@ class PatchingInput(OperationInput):
 
     def get_index(self, model: HookedTransformer | None = None) -> list[PatchingIndex]:
         if self.index is None and model is not None:
-            self.config.prepare(model, self)
+            index = [PatchingIndex(patching_config, model, self) for patching_config in self.config.patching_configs]
+            index_lengths = [len(idx) for idx in index]
+            assert all(length == max(index_lengths) or length == 1 for length in index_lengths)
+            self.index = index
         assert self.index is not None
         return self.index
 

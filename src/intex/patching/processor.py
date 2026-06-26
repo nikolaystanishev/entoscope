@@ -58,7 +58,7 @@ class ReplaceSourceStrategy(SourceStrategy):
 class ValueReplaceSourceStrategy(SourceStrategy):
     @staticmethod
     def extract(source_index: IndexElement, patching_input: PatchingInput) -> torch.Tensor:
-        return torch.tensor(0)  # self.value
+        return torch.tensor(source_index.config.value)
 
 
 class ValueScaleSourceStrategy(SourceStrategy):
@@ -66,7 +66,7 @@ class ValueScaleSourceStrategy(SourceStrategy):
     def extract(source_index: IndexElement, patching_input: PatchingInput) -> torch.Tensor:
         return (
             patching_input.source_cache[source_index.transformer_activation()][(0, *source_index.slices()[1:])]
-            * 1  # self.coefficient
+            * source_index.config.value
             if patching_input.source_cache is not None
             else torch.empty()
         )
@@ -101,10 +101,10 @@ class PatchProcessor:
         patching_input: PatchingInput,
         target_activation: torch.Tensor,
     ) -> torch.Tensor:
-        return TargetStrategy.get(index.target_patching_type).set(
+        return TargetStrategy.get(index.target.config.type).set(
             index.target,
             target_activation,
-            SourceStrategy.get(index.source_patching_type).extract(index.source, patching_input),
+            SourceStrategy.get(index.source.config.type).extract(index.source, patching_input),
         )
 
 

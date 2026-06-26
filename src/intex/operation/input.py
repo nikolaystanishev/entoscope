@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import abc
 
 import torch
@@ -5,5 +7,5 @@ import torch
 
 class OperationInput(abc.ABC):
     @abc.abstractmethod
-    def to(self, device: str | torch.device = torch.device("cpu")) -> "OperationInput":
+    def to(self, device: str | torch.device = "cpu") -> OperationInput:
         raise NotImplementedError

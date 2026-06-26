@@ -8,6 +8,8 @@ from typing import Protocol
 
 import numpy as np
 import pandas as pd
+import torch
+from jaxtyping import Int
 from pandas._typing import Axes
 from transformer_lens import HookedTransformer
 
@@ -43,7 +45,6 @@ class ModelLayerLocation(str, Enum):
 @dataclass
 class ModelLocationIndex:
     df: pd.DataFrame = field(default_factory=pd.DataFrame)
-    locations: list[ModelLocation] = field(default_factory=list)
 
 
 MODEL_LOCATION_MAPPER: dict[str, Callable] = {
@@ -268,7 +269,7 @@ class Combination:
 
 class ModelLocatorConfigMixin:
     def __init__(self, config: dict):
-        self.activation_name = ModelLayerLocation(config["activation_name"])
+        self.activation_name = ModelLayerLocation(config["activation_name"]) if "activation_name" in config else None
         self.location: list[ModelLocation] = list(map(ModelLocation, config.get("location", [])))
         self.filter = Filter.from_config(config)
 
@@ -278,9 +279,9 @@ class ModelLocatorConfigMixin:
             Combination.from_config(config),
         ]
 
-    def parse(self, model: HookedTransformer, prompt_size: int) -> ModelLocationIndex:
+    def parse(self, model: HookedTransformer, prompt: Int[torch.Tensor, "batch pos"]) -> ModelLocationIndex:
         location_to_max_value = {
-            el: MODEL_LOCATION_MAPPER[el](model, self.activation_name, prompt_size) for el in self.location
+            el: MODEL_LOCATION_MAPPER[el](model, self.activation_name, prompt.shape[1]) for el in self.location
         }
         index_df = make_df_from_ranges(
             self.location, [self._location_range(el, location_to_max_value[el]) for el in self.location]
@@ -290,9 +291,9 @@ class ModelLocatorConfigMixin:
         for transform in self.transforms:
             index_df = transform.apply(index_df)
 
-        index_df[ACTIVATION_NAME_COLUMN] = self.activation_name.value
+        index_df[ACTIVATION_NAME_COLUMN] = self.activation_name
 
-        return ModelLocationIndex(index_df, self.location)
+        return ModelLocationIndex(index_df)
 
     def _location_range(self, location: str, max_value: int) -> list[int]:
         return list(self.filter.included(location, max_value) - self.filter.excluded(location, max_value))

@@ -23,7 +23,8 @@ def zip_fill(*args: Any) -> Iterable:
     assert all(map(lambda el: len(el) == max_len or len(el) == 0 or len(el) == 1, args))
 
     return zip(
-        *[arg if len(arg) == max_len else repeat(list(arg)[0] if len(arg) != 0 else None, max_len) for arg in args]
+        *[arg if len(arg) == max_len else repeat(list(arg)[0] if len(arg) != 0 else None, max_len) for arg in args],
+        strict=True,
     )
 
 

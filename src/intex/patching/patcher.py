@@ -1,3 +1,4 @@
+import torch
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
@@ -46,10 +47,12 @@ class Patcher(Operator):
             disable=not verbose,
         ):
             fwd_hooks = [
-                HookedPatchProcessor.hook(idx.set_batch_index(i), patching_input) for i, idx in enumerate(index)
+                HookedPatchProcessor.hook(idx.set_batch_index(i), patching_input)
+                for i, group in enumerate(index)
+                for idx in group
             ]
             patched_logits = self.model.run_with_hooks(
-                [patching_input.target_prompt] * len(index), fwd_hooks=fwd_hooks
+                torch.cat([patching_input.target_tokens] * len(index), dim=0), fwd_hooks=fwd_hooks
             ).detach()[:, -1, :]
 
             for idx, logits in zip(index, patched_logits, strict=False):

@@ -1,16 +1,10 @@
-import abc
 from typing import Generic, TypeVar, get_args
 
-from transformer_lens import HookedTransformer
-
-from intex.operation.input import OperationInput
 from intex.util.data import read_yaml
 
 
-class AbstractConfig(abc.ABC):
-    @abc.abstractmethod
-    def prepare(self, model: HookedTransformer, operation_input: OperationInput):
-        raise NotImplementedError
+class AbstractConfig:
+    pass
 
 
 T = TypeVar("T", bound=AbstractConfig)
