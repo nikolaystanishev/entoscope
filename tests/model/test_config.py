@@ -2,8 +2,14 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 
-from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfigMixin
+from intex.model.config import (
+    ACTIVATION_NAME_COLUMN,
+    ModelLayerLocation,
+    ModelLocation,
+    ModelLocatorConfigMixin,
+)
 
 
 def make_model(n_layers=4, n_heads=4, n_key_value_heads=2, d_model=8, d_head=4, d_mlp=16):
@@ -20,8 +26,15 @@ def make_model(n_layers=4, n_heads=4, n_key_value_heads=2, d_model=8, d_head=4, 
     )
 
 
+def make_prompt(prompt_size):
+    """A stand-in ``[batch, pos]`` token tensor; ``parse`` only reads ``prompt.shape[1]``."""
+    return torch.zeros((1, prompt_size), dtype=torch.long)
+
+
 def parse_config(config, *, layer_location=ModelLayerLocation.RESIDUAL_POST, prompt_size=4, **model_kwargs):
-    return ModelLocatorConfigMixin(config).parse(make_model(**model_kwargs), layer_location, prompt_size)
+    return ModelLocatorConfigMixin({"activation_name": layer_location, **config}).parse(
+        make_model(**model_kwargs), make_prompt(prompt_size)
+    )
 
 
 def _norm(value):
@@ -36,7 +49,10 @@ def _norm(value):
 def result_rows(index):
     df = index.df
     rows = [
-        tuple(sorted((ModelLocation(col).value, _norm(row[col])) for col in df.columns)) for _, row in df.iterrows()
+        tuple(
+            sorted((ModelLocation(col).value, _norm(row[col])) for col in df.columns if col != ACTIVATION_NAME_COLUMN)
+        )
+        for _, row in df.iterrows()
     ]
     return sorted(rows, key=repr)
 
@@ -49,23 +65,6 @@ def expected_rows(rows):
 def single(location, values):
     """Expected rows for a single-location index, one row per value."""
     return [{location: value} for value in values]
-
-
-# --------------------------------------------------------------------------------------------------
-# Parsed ``locations`` attribute (mirrors ``config["location"]`` as ModelLocation enums)
-# --------------------------------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    "location, expected_locations",
-    [
-        ([], []),
-        (["layer"], [ModelLocation.LAYER]),
-        (["layer", "head"], [ModelLocation.LAYER, ModelLocation.HEAD]),
-        (["neuron", "position"], [ModelLocation.NEURON, ModelLocation.POSITION]),
-    ],
-)
-def test_parsed_locations(location, expected_locations):
-    result = parse_config({"location": location}, n_layers=2, n_heads=2, d_model=2, prompt_size=2)
-    assert result.locations == expected_locations
 
 
 # --------------------------------------------------------------------------------------------------
@@ -92,16 +91,16 @@ def test_location_sizing(location, layer_location, model_kwargs, prompt_size, ex
     assert result_rows(result) == expected_rows(single(location, expected_values))
 
 
-def test_empty_location_has_no_columns():
-    # With no locations the index has no columns (the product over zero axes leaves a single empty row).
+def test_empty_location_has_only_activation_column():
+    # With no locations the index has no coordinate columns (the product over zero axes leaves a
+    # single empty row); only the stamped activation column remains.
     result = parse_config({"location": []})
-    assert list(result.df.columns) == []
-    assert result.locations == []
+    assert list(result.df.columns) == [ACTIVATION_NAME_COLUMN]
 
 
 def test_missing_location_key_matches_empty_list():
     # No ``location`` key at all behaves like an empty list.
-    assert list(parse_config({}).df.columns) == []
+    assert list(parse_config({}).df.columns) == [ACTIVATION_NAME_COLUMN]
 
 
 def test_location_cartesian_product():
@@ -109,6 +108,15 @@ def test_location_cartesian_product():
     assert result_rows(result) == expected_rows(
         [{"layer": layer, "head": head} for layer in range(2) for head in range(3)]
     )
+
+
+# --------------------------------------------------------------------------------------------------
+# Activation column — the configured ``activation_name`` is stamped onto every row of the index
+# --------------------------------------------------------------------------------------------------
+def test_activation_name_column_is_stamped():
+    result = parse_config({"location": ["layer"]}, layer_location=ModelLayerLocation.ATTENTION_OUT, n_layers=3)
+    assert ACTIVATION_NAME_COLUMN in result.df.columns
+    assert list(result.df[ACTIVATION_NAME_COLUMN]) == [ModelLayerLocation.ATTENTION_OUT.value] * 3
 
 
 # --------------------------------------------------------------------------------------------------
@@ -219,6 +227,21 @@ def test_incremental_keeps_other_locations():
     )
 
 
+def test_incremental_not_filtered():
+    config = {
+        "location": ["layer"],
+        "filter": [{"layer": 0}],
+        "incremental": {"neuron": [10, 11]},
+    }
+    result = parse_config(config, n_layers=2)
+    assert result_rows(result) == expected_rows(
+        [
+            {"layer": 0, "neuron": [10]},
+            {"layer": 0, "neuron": [10, 11]},
+        ]
+    )
+
+
 # --------------------------------------------------------------------------------------------------
 # Combination — expand a list-valued location into all of its value combinations
 # (runs after ``group``, which is what turns the cells into lists in the first place)
@@ -296,7 +319,7 @@ def test_full_config_filter_group_multi_location():
 )
 def test_construction_raises_value_error(config):
     with pytest.raises(ValueError):
-        ModelLocatorConfigMixin(config)
+        ModelLocatorConfigMixin({"activation_name": ModelLayerLocation.RESIDUAL_POST, **config})
 
 
 # --------------------------------------------------------------------------------------------------
@@ -310,6 +333,8 @@ def test_construction_raises_value_error(config):
     ],
 )
 def test_parse_raises_value_error(config):
-    mixin = ModelLocatorConfigMixin(config)  # construction succeeds
+    mixin = ModelLocatorConfigMixin(
+        {"activation_name": ModelLayerLocation.RESIDUAL_POST, **config}
+    )  # construction succeeds
     with pytest.raises(ValueError):
-        mixin.parse(make_model(), ModelLayerLocation.RESIDUAL_POST, 4)
+        mixin.parse(make_model(), make_prompt(4))
