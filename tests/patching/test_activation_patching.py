@@ -7,6 +7,7 @@ import torch
 import yaml
 from transformer_lens import HookedTransformer
 
+from intex.model.config import ModelLayerLocation
 from intex.operation.config import ConfigFactory
 from intex.patching.config import PatchingConfig
 from intex.patching.input import PatchingInput
@@ -76,6 +77,48 @@ def _resid_value_scale_config(scale: float, layer: int) -> PatchingConfig:
     return PatchingConfig(
         "resid_value_scale",
         {"metric": "kl_diff", "patch": [{"source": source, "target": target}]},
+    )
+
+
+def _mlp_mhsa_pattern_patch_config(layer: int, head: int) -> PatchingConfig:
+    """Patch three components of one layer at once, each replaced from the source run:
+
+    - the MLP post-activation neurons (``mlp.post``),
+    - the multi-head self-attention queries (``attn.q``), and
+    - a single attention head's pattern (``attn.pattern`` filtered to ``head``).
+
+    The three patches live in the same config's ``patch`` list, so the patcher applies all of their hooks
+    together on a single forward pass; the resulting (single-element) metric reflects their combined
+    effect rather than any one in isolation.
+    """
+    mlp = {
+        "activation_name": "mlp.post",
+        "location": ["layer"],
+        "filter": [{"layer": layer}],
+        "type": "replace",
+    }
+    mhsa = {
+        "activation_name": "attn.q",
+        "location": ["layer"],
+        "filter": [{"layer": layer}],
+        "type": "replace",
+    }
+    pattern = {
+        "activation_name": "attn.pattern",
+        "location": ["layer", "head"],
+        "filter": [{"layer": layer, "head": head}],
+        "type": "replace",
+    }
+    return PatchingConfig(
+        "mlp_mhsa_pattern_patch",
+        {
+            "metric": "logit_diff",
+            "patch": [
+                {"source": mlp, "target": mlp},
+                {"source": mhsa, "target": mhsa},
+                {"source": pattern, "target": pattern},
+            ],
+        },
     )
 
 
@@ -202,6 +245,61 @@ def test_value_scale_patching(model: HookedTransformer) -> None:
     assert torch.allclose(scaled, torch.tensor(-24.359235763549805))
     assert torch.allclose(unscaled, torch.tensor(-25.428979873657227))
     assert not torch.allclose(scaled, unscaled)
+
+
+# Layer and head whose MLP, attention output, and head pattern are patched together below.
+_MULTI_PATCH_LAYER = 5
+_MULTI_PATCH_HEAD = 7
+
+
+def test_multi_config_patching_mlp_mhsa_and_pattern(model: HookedTransformer) -> None:
+    torch.manual_seed(42)
+
+    source_tokens = model.to_tokens(SOURCE_PROMPT)
+    target_tokens = model.to_tokens(TARGET_PROMPT)
+    # Replacing full activations (and a head's pattern) from source requires matching sequence lengths.
+    assert source_tokens.shape == target_tokens.shape
+
+    with torch.no_grad():
+        source_logits, source_cache = model.run_with_cache(source_tokens)
+        target_logits, target_cache = model.run_with_cache(target_tokens)
+
+    source_generation = model.to_single_token(" Paris")
+    target_generation = model.to_single_token(" Madrid")
+
+    patching_input = PatchingInput(
+        source_tokens=source_tokens,
+        target_tokens=target_tokens,
+        source_logits=source_logits,
+        target_logits=target_logits,
+        source_generation=source_generation,
+        target_generation=target_generation,
+        source_cache=source_cache,
+        target_cache=target_cache,
+        config=_mlp_mhsa_pattern_patch_config(_MULTI_PATCH_LAYER, _MULTI_PATCH_HEAD),
+    )
+
+    collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
+
+    # The config carries three patches; each becomes its own index, targeting -- in order -- the MLP
+    # post-activation, the MHSA queries, and the attention pattern.
+    indices = patching_input.get_index()
+    assert [idx.config.target.activation_name for idx in indices] == [
+        ModelLayerLocation.MLP_POST,
+        ModelLayerLocation.ATTENTION_Q,
+        ModelLayerLocation.ATTENTION_PATTERN,
+    ]
+
+    # All three patches are applied together on a single forward pass and the collector keys the result
+    # off the first patch's (single) output coordinate -> a one-element tensor.
+    assert collector is not None
+    result = collector.result
+    assert result.shape == (1,)
+
+    # The exact logit diff produced by the three patches acting in combination. It differs from the
+    # logit diff of any single component patched on its own (mlp.post: -3.337, attn.q: -3.914,
+    # attn.pattern: -3.913), confirming all three patches take effect simultaneously.
+    assert torch.allclose(result.squeeze(), torch.tensor(-3.316533088684082))
 
 
 def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> None:
