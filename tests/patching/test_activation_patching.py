@@ -226,9 +226,7 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
     )
 
     save_dir = tmp_path / "patch_run"
-    collector = Patcher(model).apply(
-        patching_input, save_dir=str(save_dir), return_collector=True, verbose=False
-    )
+    collector = Patcher(model).apply(patching_input, save_dir=str(save_dir), return_collector=True, verbose=False)
     assert collector is not None
 
     # The three artifacts the collector is expected to persist.
