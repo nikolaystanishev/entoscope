@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 
 from intex.model.config import (
     ACTIVATION_NAME_COLUMN,
@@ -25,9 +26,14 @@ def make_model(n_layers=4, n_heads=4, n_key_value_heads=2, d_model=8, d_head=4, 
     )
 
 
+def make_prompt(prompt_size):
+    """A stand-in ``[batch, pos]`` token tensor; ``parse`` only reads ``prompt.shape[1]``."""
+    return torch.zeros((1, prompt_size), dtype=torch.long)
+
+
 def parse_config(config, *, layer_location=ModelLayerLocation.RESIDUAL_POST, prompt_size=4, **model_kwargs):
     return ModelLocatorConfigMixin({"activation_name": layer_location, **config}).parse(
-        make_model(**model_kwargs), prompt_size
+        make_model(**model_kwargs), make_prompt(prompt_size)
     )
 
 
@@ -62,23 +68,6 @@ def single(location, values):
 
 
 # --------------------------------------------------------------------------------------------------
-# Parsed ``locations`` attribute (mirrors ``config["location"]`` as ModelLocation enums)
-# --------------------------------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    "location, expected_locations",
-    [
-        ([], []),
-        (["layer"], [ModelLocation.LAYER]),
-        (["layer", "head"], [ModelLocation.LAYER, ModelLocation.HEAD]),
-        (["neuron", "position"], [ModelLocation.NEURON, ModelLocation.POSITION]),
-    ],
-)
-def test_parsed_locations(location, expected_locations):
-    result = parse_config({"location": location}, n_layers=2, n_heads=2, d_model=2, prompt_size=2)
-    assert result.locations == expected_locations
-
-
-# --------------------------------------------------------------------------------------------------
 # Location sizing — MODEL_LOCATION_MAPPER picks the right model dimension per location/layer_location
 # --------------------------------------------------------------------------------------------------
 @pytest.mark.parametrize(
@@ -107,7 +96,6 @@ def test_empty_location_has_only_activation_column():
     # single empty row); only the stamped activation column remains.
     result = parse_config({"location": []})
     assert list(result.df.columns) == [ACTIVATION_NAME_COLUMN]
-    assert result.locations == []
 
 
 def test_missing_location_key_matches_empty_list():
@@ -334,4 +322,4 @@ def test_parse_raises_value_error(config):
         {"activation_name": ModelLayerLocation.RESIDUAL_POST, **config}
     )  # construction succeeds
     with pytest.raises(ValueError):
-        mixin.parse(make_model(), 4)
+        mixin.parse(make_model(), make_prompt(4))
