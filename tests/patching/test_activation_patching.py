@@ -4,8 +4,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import torch
+import yaml
 from transformer_lens import HookedTransformer
 
+from intex.operation.config import ConfigFactory
 from intex.patching.config import PatchingConfig
 from intex.patching.input import PatchingInput
 from intex.patching.patcher import Patcher
@@ -31,7 +33,7 @@ def _last_layer_resid_patch_config() -> PatchingConfig:
     }
     return PatchingConfig(
         "last_layer_resid_patch",
-        {"metric": "logit_diff", "patch": [{"source": element, "target": element}]},
+        {"metric": "normalized_logit_diff", "patch": [{"source": element, "target": element}]},
     )
 
 
@@ -73,7 +75,7 @@ def _resid_value_scale_config(scale: float, layer: int) -> PatchingConfig:
     }
     return PatchingConfig(
         "resid_value_scale",
-        {"metric": "logit_diff", "patch": [{"source": source, "target": target}]},
+        {"metric": "kl_diff", "patch": [{"source": source, "target": target}]},
     )
 
 
@@ -112,7 +114,7 @@ def test_activation_patching_from_source_into_target(model: HookedTransformer) -
     result = collector.result
     assert result.shape == (1,)
 
-    assert torch.allclose(result.squeeze(), torch.tensor(2.19863224029541))
+    assert torch.allclose(result.squeeze(), torch.tensor(1.0))
 
 
 def test_zero_ablation_patching(model: HookedTransformer) -> None:
@@ -197,8 +199,8 @@ def test_value_scale_patching(model: HookedTransformer) -> None:
     scaled = _run_value_scale(model, scale=2.0)
     unscaled = _run_value_scale(model, scale=1.0)
 
-    assert torch.allclose(scaled, torch.tensor(2.0231308937072754))
-    assert torch.allclose(unscaled, torch.tensor(2.19863224029541))
+    assert torch.allclose(scaled, torch.tensor(-24.359235763549805))
+    assert torch.allclose(unscaled, torch.tensor(-25.428979873657227))
     assert not torch.allclose(scaled, unscaled)
 
 
@@ -212,7 +214,21 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
         source_logits, source_cache = model.run_with_cache(source_tokens)
         target_logits, target_cache = model.run_with_cache(target_tokens)
 
-    config = _last_layer_resid_patch_config()
+    # Build the config through ConfigFactory by persisting it to a YAML file and loading it back,
+    # mirroring how configs are sourced in production rather than constructing PatchingConfig directly.
+    element = {
+        "activation_name": "resid.post",
+        "location": ["layer"],
+        "filter": [{"layer": -1}],
+        "type": "replace",
+    }
+    config_yaml = tmp_path / "configs.yaml"
+    config_yaml.write_text(
+        yaml.safe_dump(
+            {"last_layer_resid_patch": {"metric": "logit_diff", "patch": [{"source": element, "target": element}]}}
+        )
+    )
+    config = ConfigFactory[PatchingConfig](str(config_yaml)).create("last_layer_resid_patch")
     patching_input = PatchingInput(
         source_tokens=source_tokens,
         target_tokens=target_tokens,

@@ -21,6 +21,6 @@ class ConfigFactory(Generic[T]):
         return self.config
 
     def create(self, config_id: str) -> T:
-        if config_id not in self.config:
+        if config_id not in self._get_config():
             raise KeyError(f"Config with id {config_id} does not exist in the provided config file: {self.config_path}")
         return get_args(getattr(self, "__orig_class__", None))[0](config_id, self._get_config()[config_id])

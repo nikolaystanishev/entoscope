@@ -209,10 +209,6 @@ class Incremental:
     def from_config(cls, config: dict) -> "Incremental":
         return cls(values=config.get("incremental", {}))
 
-    @property
-    def names(self) -> list[str]:
-        return list(self.values.keys())
-
     def apply(self, index_df: pd.DataFrame) -> pd.DataFrame:
         for name, values in self.values.items():
             new_rows = []

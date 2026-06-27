@@ -75,11 +75,6 @@ class IndexElement:
     def __getitem__(self, item):
         return self.index[self.index_names.index(item)]
 
-    def get(self, item, default=None):
-        if item in self.index_names:
-            return self[item]
-        return default
-
 
 class SinglePatchingIndex:
     def __init__(

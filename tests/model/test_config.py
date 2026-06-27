@@ -227,6 +227,21 @@ def test_incremental_keeps_other_locations():
     )
 
 
+def test_incremental_not_filtered():
+    config = {
+        "location": ["layer"],
+        "filter": [{"layer": 0}],
+        "incremental": {"neuron": [10, 11]},
+    }
+    result = parse_config(config, n_layers=2)
+    assert result_rows(result) == expected_rows(
+        [
+            {"layer": 0, "neuron": [10]},
+            {"layer": 0, "neuron": [10, 11]},
+        ]
+    )
+
+
 # --------------------------------------------------------------------------------------------------
 # Combination — expand a list-valued location into all of its value combinations
 # (runs after ``group``, which is what turns the cells into lists in the first place)
