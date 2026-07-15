@@ -10,6 +10,7 @@ from intex.model.config import (
     ModelLocation,
     ModelLocatorConfigMixin,
 )
+from intex.operation.config import from_dict
 
 
 def make_model(n_layers=4, n_heads=4, n_key_value_heads=2, d_model=8, d_head=4, d_mlp=16):
@@ -32,7 +33,7 @@ def make_prompt(prompt_size):
 
 
 def parse_config(config, *, layer_location=ModelLayerLocation.RESIDUAL_POST, prompt_size=4, **model_kwargs):
-    return ModelLocatorConfigMixin({"activation_name": layer_location, **config}).parse(
+    return from_dict(ModelLocatorConfigMixin, {"activation_name": layer_location, **config}).parse(
         make_model(**model_kwargs), make_prompt(prompt_size)
     )
 
@@ -305,7 +306,7 @@ def test_full_config_filter_group_multi_location():
 
 
 # --------------------------------------------------------------------------------------------------
-# Error cases raised while *constructing* the mixin (Filter.from_config / ModelLocation enum)
+# Error cases raised while *deserializing* the mixin (Filter.from_config / ModelLocation enum / strict keys)
 # --------------------------------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "config",
@@ -315,11 +316,12 @@ def test_full_config_filter_group_multi_location():
         {"filter": ["foo"]},  # term is not a dict
         {"filter": [5]},  # term is not a dict
         {"location": ["bogus"]},  # not a ModelLocation value
+        {"fitler": [{"layer": 0}]},  # unknown key (typo) is rejected, not ignored
     ],
 )
 def test_construction_raises_value_error(config):
     with pytest.raises(ValueError):
-        ModelLocatorConfigMixin({"activation_name": ModelLayerLocation.RESIDUAL_POST, **config})
+        from_dict(ModelLocatorConfigMixin, {"activation_name": ModelLayerLocation.RESIDUAL_POST, **config})
 
 
 # --------------------------------------------------------------------------------------------------
@@ -333,8 +335,8 @@ def test_construction_raises_value_error(config):
     ],
 )
 def test_parse_raises_value_error(config):
-    mixin = ModelLocatorConfigMixin(
-        {"activation_name": ModelLayerLocation.RESIDUAL_POST, **config}
-    )  # construction succeeds
+    mixin = from_dict(
+        ModelLocatorConfigMixin, {"activation_name": ModelLayerLocation.RESIDUAL_POST, **config}
+    )  # deserialization succeeds
     with pytest.raises(ValueError):
         mixin.parse(make_model(), make_prompt(4))

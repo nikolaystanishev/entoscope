@@ -1,10 +1,12 @@
+import dataclasses
 from typing import Generic, TypeVar, get_args
 
-from intex.util.data import read_yaml
+from intex.util.data import from_dict, read_yaml
 
 
+@dataclasses.dataclass(kw_only=True)
 class AbstractConfig:
-    pass
+    config_id: str | None = None
 
 
 T = TypeVar("T", bound=AbstractConfig)
@@ -23,4 +25,7 @@ class ConfigFactory(Generic[T]):
     def create(self, config_id: str) -> T:
         if config_id not in self._get_config():
             raise KeyError(f"Config with id {config_id} does not exist in the provided config file: {self.config_path}")
-        return get_args(getattr(self, "__orig_class__", None))[0](config_id, self._get_config()[config_id])
+
+        config = from_dict(get_args(getattr(self, "__orig_class__", None))[0], self._get_config()[config_id])
+        config.config_id = config_id
+        return config

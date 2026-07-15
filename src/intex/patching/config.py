@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from enum import Enum
 
 from intex.model.config import ModelLocatorConfigMixin
@@ -19,22 +20,19 @@ class PatchingMetric(str, Enum):
     KL_DIFF = "kl_diff"
 
 
+@dataclass(kw_only=True)
 class PatchingElementConfig(ModelLocatorConfigMixin):
-    def __init__(self, config: dict):
-        ModelLocatorConfigMixin.__init__(self, config)
-        self.type = PatchingType(config["type"])
-
-        self.value: float = config.get("value", 0.0)
+    type: PatchingType
+    value: float = 0.0
 
 
+@dataclass
 class SinglePatchingConfig:
-    def __init__(self, config: dict):
-        self.source = PatchingElementConfig(config["source"])
-        self.target = PatchingElementConfig(config["target"])
+    source: PatchingElementConfig
+    target: PatchingElementConfig
 
 
+@dataclass(kw_only=True)
 class PatchingConfig(AbstractConfig):
-    def __init__(self, config_id: str, config: dict):
-        self.config_id: str = config_id
-        self.metric = PatchingMetric(config.get("metric"))
-        self.patching_configs = list(map(SinglePatchingConfig, config.get("patch", [])))
+    metric: PatchingMetric
+    patch: list[SinglePatchingConfig] = field(default_factory=list)

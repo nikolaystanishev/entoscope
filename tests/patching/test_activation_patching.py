@@ -7,9 +7,15 @@ import torch
 import yaml
 from transformer_lens import HookedTransformer
 
-from intex.model.config import ModelLayerLocation
+from intex.model.config import Filter, ModelLayerLocation, ModelLocation
 from intex.operation.config import ConfigFactory
-from intex.patching.config import PatchingConfig
+from intex.patching.config import (
+    PatchingConfig,
+    PatchingElementConfig,
+    PatchingMetric,
+    PatchingType,
+    SinglePatchingConfig,
+)
 from intex.patching.input import PatchingInput
 from intex.patching.patcher import Patcher
 
@@ -24,32 +30,33 @@ def model() -> HookedTransformer:
     return model
 
 
+def _last_layer_resid_element() -> PatchingElementConfig:
+    return PatchingElementConfig(
+        activation_name=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER],
+        filter=Filter(inclusion_terms=[{"layer": -1}]),
+        type=PatchingType.REPLACE,
+    )
+
+
 def _last_layer_resid_patch_config() -> PatchingConfig:
     """Replace the last layer's full residual stream (all positions) source -> target."""
-    element = {
-        "activation_name": "resid.post",
-        "location": ["layer"],
-        "filter": [{"layer": -1}],
-        "type": "replace",
-    }
+    element = _last_layer_resid_element()
     return PatchingConfig(
-        "last_layer_resid_patch",
-        {"metric": "normalized_logit_diff", "patch": [{"source": element, "target": element}]},
+        config_id="last_layer_resid_patch",
+        metric=PatchingMetric.NORMALIZED_LOGIT_DIFF,
+        patch=[SinglePatchingConfig(source=element, target=element)],
     )
 
 
 def _last_layer_resid_zero_ablation_config() -> PatchingConfig:
     """Zero-ablate the last layer's full residual stream (all positions): set every value to 0."""
-    source = {"type": "value_replace"}  # produces zeros
-    target = {
-        "activation_name": "resid.post",
-        "location": ["layer"],
-        "filter": [{"layer": -1}],
-        "type": "replace",
-    }  # writes them into the activation
+    source = PatchingElementConfig(type=PatchingType.VALUE_REPLACE)  # produces zeros
+    target = _last_layer_resid_element()  # writes them into the activation
     return PatchingConfig(
-        "last_layer_resid_zero_ablation",
-        {"metric": "logit_diff", "patch": [{"source": source, "target": target}]},
+        config_id="last_layer_resid_zero_ablation",
+        metric=PatchingMetric.LOGIT_DIFF,
+        patch=[SinglePatchingConfig(source=source, target=target)],
     )
 
 
@@ -61,22 +68,23 @@ def _resid_value_scale_config(scale: float, layer: int) -> PatchingConfig:
     on the logits. At an intermediate layer the scaled residual is carried forward through the skip
     connections, so the scale genuinely changes the output.
     """
-    source = {
-        "activation_name": "resid.post",
-        "location": ["layer"],
-        "filter": [{"layer": layer}],
-        "type": "value_scale",
-        "value": scale,
-    }
-    target = {
-        "activation_name": "resid.post",
-        "location": ["layer"],
-        "filter": [{"layer": layer}],
-        "type": "replace",
-    }
+    source = PatchingElementConfig(
+        activation_name=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER],
+        filter=Filter(inclusion_terms=[{"layer": layer}]),
+        type=PatchingType.VALUE_SCALE,
+        value=scale,
+    )
+    target = PatchingElementConfig(
+        activation_name=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER],
+        filter=Filter(inclusion_terms=[{"layer": layer}]),
+        type=PatchingType.REPLACE,
+    )
     return PatchingConfig(
-        "resid_value_scale",
-        {"metric": "kl_diff", "patch": [{"source": source, "target": target}]},
+        config_id="resid_value_scale",
+        metric=PatchingMetric.KL_DIFF,
+        patch=[SinglePatchingConfig(source=source, target=target)],
     )
 
 
@@ -91,34 +99,32 @@ def _mlp_mhsa_pattern_patch_config(layer: int, head: int) -> PatchingConfig:
     together on a single forward pass; the resulting (single-element) metric reflects their combined
     effect rather than any one in isolation.
     """
-    mlp = {
-        "activation_name": "mlp.post",
-        "location": ["layer"],
-        "filter": [{"layer": layer}],
-        "type": "replace",
-    }
-    mhsa = {
-        "activation_name": "attn.q",
-        "location": ["layer"],
-        "filter": [{"layer": layer}],
-        "type": "replace",
-    }
-    pattern = {
-        "activation_name": "attn.pattern",
-        "location": ["layer", "head"],
-        "filter": [{"layer": layer, "head": head}],
-        "type": "replace",
-    }
+    mlp = PatchingElementConfig(
+        activation_name=ModelLayerLocation.MLP_POST,
+        location=[ModelLocation.LAYER],
+        filter=Filter(inclusion_terms=[{"layer": layer}]),
+        type=PatchingType.REPLACE,
+    )
+    mhsa = PatchingElementConfig(
+        activation_name=ModelLayerLocation.ATTENTION_Q,
+        location=[ModelLocation.LAYER],
+        filter=Filter(inclusion_terms=[{"layer": layer}]),
+        type=PatchingType.REPLACE,
+    )
+    pattern = PatchingElementConfig(
+        activation_name=ModelLayerLocation.ATTENTION_PATTERN,
+        location=[ModelLocation.LAYER, ModelLocation.HEAD],
+        filter=Filter(inclusion_terms=[{"layer": layer, "head": head}]),
+        type=PatchingType.REPLACE,
+    )
     return PatchingConfig(
-        "mlp_mhsa_pattern_patch",
-        {
-            "metric": "logit_diff",
-            "patch": [
-                {"source": mlp, "target": mlp},
-                {"source": mhsa, "target": mhsa},
-                {"source": pattern, "target": pattern},
-            ],
-        },
+        config_id="mlp_mhsa_pattern_patch",
+        metric=PatchingMetric.LOGIT_DIFF,
+        patch=[
+            SinglePatchingConfig(source=mlp, target=mlp),
+            SinglePatchingConfig(source=mhsa, target=mhsa),
+            SinglePatchingConfig(source=pattern, target=pattern),
+        ],
     )
 
 
@@ -364,9 +370,9 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
     saved_config = json.loads(config_path.read_text())
     assert saved_config["config_id"] == "last_layer_resid_patch"
     assert saved_config["metric"] == "logit_diff"
-    assert len(saved_config["patching_configs"]) == 1
-    assert saved_config["patching_configs"][0]["source"]["type"] == "replace"
-    assert saved_config["patching_configs"][0]["target"]["type"] == "replace"
+    assert len(saved_config["patch"]) == 1
+    assert saved_config["patch"][0]["source"]["type"] == "replace"
+    assert saved_config["patch"][0]["target"]["type"] == "replace"
 
     # index-0.csv carries one row per result entry, with the source/target/index columns.
     index_df = pd.read_csv(index_path)

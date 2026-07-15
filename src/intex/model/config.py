@@ -111,8 +111,7 @@ class Filter:
     exclusion_terms: list[dict] = field(default_factory=list)
 
     @classmethod
-    def from_config(cls, config: dict) -> "Filter":
-        terms = config.get("filter", [])
+    def from_config(cls, terms: list) -> "Filter":
         _filter = cls()
         for term in terms:
             pattern = term["not"] if isinstance(term, dict) and set(term.keys()) == {"not"} else term
@@ -185,8 +184,8 @@ class Group:
     groups: dict[str, list[int] | str] = field(default_factory=dict)
 
     @classmethod
-    def from_config(cls, config: dict) -> "Group":
-        return cls(groups=config.get("group", {}))
+    def from_config(cls, groups: dict) -> "Group":
+        return cls(groups=groups)
 
     def apply(self, index_df: pd.DataFrame) -> pd.DataFrame:
         for name, values in self.groups.items():
@@ -206,8 +205,8 @@ class Incremental:
     values: dict[str, list[int]] = field(default_factory=dict)
 
     @classmethod
-    def from_config(cls, config: dict) -> "Incremental":
-        return cls(values=config.get("incremental", {}))
+    def from_config(cls, values: dict) -> "Incremental":
+        return cls(values=values)
 
     def apply(self, index_df: pd.DataFrame) -> pd.DataFrame:
         for name, values in self.values.items():
@@ -242,11 +241,6 @@ class Combination:
     location: list[str] = field(default_factory=list)
     max_elements: int = sys.maxsize
 
-    @classmethod
-    def from_config(cls, config: dict) -> "Combination":
-        combination = config.get("combination", {})
-        return cls(location=combination.get("location", []), max_elements=combination.pop("max_elements", sys.maxsize))
-
     def apply(self, index_df: pd.DataFrame) -> pd.DataFrame:
         for location in self.location:
             new_rows = []
@@ -263,17 +257,18 @@ class Combination:
         return index_df
 
 
+@dataclass(kw_only=True)
 class ModelLocatorConfigMixin:
-    def __init__(self, config: dict):
-        self.activation_name = ModelLayerLocation(config["activation_name"]) if "activation_name" in config else None
-        self.location: list[ModelLocation] = list(map(ModelLocation, config.get("location", [])))
-        self.filter = Filter.from_config(config)
+    activation_name: ModelLayerLocation | None = None
+    location: list[ModelLocation] = field(default_factory=list)
+    filter: Filter = field(default_factory=Filter)
+    group: Group = field(default_factory=Group)
+    incremental: Incremental = field(default_factory=Incremental)
+    combination: Combination = field(default_factory=Combination)
 
-        self.transforms = [
-            Group.from_config(config),
-            Incremental.from_config(config),
-            Combination.from_config(config),
-        ]
+    @property
+    def _transforms(self) -> list[IndexTransform]:
+        return [self.group, self.incremental, self.combination]
 
     def parse(self, model: HookedTransformer, prompt: Int[torch.Tensor, "batch pos"]) -> ModelLocationIndex:
         location_to_max_value = {
@@ -284,7 +279,7 @@ class ModelLocatorConfigMixin:
         )
         index_df = self.filter.apply(index_df, location_to_max_value)
 
-        for transform in self.transforms:
+        for transform in self._transforms:
             index_df = transform.apply(index_df)
 
         index_df[ACTIVATION_NAME_COLUMN] = self.activation_name

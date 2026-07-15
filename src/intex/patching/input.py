@@ -30,7 +30,7 @@ class PatchingInput(OperationInput):
 
     def get_index(self, model: HookedTransformer | None = None) -> list[PatchingIndex]:
         if self.index is None and model is not None:
-            index = [PatchingIndex(patching_config, model, self) for patching_config in self.config.patching_configs]
+            index = [PatchingIndex(patching_config, model, self) for patching_config in self.config.patch]
             index_lengths = [len(idx) for idx in index]
             assert all(length == max(index_lengths) or length == 1 for length in index_lengths)
             self.index = index
