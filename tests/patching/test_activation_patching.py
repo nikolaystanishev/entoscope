@@ -34,7 +34,7 @@ def _last_layer_resid_element() -> PatchingElementConfig:
     return PatchingElementConfig(
         activation_name=ModelLayerLocation.RESIDUAL_POST,
         location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{"layer": -1}]),
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: -1}]),
         type=PatchingType.REPLACE,
     )
 
@@ -71,14 +71,14 @@ def _resid_value_scale_config(scale: float, layer: int) -> PatchingConfig:
     source = PatchingElementConfig(
         activation_name=ModelLayerLocation.RESIDUAL_POST,
         location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{"layer": layer}]),
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer}]),
         type=PatchingType.VALUE_SCALE,
         value=scale,
     )
     target = PatchingElementConfig(
         activation_name=ModelLayerLocation.RESIDUAL_POST,
         location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{"layer": layer}]),
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer}]),
         type=PatchingType.REPLACE,
     )
     return PatchingConfig(
@@ -102,19 +102,19 @@ def _mlp_mhsa_pattern_patch_config(layer: int, head: int) -> PatchingConfig:
     mlp = PatchingElementConfig(
         activation_name=ModelLayerLocation.MLP_POST,
         location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{"layer": layer}]),
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer}]),
         type=PatchingType.REPLACE,
     )
     mhsa = PatchingElementConfig(
         activation_name=ModelLayerLocation.ATTENTION_Q,
         location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{"layer": layer}]),
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer}]),
         type=PatchingType.REPLACE,
     )
     pattern = PatchingElementConfig(
         activation_name=ModelLayerLocation.ATTENTION_PATTERN,
         location=[ModelLocation.LAYER, ModelLocation.HEAD],
-        filter=Filter(inclusion_terms=[{"layer": layer, "head": head}]),
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer, ModelLocation.HEAD: head}]),
         type=PatchingType.REPLACE,
     )
     return PatchingConfig(

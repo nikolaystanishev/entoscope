@@ -55,8 +55,9 @@ def from_dict(cls: type, value: Any) -> Any:
     overrides the default handling (for fields whose config shape differs from their fields);
     enums are constructed by value, and dataclasses recurse field-wise from a mapping —
     strictly, so unknown or missing keys raise ``ValueError``. ``list``/``dict`` annotations
-    recurse into their elements/values, ``X | None`` unwraps to ``X``, and anything else is
-    returned as-is. The input is never mutated (YAML anchors may alias sub-mappings).
+    recurse into their elements (keys and values for dicts), ``dict`` subclasses construct
+    through the key/value types of their generic base, ``X | None`` unwraps to ``X``, and
+    anything else is returned as-is. The input is never mutated (YAML anchors may alias sub-mappings).
     """
     if cls is Any:
         return value
@@ -74,14 +75,22 @@ def from_dict(cls: type, value: Any) -> Any:
     if origin is dict:
         if not isinstance(value, dict):
             raise ValueError(f"Expected a mapping for {cls.__name__}, got {value!r}")
-        _, value_type = typing.get_args(cls) or (Any, Any)
-        return {key: from_dict(value_type, element) for key, element in value.items()}
+        key_type, value_type = typing.get_args(cls) or (Any, Any)
+        return {from_dict(key_type, key): from_dict(value_type, element) for key, element in value.items()}
     if not isinstance(cls, type) or isinstance(value, cls):
         return value
     if hasattr(cls, "from_config"):
         return cls.from_config(value)
     if issubclass(cls, Enum):
         return cls(value)
+    if issubclass(cls, dict):
+        if not isinstance(value, dict):
+            raise ValueError(f"Expected a mapping for {cls.__name__}, got {value!r}")
+        key_type, value_type = next(
+            (typing.get_args(base) for base in getattr(cls, "__orig_bases__", ()) if typing.get_origin(base) is dict),
+            (Any, Any),
+        )
+        return cls({from_dict(key_type, key): from_dict(value_type, element) for key, element in value.items()})
     if dataclasses.is_dataclass(cls):
         return _dataclass_from_dict(cls, value)
     return value

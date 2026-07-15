@@ -25,7 +25,7 @@ def element_config(**overrides) -> PatchingElementConfig:
     defaults = dict(
         activation_name=ModelLayerLocation.RESIDUAL_POST,
         location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{"layer": -1}]),
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: -1}]),
         type=PatchingType.REPLACE,
     )
     return PatchingElementConfig(**{**defaults, **overrides})
@@ -57,16 +57,25 @@ def test_defaults_apply_for_omitted_keys():
 
 
 def test_from_config_hook_dispatch():
-    raw = {"filter": [{"layer": 0}, {"not": {"layer": 1}}], "group": {"layer": [0, 1]}, "incremental": {"layer": [2]}}
-    element = from_dict(PatchingElementConfig, {**ELEMENT, **raw})
-    assert element.filter == Filter(inclusion_terms=[{"layer": 0}], exclusion_terms=[{"layer": 1}])
-    assert element.group == Group(groups={"layer": [0, 1]})
-    assert element.incremental == Incremental(values={"layer": [2]})
+    element = from_dict(PatchingElementConfig, {**ELEMENT, "filter": [{"layer": 0}, {"not": {"layer": 1}}]})
+    assert element.filter == Filter(
+        inclusion_terms=[{ModelLocation.LAYER: 0}], exclusion_terms=[{ModelLocation.LAYER: 1}]
+    )
+
+
+def test_dict_subclass_sections_deserialize():
+    element = from_dict(PatchingElementConfig, {**ELEMENT, "group": {"layer": [0, 1]}, "incremental": {"layer": [2]}})
+    assert isinstance(element.group, Group)
+    assert element.group == Group({ModelLocation.LAYER: [0, 1]})
+    assert all(isinstance(location, ModelLocation) for location in element.group)
+    assert isinstance(element.incremental, Incremental)
+    assert element.incremental == Incremental({ModelLocation.LAYER: [2]})
+    assert all(isinstance(location, ModelLocation) for location in element.incremental)
 
 
 def test_already_typed_values_pass_through():
     # Code-built objects can be mixed into raw shapes and are taken as-is.
-    filter_ = Filter(inclusion_terms=[{"layer": -1}])
+    filter_ = Filter(inclusion_terms=[{ModelLocation.LAYER: -1}])
     element = from_dict(
         PatchingElementConfig,
         {"activation_name": ModelLayerLocation.RESIDUAL_POST, "filter": filter_, "type": PatchingType.REPLACE},

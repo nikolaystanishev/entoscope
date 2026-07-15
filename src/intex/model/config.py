@@ -47,7 +47,7 @@ class ModelLocationIndex:
     df: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
-MODEL_LOCATION_MAPPER: dict[str, Callable] = {
+MODEL_LOCATION_MAPPER: dict[ModelLocation, Callable] = {
     ModelLocation.LAYER: lambda model, _1, _2: model.cfg.n_layers,
     ModelLocation.HEAD: lambda model, layer_location, _: (
         model.cfg.n_heads
@@ -99,7 +99,8 @@ class Filter:
     """Keep/drop index rows from a list of patterns.
 
     Each pattern maps ``location -> constraint`` (multiple keys are AND-ed, patterns are OR-ed),
-    and ``{"not": <pattern>}`` drops the matching rows instead. A constraint is:
+    and ``{"not": <pattern>}`` drops the matching rows instead. Pattern keys are ``ModelLocation``
+    members (``from_config`` converts the config file's plain strings). A constraint is:
       int                     -> the value
       {"range": [start, end]} -> ``start..end`` inclusive
       [<value or range>, ...] -> any of the listed constraints
@@ -107,30 +108,32 @@ class Filter:
     (everything when there are none) minus the union of the ``not`` patterns.
     """
 
-    inclusion_terms: list[dict] = field(default_factory=list)
-    exclusion_terms: list[dict] = field(default_factory=list)
+    inclusion_terms: list[dict[ModelLocation, int | dict | list]] = field(default_factory=list)
+    exclusion_terms: list[dict[ModelLocation, int | dict | list]] = field(default_factory=list)
 
     @classmethod
     def from_config(cls, terms: list) -> "Filter":
-        _filter = cls()
+        inclusion_terms: list[dict] = []
+        exclusion_terms: list[dict] = []
         for term in terms:
             pattern = term["not"] if isinstance(term, dict) and set(term.keys()) == {"not"} else term
             if not isinstance(pattern, dict) or len(pattern) == 0:
                 raise ValueError(f"Invalid filter term: {term!r}")
+            pattern = {ModelLocation(location): constraint for location, constraint in pattern.items()}
 
             if isinstance(term, dict) and set(term.keys()) == {"not"}:
-                _filter.exclusion_terms.append(pattern)
+                exclusion_terms.append(pattern)
             else:
-                _filter.inclusion_terms.append(pattern)
+                inclusion_terms.append(pattern)
 
-        return _filter
+        return cls(inclusion_terms=inclusion_terms, exclusion_terms=exclusion_terms)
 
-    def included(self, location: str, max_value: int) -> set[int]:
+    def included(self, location: ModelLocation, max_value: int) -> set[int]:
         if not self.inclusion_terms or any(location not in term for term in self.inclusion_terms):
             return set(range(max_value))
         return set().union(*(self._resolve(term[location], location, max_value) for term in self.inclusion_terms))
 
-    def excluded(self, location: str, max_value: int) -> set[int]:
+    def excluded(self, location: ModelLocation, max_value: int) -> set[int]:
         return set().union(
             *(
                 self._resolve(term[location], location, max_value)
@@ -164,7 +167,7 @@ class Filter:
         )
 
     @classmethod
-    def _resolve(cls, constraint: int | dict | list, location: str, max_value: int) -> set[int]:
+    def _resolve(cls, constraint: int | dict | list, location: ModelLocation, max_value: int) -> set[int]:
         if isinstance(constraint, list):
             return set().union(*(cls._resolve(el, location, max_value) for el in constraint))
         if isinstance(constraint, int):
@@ -177,18 +180,11 @@ class Filter:
         raise ValueError(f"Invalid filter constraint for '{location}': {constraint!r}")
 
 
-@dataclass
-class Group:
+class Group(dict[ModelLocation, list[int] | str]):
     """Group values together (collapsing the resulting duplicate rows)."""
 
-    groups: dict[str, list[int] | str] = field(default_factory=dict)
-
-    @classmethod
-    def from_config(cls, groups: dict) -> "Group":
-        return cls(groups=groups)
-
     def apply(self, index_df: pd.DataFrame) -> pd.DataFrame:
-        for name, values in self.groups.items():
+        for name, values in self.items():
             if values == "all":
                 values = index_df[name].unique().tolist()
             values_to_replace = {v: values for v in values}
@@ -198,18 +194,11 @@ class Group:
         return index_df
 
 
-@dataclass
-class Incremental:
+class Incremental(dict[ModelLocation, list[int]]):
     """Create new incremental rows (taking all rows and incrementing the specified locations)."""
 
-    values: dict[str, list[int]] = field(default_factory=dict)
-
-    @classmethod
-    def from_config(cls, values: dict) -> "Incremental":
-        return cls(values=values)
-
     def apply(self, index_df: pd.DataFrame) -> pd.DataFrame:
-        for name, values in self.values.items():
+        for name, values in self.items():
             new_rows = []
             for _, row in index_df.iterrows():
                 row = row.astype(object)
@@ -238,7 +227,7 @@ class Incremental:
 class Combination:
     """Create new combination rows (taking all rows and combining the specified location's values)."""
 
-    location: list[str] = field(default_factory=list)
+    location: list[ModelLocation] = field(default_factory=list)
     max_elements: int = sys.maxsize
 
     def apply(self, index_df: pd.DataFrame) -> pd.DataFrame:

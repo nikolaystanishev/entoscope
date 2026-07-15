@@ -6,6 +6,10 @@ import torch
 
 from intex.model.config import (
     ACTIVATION_NAME_COLUMN,
+    Combination,
+    Filter,
+    Group,
+    Incremental,
     ModelLayerLocation,
     ModelLocation,
     ModelLocatorConfigMixin,
@@ -299,6 +303,45 @@ def test_full_config_filter_group_combination():
     )
 
 
+# --------------------------------------------------------------------------------------------------
+# ModelLocation keys — deserialization converts the config file's strings to ModelLocation members
+# --------------------------------------------------------------------------------------------------
+def test_deserialized_section_keys_are_model_location():
+    config = from_dict(
+        ModelLocatorConfigMixin,
+        {
+            "activation_name": ModelLayerLocation.RESIDUAL_POST,
+            "location": ["layer"],
+            "filter": [{"layer": 0}, {"not": {"head": 1}}],
+            "group": {"layer": "all"},
+            "incremental": {"head": [1]},
+            "combination": {"location": ["layer"]},
+        },
+    )
+    terms = config.filter.inclusion_terms + config.filter.exclusion_terms
+    assert all(isinstance(location, ModelLocation) for term in terms for location in term)
+    assert isinstance(config.group, Group)
+    assert all(isinstance(location, ModelLocation) for location in config.group)
+    assert isinstance(config.incremental, Incremental)
+    assert all(isinstance(location, ModelLocation) for location in config.incremental)
+    assert all(isinstance(location, ModelLocation) for location in config.combination.location)
+
+
+def test_model_location_keys_in_code_built_config():
+    # The enum-keyed twin of ``test_full_config_filter_group_combination``, built without raw strings.
+    config = ModelLocatorConfigMixin(
+        activation_name=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER],
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: {"range": [0, 2]}}]),
+        group=Group({ModelLocation.LAYER: "all"}),
+        combination=Combination(location=[ModelLocation.LAYER], max_elements=2),
+    )
+    result = config.parse(make_model(n_layers=4), make_prompt(4))
+    assert result_rows(result) == expected_rows(
+        [{"layer": (0,)}, {"layer": (1,)}, {"layer": (2,)}, {"layer": (0, 1)}, {"layer": (0, 2)}, {"layer": (1, 2)}]
+    )
+
+
 def test_full_config_filter_group_multi_location():
     config = {"location": ["layer", "head"], "filter": [{"layer": {"range": [0, 1]}}], "group": {"head": "all"}}
     result = parse_config(config, n_layers=3, n_heads=2)
@@ -317,6 +360,8 @@ def test_full_config_filter_group_multi_location():
         {"filter": [5]},  # term is not a dict
         {"location": ["bogus"]},  # not a ModelLocation value
         {"fitler": [{"layer": 0}]},  # unknown key (typo) is rejected, not ignored
+        {"filter": [{"bogus": 0}]},  # pattern key is not a ModelLocation value
+        {"group": {"bogus": "all"}},  # group key is not a ModelLocation value
     ],
 )
 def test_construction_raises_value_error(config):
