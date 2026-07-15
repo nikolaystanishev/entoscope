@@ -8,11 +8,21 @@ from intex.script.argument import parse_config
 
 
 def _config_class(func: Callable) -> type:
-    params = list(inspect.signature(func).parameters)
+    params = list(inspect.signature(func).parameters.values())
     hints = typing.get_type_hints(func)
-    if not params or params[0] not in hints:
+    if not params or params[0].name not in hints:
         raise TypeError(f"{func.__name__} must annotate its first parameter with a config dataclass")
-    config_cls = hints[params[0]]
+    if params[0].kind not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+        raise TypeError(f"{func.__name__} config parameter must accept a positional argument")
+    required = [
+        param.name
+        for param in params[1:]
+        if param.default is inspect.Parameter.empty
+        and param.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    ]
+    if required:
+        raise TypeError(f"{func.__name__} has additional required parameters: {required}")
+    config_cls = hints[params[0].name]
     if not dataclasses.is_dataclass(config_cls):
         raise TypeError(f"{func.__name__} first parameter annotation {config_cls!r} is not a dataclass")
     return config_cls

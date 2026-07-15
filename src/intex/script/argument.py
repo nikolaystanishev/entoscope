@@ -80,6 +80,8 @@ def build_parser(config_cls: type, description: str | None = None) -> argparse.A
     parser = argparse.ArgumentParser(description=description)
     hints = typing.get_type_hints(config_cls)
     for field in dataclasses.fields(config_cls):
+        if not field.init:
+            continue
         annotation = _unwrap_optional(hints[field.name])
         kwargs: dict[str, typing.Any] = {}
         if annotation is bool:
