@@ -48,11 +48,7 @@ class TargetStrategy(abc.ABC):
 class ReplaceSourceStrategy(SourceStrategy):
     @staticmethod
     def extract(source_index: IndexElement, patching_input: PatchingInput) -> torch.Tensor:
-        return (
-            patching_input.source_cache[source_index.transformer_activation()][source_index.slices()]
-            if patching_input.source_cache is not None
-            else torch.empty()
-        )
+        return patching_input.source_cache[source_index.transformer_activation()][source_index.slices()]
 
 
 class ValueReplaceSourceStrategy(SourceStrategy):
@@ -67,8 +63,6 @@ class ValueScaleSourceStrategy(SourceStrategy):
         return (
             patching_input.source_cache[source_index.transformer_activation()][(0, *source_index.slices()[1:])]
             * source_index.config.value
-            if patching_input.source_cache is not None
-            else torch.empty()
         )
 
 

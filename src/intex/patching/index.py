@@ -3,21 +3,16 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from copy import deepcopy
-from typing import TYPE_CHECKING
 
 import pandas as pd
 import torch
-from transformer_lens import HookedTransformer
 from transformer_lens.utilities import get_act_name
 
-from intex.model.config import ACTIVATION_NAME_COLUMN, ModelLayerLocation, make_df_from_ranges
+from intex.model.config import ACTIVATION_NAME_COLUMN, ModelLayerLocation, ModelLocationIndex, make_df_from_ranges
 from intex.operation.index import Index
 from intex.patching.config import PatchingElementConfig, SinglePatchingConfig
 from intex.patching.slicer import ActivationSlicer
 from intex.util.collections import dataframe_to_list, zip_fill
-
-if TYPE_CHECKING:
-    from intex.patching.input import PatchingInput
 
 # Maps intex's dotted ``ModelLayerLocation`` values onto the names ``get_act_name`` expects.
 TRANSFORMER_ACT_NAME: dict[ModelLayerLocation, str] = {
@@ -98,10 +93,10 @@ class SinglePatchingIndex:
 
 
 class PatchingIndex(Index):
-    def __init__(self, config: SinglePatchingConfig, model: HookedTransformer, patching_input: PatchingInput):
+    def __init__(self, config: SinglePatchingConfig, source: ModelLocationIndex, target: ModelLocationIndex):
         self.config = config
-        self.source = config.source.parse(model, patching_input.source_tokens)
-        self.target = config.target.parse(model, patching_input.target_tokens)
+        self.source = source
+        self.target = target
 
         output_df = self.target.df if len(self.target.df) >= len(self.source.df) else self.source.df
         coordinate_df = output_df[[col for col in output_df.columns if col != ACTIVATION_NAME_COLUMN]]

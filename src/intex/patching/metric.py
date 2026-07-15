@@ -54,22 +54,16 @@ class AbstractMetric(abc.ABC):
 class DiffMetric(AbstractMetric, LogitDiffMixin):
     @classmethod
     def compute(cls, patching_input: PatchingInput, logits: torch.Tensor) -> torch.Tensor:
-        if patching_input.source_generation is not None and patching_input.target_generation is not None:
-            return cls.get_logit_diff(
-                logits, logits, patching_input.source_generation, patching_input.target_generation
-            )
-        return torch.empty()
+        return cls.get_logit_diff(logits, logits, patching_input.source_generation, patching_input.target_generation)
 
 
 class NormalizedDiffMetric(AbstractMetric, LogitDiffMixin):
     @classmethod
     def compute(cls, patching_input: PatchingInput, logits: torch.Tensor) -> torch.Tensor:
-        if patching_input.source_generation is not None and patching_input.target_generation is not None:
-            return (
-                cls.get_logit_diff(logits, logits, patching_input.source_generation, patching_input.target_generation)
-                - patching_input.target_baseline
-            ) / (patching_input.source_baseline - patching_input.target_baseline)
-        return torch.empty()
+        return (
+            cls.get_logit_diff(logits, logits, patching_input.source_generation, patching_input.target_generation)
+            - patching_input.target_baseline
+        ) / (patching_input.source_baseline - patching_input.target_baseline)
 
 
 class KLDivMetric(AbstractMetric):
@@ -77,8 +71,6 @@ class KLDivMetric(AbstractMetric):
     def compute(cls, patching_input: PatchingInput, logits: torch.Tensor) -> torch.Tensor:
         source_probabilities = patching_input.source_probabilities
         target_probabilities = patching_input.target_probabilities
-        if source_probabilities is not None and target_probabilities is not None:
-            return torch.nn.functional.kl_div(
-                source_probabilities.log(), target_probabilities, reduction="batchmean"
-            ) - torch.nn.functional.kl_div(source_probabilities.log(), logits.softmax(dim=-1), reduction="batchmean")
-        return torch.empty()
+        return torch.nn.functional.kl_div(
+            source_probabilities.log(), target_probabilities, reduction="batchmean"
+        ) - torch.nn.functional.kl_div(source_probabilities.log(), logits.softmax(dim=-1), reduction="batchmean")
