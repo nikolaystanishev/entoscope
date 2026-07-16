@@ -33,7 +33,7 @@ class PatchingInput(OperationInput):
     _target_probabilities: torch.Tensor | None = field(init=False, default=None)
 
     def prepare(self, model: HookedTransformer) -> "PatchingInput":
-        if self._target_tokens is None:
+        if self._index is None:
             self._source_tokens = model.to_tokens(self.source_prompt)
             self._target_tokens = model.to_tokens(self.target_prompt)
 
@@ -53,7 +53,9 @@ class PatchingInput(OperationInput):
                 for patching_config in self.config.patch
             ]
             index_lengths = [len(idx) for idx in index]
-            assert all(length == max(index_lengths) or length == 1 for length in index_lengths)
+            assert len(index_lengths) == 0 or all(
+                length == max(index_lengths) or length == 1 for length in index_lengths
+            )
             self._index = index
 
         return self
@@ -148,5 +150,13 @@ class PatchingInput(OperationInput):
             self._source_logits = self._source_logits.to(device)
         if self._target_logits is not None:
             self._target_logits = self._target_logits.to(device)
+        if self._source_baseline is not None:
+            self._source_baseline = self._source_baseline.to(device)
+        if self._target_baseline is not None:
+            self._target_baseline = self._target_baseline.to(device)
+        if self._source_probabilities is not None:
+            self._source_probabilities = self._source_probabilities.to(device)
+        if self._target_probabilities is not None:
+            self._target_probabilities = self._target_probabilities.to(device)
 
         return self

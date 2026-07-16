@@ -142,7 +142,7 @@ class Filter:
         )
 
     def location_range(self, location: ModelLocation, max_value: int) -> list[int]:
-        return list(self.included(location, max_value) - self.excluded(location, max_value))
+        return sorted(self.included(location, max_value) - self.excluded(location, max_value))
 
     def apply(self, index_df: pd.DataFrame, location_to_max_value: dict) -> pd.DataFrame:
         if len(self.inclusion_terms) > 0:

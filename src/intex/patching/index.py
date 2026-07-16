@@ -105,9 +105,14 @@ class PatchingIndex(Index):
             self.axis_range = [len(output_df)]
             self.output_df = make_df_from_ranges(["coordinate"], self.axis_range)
         else:
+            # Keep one output row per index row (the df may be a sparse, correlated set rather than
+            # a full grid), mapping each column's values to dense first-appearance codes.
             coordinate_df = output_df[[col for col in output_df.columns if col != ModelLocation.ACTIVATION]]
-            self.axis_range = coordinate_df.apply(lambda col: len(col.astype(str).unique())).to_list()
-            self.output_df = make_df_from_ranges(coordinate_df.columns.to_list(), self.axis_range)
+            factorized = {col: pd.factorize(coordinate_df[col].astype(str)) for col in coordinate_df.columns}
+            self.axis_range = [len(uniques) for _, uniques in factorized.values()]
+            self.output_df = pd.DataFrame(
+                {col: codes for col, (codes, _) in factorized.items()}, index=coordinate_df.index
+            )
 
     def prepare_output_placeholder(self, device: str | torch.device = "cpu") -> torch.Tensor:
         return torch.zeros(self.axis_range, device=device)
