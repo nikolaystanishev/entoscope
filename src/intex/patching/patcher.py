@@ -44,7 +44,7 @@ class Patcher(Operator):
 
         for index in tqdm(
             batch_generator(patching_index, self.batch_size),
-            total=len(patching_index) // self.batch_size + 1,
+            total=(len(patching_index) + self.batch_size - 1) // self.batch_size,
             disable=not verbose,
         ):
             fwd_hooks = [
