@@ -341,6 +341,8 @@ class ModelLocatorConfigMixin:
             raise ValueError("'activation' is not a declarative location; set 'activation' on the config instead")
         if self.coordinates is None:
             return
+        if not isinstance(self.coordinates, Coordinates):
+            self.coordinates = Coordinates.from_config(self.coordinates)
         if (
             self.location
             or self.filter.inclusion_terms
