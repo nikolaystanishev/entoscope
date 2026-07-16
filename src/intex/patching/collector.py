@@ -47,7 +47,7 @@ class DefaultCollector(AbstractCollector):
         return self._result
 
     def prepare(self):
-        self._result = self.patching_input.get_index()[0].prepare_output_placeholder()
+        self._result = self.patching_input.index[0].prepare_output_placeholder()
 
     def collect(self, logits: torch.Tensor, index: Sequence[int] | None = None, metric_value: float = 0.0):
         self._result[index] = metric_value
@@ -57,7 +57,7 @@ class DefaultCollector(AbstractCollector):
             create_if_not_exists(self.save_dir)
 
             torch.save(self._result, os.path.join(self.save_dir, "result.pt"))
-            for i, idx in enumerate(self.patching_input.get_index()):
+            for i, idx in enumerate(self.patching_input.index):
                 idx.to_csv(os.path.join(self.save_dir, f"index-{i}.csv"))
             write_json(os.path.join(self.save_dir, "config.json"), to_dict(self.patching_input.config))
 

@@ -36,14 +36,15 @@ class Patcher(Operator):
         return None
 
     def _patch(self, patching_input: PatchingInput, save_dir: str | None, verbose: bool = True) -> AbstractCollector:
+        patching_input.prepare(self.model)
         collector = self.collector_class(patching_input, save_dir)
-        patching_index = patching_input.get_index(self.model)
+        patching_index = patching_input.index
         collector.prepare()
         patching_index = list(zip_fill(*patching_index))
 
         for index in tqdm(
             batch_generator(patching_index, self.batch_size),
-            total=len(patching_index) // self.batch_size + 1,
+            total=(len(patching_index) + self.batch_size - 1) // self.batch_size,
             disable=not verbose,
         ):
             fwd_hooks = [

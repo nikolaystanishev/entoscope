@@ -3,21 +3,16 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from copy import deepcopy
-from typing import TYPE_CHECKING
 
 import pandas as pd
 import torch
-from transformer_lens import HookedTransformer
 from transformer_lens.utilities import get_act_name
 
-from intex.model.config import ACTIVATION_NAME_COLUMN, ModelLayerLocation, make_df_from_ranges
+from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocationIndex, make_df_from_ranges
 from intex.operation.index import Index
 from intex.patching.config import PatchingElementConfig, SinglePatchingConfig
 from intex.patching.slicer import ActivationSlicer
 from intex.util.collections import dataframe_to_list, zip_fill
-
-if TYPE_CHECKING:
-    from intex.patching.input import PatchingInput
 
 # Maps intex's dotted ``ModelLayerLocation`` values onto the names ``get_act_name`` expects.
 TRANSFORMER_ACT_NAME: dict[ModelLayerLocation, str] = {
@@ -57,7 +52,7 @@ class IndexElement:
         return ActivationSlicer.get(self.activation()).extract(index)
 
     def activation(self) -> ModelLayerLocation:
-        return self[ACTIVATION_NAME_COLUMN]
+        return self[ModelLocation.ACTIVATION]
 
     def transformer_activation(self) -> str:
         return get_act_name(TRANSFORMER_ACT_NAME[self.activation()], layer=self.layer())
@@ -98,15 +93,26 @@ class SinglePatchingIndex:
 
 
 class PatchingIndex(Index):
-    def __init__(self, config: SinglePatchingConfig, model: HookedTransformer, patching_input: PatchingInput):
+    def __init__(self, config: SinglePatchingConfig, source: ModelLocationIndex, target: ModelLocationIndex):
         self.config = config
-        self.source = config.source.parse(model, patching_input.source_tokens)
-        self.target = config.target.parse(model, patching_input.target_tokens)
+        self.source = source
+        self.target = target
 
         output_df = self.target.df if len(self.target.df) >= len(self.source.df) else self.source.df
-        coordinate_df = output_df[[col for col in output_df.columns if col != ACTIVATION_NAME_COLUMN]]
-        self.axis_range = coordinate_df.apply(lambda col: len(col.astype(str).unique())).to_list()
-        self.output_df = make_df_from_ranges(coordinate_df.columns.to_list(), self.axis_range)
+        if self.config.source.coordinates is not None and self.config.target.coordinates is not None:
+            if len(self.config.source.coordinates) != len(self.config.target.coordinates):
+                raise ValueError("Source and target coordinates must have same length")
+            self.axis_range = [len(output_df)]
+            self.output_df = make_df_from_ranges(["coordinate"], self.axis_range)
+        else:
+            # Keep one output row per index row (the df may be a sparse, correlated set rather than
+            # a full grid), mapping each column's values to dense first-appearance codes.
+            coordinate_df = output_df[[col for col in output_df.columns if col != ModelLocation.ACTIVATION]]
+            factorized = {col: pd.factorize(coordinate_df[col].astype(str)) for col in coordinate_df.columns}
+            self.axis_range = [len(uniques) for _, uniques in factorized.values()]
+            self.output_df = pd.DataFrame(
+                {col: codes for col, (codes, _) in factorized.items()}, index=coordinate_df.index
+            )
 
     def prepare_output_placeholder(self, device: str | torch.device = "cpu") -> torch.Tensor:
         return torch.zeros(self.axis_range, device=device)
