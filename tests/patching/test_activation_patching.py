@@ -32,7 +32,7 @@ def model() -> HookedTransformer:
 
 def _last_layer_resid_element() -> PatchingElementConfig:
     return PatchingElementConfig(
-        activation_name=ModelLayerLocation.RESIDUAL_POST,
+        activation=ModelLayerLocation.RESIDUAL_POST,
         location=[ModelLocation.LAYER],
         filter=Filter(inclusion_terms=[{ModelLocation.LAYER: -1}]),
         type=PatchingType.REPLACE,
@@ -69,14 +69,14 @@ def _resid_value_scale_config(scale: float, layer: int) -> PatchingConfig:
     connections, so the scale genuinely changes the output.
     """
     source = PatchingElementConfig(
-        activation_name=ModelLayerLocation.RESIDUAL_POST,
+        activation=ModelLayerLocation.RESIDUAL_POST,
         location=[ModelLocation.LAYER],
         filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer}]),
         type=PatchingType.VALUE_SCALE,
         value=scale,
     )
     target = PatchingElementConfig(
-        activation_name=ModelLayerLocation.RESIDUAL_POST,
+        activation=ModelLayerLocation.RESIDUAL_POST,
         location=[ModelLocation.LAYER],
         filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer}]),
         type=PatchingType.REPLACE,
@@ -100,19 +100,19 @@ def _mlp_mhsa_pattern_patch_config(layer: int, head: int) -> PatchingConfig:
     effect rather than any one in isolation.
     """
     mlp = PatchingElementConfig(
-        activation_name=ModelLayerLocation.MLP_POST,
+        activation=ModelLayerLocation.MLP_POST,
         location=[ModelLocation.LAYER],
         filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer}]),
         type=PatchingType.REPLACE,
     )
     mhsa = PatchingElementConfig(
-        activation_name=ModelLayerLocation.ATTENTION_Q,
+        activation=ModelLayerLocation.ATTENTION_Q,
         location=[ModelLocation.LAYER],
         filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer}]),
         type=PatchingType.REPLACE,
     )
     pattern = PatchingElementConfig(
-        activation_name=ModelLayerLocation.ATTENTION_PATTERN,
+        activation=ModelLayerLocation.ATTENTION_PATTERN,
         location=[ModelLocation.LAYER, ModelLocation.HEAD],
         filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer, ModelLocation.HEAD: head}]),
         type=PatchingType.REPLACE,
@@ -220,7 +220,7 @@ def test_multi_config_patching_mlp_mhsa_and_pattern(model: HookedTransformer) ->
     # The config carries three patches; each becomes its own index, targeting -- in order -- the MLP
     # post-activation, the MHSA queries, and the attention pattern.
     indices = patching_input.index
-    assert [idx.config.target.activation_name for idx in indices] == [
+    assert [idx.config.target.activation for idx in indices] == [
         ModelLayerLocation.MLP_POST,
         ModelLayerLocation.ATTENTION_Q,
         ModelLayerLocation.ATTENTION_PATTERN,
@@ -240,13 +240,139 @@ def test_multi_config_patching_mlp_mhsa_and_pattern(model: HookedTransformer) ->
     assert torch.allclose(result.squeeze(), torch.tensor(-0.008522987365722656), atol=2e-3)
 
 
+def _explicit_element(
+    coordinates: list[dict], activation: ModelLayerLocation | None = ModelLayerLocation.RESIDUAL_POST
+) -> PatchingElementConfig:
+    return PatchingElementConfig(
+        activation=activation,
+        coordinates=coordinates,
+        type=PatchingType.REPLACE,
+    )
+
+
+def _explicit_patch_config(
+    source_coordinates: list[dict],
+    target_coordinates: list[dict],
+    activation: ModelLayerLocation | None = ModelLayerLocation.RESIDUAL_POST,
+) -> PatchingConfig:
+    """Patch the exact coordinates listed: source coordinate i is read from the source run and written at
+    target coordinate i of the target run (one patched run per pair)."""
+    return PatchingConfig(
+        config_id="explicit_patch",
+        metric=PatchingMetric.NORMALIZED_LOGIT_DIFF,
+        patch=[
+            SinglePatchingConfig(
+                source=_explicit_element(source_coordinates, activation),
+                target=_explicit_element(target_coordinates, activation),
+            )
+        ],
+    )
+
+
+def _run_explicit(
+    model: HookedTransformer,
+    source_coordinates: list[dict],
+    target_coordinates: list[dict],
+    save_dir: str | None = None,
+    activation: ModelLayerLocation | None = ModelLayerLocation.RESIDUAL_POST,
+) -> torch.Tensor:
+    patching_input = PatchingInput(
+        SOURCE_PROMPT, TARGET_PROMPT, _explicit_patch_config(source_coordinates, target_coordinates, activation)
+    )
+    collector = Patcher(model).apply(patching_input, save_dir=save_dir, return_collector=True, verbose=False)
+    assert collector is not None
+    return collector.result
+
+
+def test_explicit_coordinates_matches_declarative_patch(model: HookedTransformer) -> None:
+    torch.manual_seed(42)
+
+    # The explicit twin of ``test_activation_patching_from_source_into_target``: one coordinate covering
+    # the last layer's full residual stream reproduces the declarative filter's result.
+    coordinate = [{ModelLocation.LAYER: -1}]
+    result = _run_explicit(model, coordinate, coordinate)
+
+    assert result.shape == (1,)
+    assert torch.allclose(result.squeeze(), torch.tensor(1.0))
+
+
+def test_explicit_position_is_respected(model: HookedTransformer) -> None:
+    torch.manual_seed(42)
+
+    # The final token's logits depend only on the last position of the final layer's residual, so
+    # patching just that coordinate reproduces the full source run (metric 1.0). The prompts share their
+    # prefix, so position 0 carries identical activations in both runs and patching it is a no-op
+    # (metric 0.0). If the position were ignored (patching every position), both would give 1.0.
+    last_layer_last_position = [{ModelLocation.LAYER: -1, ModelLocation.POSITION: -1}]
+    last_layer_first_position = [{ModelLocation.LAYER: -1, ModelLocation.POSITION: 0}]
+    last_position = _run_explicit(model, last_layer_last_position, last_layer_last_position)
+    first_position = _run_explicit(model, last_layer_first_position, last_layer_first_position)
+
+    assert torch.allclose(last_position.squeeze(), torch.tensor(1.0), atol=1e-5)
+    assert torch.allclose(first_position.squeeze(), torch.tensor(0.0), atol=1e-5)
+
+
+def test_explicit_pairing_and_artifacts(model: HookedTransformer, tmp_path: Path) -> None:
+    torch.manual_seed(42)
+
+    # Two pairs reading different source layers into different target positions of layer 7.
+    source_coordinates = [
+        {ModelLocation.LAYER: 5, ModelLocation.POSITION: -1},
+        {ModelLocation.LAYER: 6, ModelLocation.POSITION: -1},
+    ]
+    target_coordinates = [
+        {ModelLocation.LAYER: 7, ModelLocation.POSITION: -1},
+        {ModelLocation.LAYER: 7, ModelLocation.POSITION: -2},
+    ]
+    save_dir = tmp_path / "explicit_patch_run"
+    paired = _run_explicit(model, source_coordinates, target_coordinates, save_dir=str(save_dir))
+
+    # Explicit coordinates need not form a grid, so the result is flat: one entry per pair, in order,
+    # each matching the same pair patched on its own.
+    assert paired.shape == (2,)
+    first = _run_explicit(model, source_coordinates[:1], target_coordinates[:1])
+    second = _run_explicit(model, source_coordinates[1:], target_coordinates[1:])
+    assert torch.allclose(paired, torch.cat([first, second]))
+    assert not torch.allclose(first, second)
+
+    # index-0.csv pairs the source/target coordinates with the flat output axis.
+    index_df = pd.read_csv(save_dir / "index-0.csv")
+    assert len(index_df) == 2
+    assert any(col.startswith("source_") for col in index_df.columns)
+    assert any(col.startswith("target_") for col in index_df.columns)
+    assert [col for col in index_df.columns if col.startswith("index_")] == ["index_coordinate"]
+    assert index_df["index_coordinate"].to_list() == [0, 1]
+
+
+def test_explicit_per_coordinate_activation(model: HookedTransformer) -> None:
+    torch.manual_seed(42)
+
+    # Each coordinate carries its own activation: pair 0 patches the final layer's residual at the last
+    # position, reproducing the full source run (metric exactly 1.0, as established above); pair 1
+    # patches mlp.out at the same coordinate, which only swaps the MLP component's contribution, so its
+    # metric lands well away from 1.0 -- proving each row is patched at its own activation's hook.
+    coordinates = [
+        {
+            ModelLocation.ACTIVATION: ModelLayerLocation.RESIDUAL_POST,
+            ModelLocation.LAYER: -1,
+            ModelLocation.POSITION: -1,
+        },
+        {ModelLocation.ACTIVATION: ModelLayerLocation.MLP_OUT, ModelLocation.LAYER: -1, ModelLocation.POSITION: -1},
+    ]
+    result = _run_explicit(model, coordinates, coordinates, activation=None)
+
+    assert result.shape == (2,)
+    assert torch.allclose(result[0], torch.tensor(1.0), atol=1e-5)
+    assert not torch.allclose(result[1], torch.tensor(1.0), atol=1e-2)
+
+
 def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> None:
     torch.manual_seed(42)
 
     # Build the config through ConfigFactory by persisting it to a YAML file and loading it back,
     # mirroring how configs are sourced in production rather than constructing PatchingConfig directly.
     element = {
-        "activation_name": "resid.post",
+        "activation": "resid.post",
         "location": ["layer"],
         "filter": [{"layer": -1}],
         "type": "replace",

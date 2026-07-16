@@ -14,7 +14,7 @@ from intex.patching.config import (
 )
 
 ELEMENT = {
-    "activation_name": "resid.post",
+    "activation": "resid.post",
     "location": ["layer"],
     "filter": [{"layer": -1}],
     "type": "replace",
@@ -23,7 +23,7 @@ ELEMENT = {
 
 def element_config(**overrides) -> PatchingElementConfig:
     defaults = dict(
-        activation_name=ModelLayerLocation.RESIDUAL_POST,
+        activation=ModelLayerLocation.RESIDUAL_POST,
         location=[ModelLocation.LAYER],
         filter=Filter(inclusion_terms=[{ModelLocation.LAYER: -1}]),
         type=PatchingType.REPLACE,
@@ -41,14 +41,14 @@ def test_yaml_shape_equals_code_built_config():
 
 def test_enum_coercion_by_value():
     element = from_dict(PatchingElementConfig, ELEMENT)
-    assert element.activation_name is ModelLayerLocation.RESIDUAL_POST
+    assert element.activation is ModelLayerLocation.RESIDUAL_POST
     assert element.location == [ModelLocation.LAYER]
     assert element.type is PatchingType.REPLACE
 
 
 def test_defaults_apply_for_omitted_keys():
     element = from_dict(PatchingElementConfig, {"type": "value_replace"})
-    assert element.activation_name is None
+    assert element.activation is None
     assert element.location == []
     assert element.filter == Filter()
     assert element.group == Group()
@@ -78,9 +78,9 @@ def test_already_typed_values_pass_through():
     filter_ = Filter(inclusion_terms=[{ModelLocation.LAYER: -1}])
     element = from_dict(
         PatchingElementConfig,
-        {"activation_name": ModelLayerLocation.RESIDUAL_POST, "filter": filter_, "type": PatchingType.REPLACE},
+        {"activation": ModelLayerLocation.RESIDUAL_POST, "filter": filter_, "type": PatchingType.REPLACE},
     )
-    assert element.activation_name is ModelLayerLocation.RESIDUAL_POST
+    assert element.activation is ModelLayerLocation.RESIDUAL_POST
     assert element.filter is filter_
     assert element.type is PatchingType.REPLACE
 
@@ -95,7 +95,7 @@ def test_unknown_key_raises():
 
 def test_missing_required_key_raises():
     with pytest.raises(ValueError, match="Missing required keys for PatchingElementConfig.*type"):
-        from_dict(PatchingElementConfig, {"activation_name": "resid.post"})
+        from_dict(PatchingElementConfig, {"activation": "resid.post"})
 
 
 def test_non_mapping_for_dataclass_raises():

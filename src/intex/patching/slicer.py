@@ -1,7 +1,7 @@
 import abc
 from collections import defaultdict
 
-from intex.model.config import ModelLayerLocation
+from intex.model.config import ModelLayerLocation, ModelLocation
 
 
 class ActivationSlicer(abc.ABC):
@@ -11,8 +11,8 @@ class ActivationSlicer(abc.ABC):
         raise NotImplementedError
 
     @staticmethod
-    def get(activation_name: ModelLayerLocation) -> type["ActivationSlicer"]:
-        match activation_name:
+    def get(activation: ModelLayerLocation) -> type["ActivationSlicer"]:
+        match activation:
             case (
                 ModelLayerLocation.EMBEDDING
                 | ModelLayerLocation.RESIDUAL_PRE
@@ -35,25 +35,25 @@ class ActivationSlicer(abc.ABC):
             case ModelLayerLocation.ATTENTION_PATTERN:
                 return PatternActivationSlicer
             case _:
-                raise ValueError(f"Unknown activation name: {activation_name}")
+                raise ValueError(f"Unknown activation: {activation}")
 
 
 class LinearActivationSlicer(ActivationSlicer):
     @staticmethod
     def extract(index: defaultdict[str, slice | int | list[int]]) -> tuple[slice | int | list[int], ...]:
         # [batch, pos, neuron]
-        return index["batch"], index["pos"], index["neuron"]
+        return index["batch"], index[ModelLocation.POSITION], index[ModelLocation.NEURON]
 
 
 class HeadActivationSlicer(ActivationSlicer):
     @staticmethod
     def extract(index: defaultdict[str, slice | int | list[int]]) -> tuple[slice | int | list[int], ...]:
         # [batch, pos, head, neuron]
-        return index["batch"], index["pos"], index["head"], index["neuron"]
+        return index["batch"], index[ModelLocation.POSITION], index[ModelLocation.HEAD], index[ModelLocation.NEURON]
 
 
 class PatternActivationSlicer(ActivationSlicer):
     @staticmethod
     def extract(index: defaultdict[str, slice | int | list[int]]) -> tuple[slice | int | list[int], ...]:
         # [batch, head, dest_pos, src_pos]
-        return index["batch"], index["head"], index["dest_pos"], index["src_pos"]
+        return index["batch"], index[ModelLocation.HEAD], index["dest_pos"], index["src_pos"]

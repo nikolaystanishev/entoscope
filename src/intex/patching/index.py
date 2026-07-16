@@ -8,7 +8,7 @@ import pandas as pd
 import torch
 from transformer_lens.utilities import get_act_name
 
-from intex.model.config import ACTIVATION_NAME_COLUMN, ModelLayerLocation, ModelLocationIndex, make_df_from_ranges
+from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocationIndex, make_df_from_ranges
 from intex.operation.index import Index
 from intex.patching.config import PatchingElementConfig, SinglePatchingConfig
 from intex.patching.slicer import ActivationSlicer
@@ -52,7 +52,7 @@ class IndexElement:
         return ActivationSlicer.get(self.activation()).extract(index)
 
     def activation(self) -> ModelLayerLocation:
-        return self[ACTIVATION_NAME_COLUMN]
+        return self[ModelLocation.ACTIVATION]
 
     def transformer_activation(self) -> str:
         return get_act_name(TRANSFORMER_ACT_NAME[self.activation()], layer=self.layer())
@@ -99,9 +99,15 @@ class PatchingIndex(Index):
         self.target = target
 
         output_df = self.target.df if len(self.target.df) >= len(self.source.df) else self.source.df
-        coordinate_df = output_df[[col for col in output_df.columns if col != ACTIVATION_NAME_COLUMN]]
-        self.axis_range = coordinate_df.apply(lambda col: len(col.astype(str).unique())).to_list()
-        self.output_df = make_df_from_ranges(coordinate_df.columns.to_list(), self.axis_range)
+        if self.config.source.coordinates is not None and self.config.target.coordinates is not None:
+            if len(self.config.source.coordinates) != len(self.config.target.coordinates):
+                raise ValueError("Source and target coordinates must have same length")
+            self.axis_range = [len(output_df)]
+            self.output_df = make_df_from_ranges(["coordinate"], self.axis_range)
+        else:
+            coordinate_df = output_df[[col for col in output_df.columns if col != ModelLocation.ACTIVATION]]
+            self.axis_range = coordinate_df.apply(lambda col: len(col.astype(str).unique())).to_list()
+            self.output_df = make_df_from_ranges(coordinate_df.columns.to_list(), self.axis_range)
 
     def prepare_output_placeholder(self, device: str | torch.device = "cpu") -> torch.Tensor:
         return torch.zeros(self.axis_range, device=device)

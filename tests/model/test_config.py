@@ -5,7 +5,6 @@ import pytest
 import torch
 
 from intex.model.config import (
-    ACTIVATION_NAME_COLUMN,
     Combination,
     Filter,
     Group,
@@ -37,7 +36,7 @@ def make_prompt(prompt_size):
 
 
 def parse_config(config, *, layer_location=ModelLayerLocation.RESIDUAL_POST, prompt_size=4, **model_kwargs):
-    return from_dict(ModelLocatorConfigMixin, {"activation_name": layer_location, **config}).parse(
+    return from_dict(ModelLocatorConfigMixin, {"activation": layer_location, **config}).parse(
         make_model(**model_kwargs), make_prompt(prompt_size)
     )
 
@@ -55,7 +54,7 @@ def result_rows(index):
     df = index.df
     rows = [
         tuple(
-            sorted((ModelLocation(col).value, _norm(row[col])) for col in df.columns if col != ACTIVATION_NAME_COLUMN)
+            sorted((ModelLocation(col).value, _norm(row[col])) for col in df.columns if col != ModelLocation.ACTIVATION)
         )
         for _, row in df.iterrows()
     ]
@@ -100,12 +99,12 @@ def test_empty_location_has_only_activation_column():
     # With no locations the index has no coordinate columns (the product over zero axes leaves a
     # single empty row); only the stamped activation column remains.
     result = parse_config({"location": []})
-    assert list(result.df.columns) == [ACTIVATION_NAME_COLUMN]
+    assert list(result.df.columns) == [ModelLocation.ACTIVATION]
 
 
 def test_missing_location_key_matches_empty_list():
     # No ``location`` key at all behaves like an empty list.
-    assert list(parse_config({}).df.columns) == [ACTIVATION_NAME_COLUMN]
+    assert list(parse_config({}).df.columns) == [ModelLocation.ACTIVATION]
 
 
 def test_location_cartesian_product():
@@ -116,12 +115,12 @@ def test_location_cartesian_product():
 
 
 # --------------------------------------------------------------------------------------------------
-# Activation column — the configured ``activation_name`` is stamped onto every row of the index
+# Activation column — the configured ``activation`` is stamped onto every row of the index
 # --------------------------------------------------------------------------------------------------
-def test_activation_name_column_is_stamped():
+def test_activation_column_is_stamped():
     result = parse_config({"location": ["layer"]}, layer_location=ModelLayerLocation.ATTENTION_OUT, n_layers=3)
-    assert ACTIVATION_NAME_COLUMN in result.df.columns
-    assert list(result.df[ACTIVATION_NAME_COLUMN]) == [ModelLayerLocation.ATTENTION_OUT.value] * 3
+    assert ModelLocation.ACTIVATION in result.df.columns
+    assert list(result.df[ModelLocation.ACTIVATION]) == [ModelLayerLocation.ATTENTION_OUT.value] * 3
 
 
 # --------------------------------------------------------------------------------------------------
@@ -310,7 +309,7 @@ def test_deserialized_section_keys_are_model_location():
     config = from_dict(
         ModelLocatorConfigMixin,
         {
-            "activation_name": ModelLayerLocation.RESIDUAL_POST,
+            "activation": ModelLayerLocation.RESIDUAL_POST,
             "location": ["layer"],
             "filter": [{"layer": 0}, {"not": {"head": 1}}],
             "group": {"layer": "all"},
@@ -330,7 +329,7 @@ def test_deserialized_section_keys_are_model_location():
 def test_model_location_keys_in_code_built_config():
     # The enum-keyed twin of ``test_full_config_filter_group_combination``, built without raw strings.
     config = ModelLocatorConfigMixin(
-        activation_name=ModelLayerLocation.RESIDUAL_POST,
+        activation=ModelLayerLocation.RESIDUAL_POST,
         location=[ModelLocation.LAYER],
         filter=Filter(inclusion_terms=[{ModelLocation.LAYER: {"range": [0, 2]}}]),
         group=Group({ModelLocation.LAYER: "all"}),
@@ -349,6 +348,96 @@ def test_full_config_filter_group_multi_location():
 
 
 # --------------------------------------------------------------------------------------------------
+# Explicit coordinates — enumerate the exact coordinates instead of generating them from location ranges
+# --------------------------------------------------------------------------------------------------
+def test_explicit_coordinates_rows_in_order():
+    result = parse_config({"coordinates": [{"layer": 2, "position": 1}, {"layer": 0, "position": 3}]})
+    assert [(row["layer"], row["position"]) for _, row in result.df.iterrows()] == [(2, 1), (0, 3)]
+    assert list(result.df[ModelLocation.ACTIVATION]) == [ModelLayerLocation.RESIDUAL_POST.value] * 2
+
+
+def test_explicit_coordinates_negative_values_resolve():
+    result = parse_config({"coordinates": [{"layer": -1, "position": -2}]}, n_layers=5, prompt_size=4)
+    assert result_rows(result) == expected_rows([{"layer": 4, "position": 2}])
+
+
+def test_explicit_coordinates_list_cells():
+    # A list value addresses those elements together in one row; negatives resolve inside lists too.
+    result = parse_config({"coordinates": [{"layer": 1, "position": [0, -1]}]}, prompt_size=4)
+    assert result_rows(result) == expected_rows([{"layer": 1, "position": [0, 3]}])
+
+
+def test_explicit_coordinates_code_built():
+    config = ModelLocatorConfigMixin(
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        coordinates=[{ModelLocation.LAYER: -1, ModelLocation.POSITION: 0}],
+    )
+    result = config.parse(make_model(n_layers=3), make_prompt(4))
+    assert result_rows(result) == expected_rows([{"layer": 2, "position": 0}])
+
+
+def test_explicit_coordinates_empty_list_yields_no_rows():
+    result = parse_config({"coordinates": []})
+    assert len(result.df) == 0
+    assert ModelLocation.ACTIVATION in result.df.columns
+
+
+def test_deserialized_coordinate_keys_are_model_location():
+    config = from_dict(
+        ModelLocatorConfigMixin,
+        {"activation": ModelLayerLocation.RESIDUAL_POST, "coordinates": [{"layer": 0, "position": -1}]},
+    )
+    assert config.coordinates is not None
+    assert all(isinstance(location, ModelLocation) for coordinate in config.coordinates for location in coordinate)
+
+
+def test_explicit_coordinates_per_coordinate_activation():
+    # Coordinates may carry their own activation instead of the config-level one; the deserializer turns
+    # the values into ModelLayerLocation members and parse orders the activation column last.
+    config = from_dict(
+        ModelLocatorConfigMixin,
+        {"coordinates": [{"activation": "resid.post", "layer": 0}, {"activation": "mlp.out", "layer": -1}]},
+    )
+    assert config.coordinates is not None
+    assert all(
+        isinstance(coordinate[ModelLocation.ACTIVATION], ModelLayerLocation) for coordinate in config.coordinates
+    )
+
+    result = config.parse(make_model(n_layers=3), make_prompt(4))
+    assert list(result.df.columns) == [ModelLocation.LAYER, ModelLocation.ACTIVATION]
+    assert list(result.df[ModelLocation.ACTIVATION]) == [ModelLayerLocation.RESIDUAL_POST, ModelLayerLocation.MLP_OUT]
+    assert list(result.df["layer"]) == [0, 2]
+
+
+def test_explicit_coordinates_negative_resolution_uses_coordinate_activation():
+    # The same {neuron: -1} resolves against each coordinate's own activation dimension.
+    config = from_dict(
+        ModelLocatorConfigMixin,
+        {"coordinates": [{"activation": "attn.q", "neuron": -1}, {"activation": "mlp.post", "neuron": -1}]},
+    )
+    result = config.parse(make_model(d_head=4, d_mlp=16), make_prompt(4))
+    assert list(result.df["neuron"]) == [3, 15]
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        # config-level and per-coordinate activation together
+        {"activation": "resid.post", "coordinates": [{"activation": "resid.post", "layer": 0}]},
+        # only some coordinates carry activation
+        {"coordinates": [{"activation": "resid.post", "layer": 0}, {"layer": 1}]},
+        # invalid activation value
+        {"coordinates": [{"activation": "bogus", "layer": 0}]},
+        # empty coordinate
+        {"coordinates": [{}]},
+    ],
+)
+def test_explicit_coordinates_activation_construction_raises(config):
+    with pytest.raises(ValueError):
+        from_dict(ModelLocatorConfigMixin, config)
+
+
+# --------------------------------------------------------------------------------------------------
 # Error cases raised while *deserializing* the mixin (Filter.from_config / ModelLocation enum / strict keys)
 # --------------------------------------------------------------------------------------------------
 @pytest.mark.parametrize(
@@ -362,11 +451,16 @@ def test_full_config_filter_group_multi_location():
         {"fitler": [{"layer": 0}]},  # unknown key (typo) is rejected, not ignored
         {"filter": [{"bogus": 0}]},  # pattern key is not a ModelLocation value
         {"group": {"bogus": "all"}},  # group key is not a ModelLocation value
+        {"location": ["activation"]},  # activation is not a declarative location
+        {"coordinates": [{"bogus": 0}]},  # coordinate key is not a ModelLocation value
+        {"coordinates": [{"layer": 0}], "location": ["layer"]},  # explicit and declarative modes are exclusive
+        {"coordinates": [{"layer": 0}], "filter": [{"layer": 0}]},  # explicit and declarative modes are exclusive
+        {"coordinates": [{"layer": 0}, {"head": 0}]},  # coordinates do not share the same locations
     ],
 )
 def test_construction_raises_value_error(config):
     with pytest.raises(ValueError):
-        from_dict(ModelLocatorConfigMixin, {"activation_name": ModelLayerLocation.RESIDUAL_POST, **config})
+        from_dict(ModelLocatorConfigMixin, {"activation": ModelLayerLocation.RESIDUAL_POST, **config})
 
 
 # --------------------------------------------------------------------------------------------------
@@ -377,11 +471,12 @@ def test_construction_raises_value_error(config):
     [
         {"location": ["layer"], "filter": [{"layer": "x"}]},  # invalid constraint type
         {"location": ["layer"], "filter": [{"head": 0}]},  # references a location not in the index
+        {"coordinates": [{"layer": "x"}]},  # invalid coordinate value type
     ],
 )
 def test_parse_raises_value_error(config):
     mixin = from_dict(
-        ModelLocatorConfigMixin, {"activation_name": ModelLayerLocation.RESIDUAL_POST, **config}
+        ModelLocatorConfigMixin, {"activation": ModelLayerLocation.RESIDUAL_POST, **config}
     )  # deserialization succeeds
     with pytest.raises(ValueError):
         mixin.parse(make_model(), make_prompt(4))

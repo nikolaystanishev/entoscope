@@ -15,10 +15,9 @@ from transformer_lens import HookedTransformer
 
 from intex.util.collections import range_combinations
 
-ACTIVATION_NAME_COLUMN = "activation_name"
-
 
 class ModelLocation(str, Enum):
+    ACTIVATION = "activation"
     LAYER = "layer"
     HEAD = "head"
     NEURON = "neuron"
@@ -142,6 +141,9 @@ class Filter:
             )
         )
 
+    def location_range(self, location: ModelLocation, max_value: int) -> list[int]:
+        return list(self.included(location, max_value) - self.excluded(location, max_value))
+
     def apply(self, index_df: pd.DataFrame, location_to_max_value: dict) -> pd.DataFrame:
         if len(self.inclusion_terms) > 0:
             index_df = index_df[
@@ -246,34 +248,142 @@ class Combination:
         return index_df
 
 
+class Coordinates(list[dict[ModelLocation, int | list[int] | ModelLayerLocation]]):
+    """Explicit coordinates, each a ``location -> value`` mapping.
+
+    ``from_config`` converts the config file's plain strings: coordinate keys become
+    ``ModelLocation`` members, and ``activation`` values become ``ModelLayerLocation`` members.
+    ``to_df`` resolves the coordinates into an index DataFrame, negative values counting from the
+    end and the ``activation`` argument serving as the fallback for coordinates without their own.
+    """
+
+    @classmethod
+    def from_config(cls, coordinates: list) -> "Coordinates":
+        if not isinstance(coordinates, list):
+            raise ValueError(f"Expected a list of coordinates, got {coordinates!r}")
+        for coordinate in coordinates:
+            if not isinstance(coordinate, dict) or len(coordinate) == 0:
+                raise ValueError(f"Invalid coordinate: {coordinate!r}")
+
+        return cls(
+            {
+                ModelLocation(key): (
+                    ModelLayerLocation(value) if ModelLocation(key) is ModelLocation.ACTIVATION else value
+                )
+                for key, value in coordinate.items()
+            }
+            for coordinate in coordinates
+        )
+
+    def to_df(
+        self,
+        model: HookedTransformer,
+        prompt: Int[torch.Tensor, "batch pos"],
+        activation: ModelLayerLocation | None = None,
+    ) -> pd.DataFrame:
+        keys = sorted(list(self[0].keys()) if self else [], key=lambda key: key == ModelLocation.ACTIVATION)
+        return pd.DataFrame(
+            {
+                key: pd.Series(
+                    [self._resolve_entry(model, prompt, coordinate, key, activation) for coordinate in self],
+                    dtype=object,
+                )
+                for key in keys
+            }
+        )
+
+    @classmethod
+    def _resolve_entry(
+        cls,
+        model: HookedTransformer,
+        prompt: Int[torch.Tensor, "batch pos"],
+        coordinate: dict,
+        key: ModelLocation,
+        activation: ModelLayerLocation | None,
+    ) -> int | list[int] | ModelLayerLocation:
+        if key == ModelLocation.ACTIVATION:
+            return coordinate[key]
+        activation = coordinate.get(ModelLocation.ACTIVATION, activation)
+        max_value = MODEL_LOCATION_MAPPER[key](model, activation, prompt.shape[1])
+        return cls._resolve_value(coordinate[key], key, max_value)
+
+    @classmethod
+    def _resolve_value(cls, value: int | list[int], location: ModelLocation, max_value: int) -> int | list[int]:
+        if isinstance(value, list):
+            return [cls._resolve_value(el, location, max_value) for el in value]
+        if isinstance(value, int):
+            return value if value >= 0 else max_value + value
+        raise ValueError(f"Invalid coordinate value for '{location}': {value!r}")
+
+
 @dataclass(kw_only=True)
 class ModelLocatorConfigMixin:
-    activation_name: ModelLayerLocation | None = None
+    """Locate model activations either declaratively or explicitly.
+
+    Declaratively, ``location`` names the index axes and the full range of every axis is narrowed
+    by ``filter`` and reshaped by the transforms. Explicitly, ``coordinates`` enumerates the exact
+    points as ``location -> value`` mappings (every coordinate using the same locations, values as
+    in ``Group`` rows: an int or a list of ints patched together); the two modes are mutually
+    exclusive. A coordinate may also carry its own ``activation`` — then every coordinate must, and
+    the config-level one must be unset. Negative values count from the end, as in ``Filter``.
+    """
+
+    activation: ModelLayerLocation | None = None
     location: list[ModelLocation] = field(default_factory=list)
     filter: Filter = field(default_factory=Filter)
     group: Group = field(default_factory=Group)
     incremental: Incremental = field(default_factory=Incremental)
     combination: Combination = field(default_factory=Combination)
+    coordinates: Coordinates | None = None
+
+    def __post_init__(self):
+        if ModelLocation.ACTIVATION in self.location:
+            raise ValueError("'activation' is not a declarative location; set 'activation' on the config instead")
+        if self.coordinates is None:
+            return
+        if (
+            self.location
+            or self.filter.inclusion_terms
+            or self.filter.exclusion_terms
+            or self.group
+            or self.incremental
+            or self.combination.location
+        ):
+            raise ValueError(
+                "'coordinates' cannot be combined with 'location'/'filter'/'group'/'incremental'/'combination'"
+            )
+        keys = set(self.coordinates[0].keys()) if self.coordinates else set()
+        for coordinate in self.coordinates:
+            if len(coordinate) == 0:
+                raise ValueError(f"Invalid coordinate: {coordinate!r}")
+            if set(coordinate.keys()) != keys:
+                raise ValueError(
+                    f"All coordinates must share the same keys {sorted(getattr(key, 'value', key) for key in keys)}:"
+                    f" {coordinate!r}"
+                )
+        if ModelLocation.ACTIVATION in keys and self.activation is not None:
+            raise ValueError("'activation' cannot be set both on the config and inside the coordinates")
 
     @property
     def _transforms(self) -> list[IndexTransform]:
         return [self.group, self.incremental, self.combination]
 
     def parse(self, model: HookedTransformer, prompt: Int[torch.Tensor, "batch pos"]) -> ModelLocationIndex:
-        location_to_max_value = {
-            el: MODEL_LOCATION_MAPPER[el](model, self.activation_name, prompt.shape[1]) for el in self.location
-        }
-        index_df = make_df_from_ranges(
-            self.location, [self._location_range(el, location_to_max_value[el]) for el in self.location]
-        )
-        index_df = self.filter.apply(index_df, location_to_max_value)
+        if self.coordinates is not None:
+            index_df = self.coordinates.to_df(model, prompt, self.activation)
+        else:
+            location_to_max_value = {
+                el: MODEL_LOCATION_MAPPER[el](model, self.activation, prompt.shape[1]) for el in self.location
+            }
+            index_df = make_df_from_ranges(
+                self.location, [self.filter.location_range(el, location_to_max_value[el]) for el in self.location]
+            )
+            index_df = self.filter.apply(index_df, location_to_max_value)
 
-        for transform in self._transforms:
-            index_df = transform.apply(index_df)
+            for transform in self._transforms:
+                index_df = transform.apply(index_df)
 
-        index_df[ACTIVATION_NAME_COLUMN] = self.activation_name
+        if ModelLocation.ACTIVATION not in index_df.columns:
+            index_df[ModelLocation.ACTIVATION] = self.activation
 
         return ModelLocationIndex(index_df)
-
-    def _location_range(self, location: str, max_value: int) -> list[int]:
-        return list(self.filter.included(location, max_value) - self.filter.excluded(location, max_value))
