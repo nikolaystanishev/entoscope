@@ -4,8 +4,9 @@ from collections.abc import Callable
 import numpy as np
 import torch
 
+from intex.model.index import IndexElement
 from intex.patching.config import PatchingType
-from intex.patching.index import IndexElement, SinglePatchingIndex
+from intex.patching.index import SinglePatchingIndex
 from intex.patching.input import PatchingInput
 
 

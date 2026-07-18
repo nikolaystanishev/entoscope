@@ -11,7 +11,7 @@ from intex.model.config import (
     Incremental,
     ModelLayerLocation,
     ModelLocation,
-    ModelLocatorConfigMixin,
+    ModelLocatorConfig,
 )
 from intex.operation.config import from_dict
 
@@ -36,7 +36,7 @@ def make_prompt(prompt_size):
 
 
 def parse_config(config, *, layer_location=ModelLayerLocation.RESIDUAL_POST, prompt_size=4, **model_kwargs):
-    return from_dict(ModelLocatorConfigMixin, {"activation": layer_location, **config}).parse(
+    return from_dict(ModelLocatorConfig, {"activation": layer_location, **config}).parse(
         make_model(**model_kwargs), make_prompt(prompt_size)
     )
 
@@ -307,7 +307,7 @@ def test_full_config_filter_group_combination():
 # --------------------------------------------------------------------------------------------------
 def test_deserialized_section_keys_are_model_location():
     config = from_dict(
-        ModelLocatorConfigMixin,
+        ModelLocatorConfig,
         {
             "activation": ModelLayerLocation.RESIDUAL_POST,
             "location": ["layer"],
@@ -328,7 +328,7 @@ def test_deserialized_section_keys_are_model_location():
 
 def test_model_location_keys_in_code_built_config():
     # The enum-keyed twin of ``test_full_config_filter_group_combination``, built without raw strings.
-    config = ModelLocatorConfigMixin(
+    config = ModelLocatorConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
         location=[ModelLocation.LAYER],
         filter=Filter(inclusion_terms=[{ModelLocation.LAYER: {"range": [0, 2]}}]),
@@ -368,7 +368,7 @@ def test_explicit_coordinates_list_cells():
 
 
 def test_explicit_coordinates_code_built():
-    config = ModelLocatorConfigMixin(
+    config = ModelLocatorConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
         coordinates=[{ModelLocation.LAYER: -1, ModelLocation.POSITION: 0}],
     )
@@ -384,7 +384,7 @@ def test_explicit_coordinates_empty_list_yields_no_rows():
 
 def test_deserialized_coordinate_keys_are_model_location():
     config = from_dict(
-        ModelLocatorConfigMixin,
+        ModelLocatorConfig,
         {"activation": ModelLayerLocation.RESIDUAL_POST, "coordinates": [{"layer": 0, "position": -1}]},
     )
     assert config.coordinates is not None
@@ -395,7 +395,7 @@ def test_explicit_coordinates_per_coordinate_activation():
     # Coordinates may carry their own activation instead of the config-level one; the deserializer turns
     # the values into ModelLayerLocation members and parse orders the activation column last.
     config = from_dict(
-        ModelLocatorConfigMixin,
+        ModelLocatorConfig,
         {"coordinates": [{"activation": "resid.post", "layer": 0}, {"activation": "mlp.out", "layer": -1}]},
     )
     assert config.coordinates is not None
@@ -412,7 +412,7 @@ def test_explicit_coordinates_per_coordinate_activation():
 def test_explicit_coordinates_negative_resolution_uses_coordinate_activation():
     # The same {neuron: -1} resolves against each coordinate's own activation dimension.
     config = from_dict(
-        ModelLocatorConfigMixin,
+        ModelLocatorConfig,
         {"coordinates": [{"activation": "attn.q", "neuron": -1}, {"activation": "mlp.post", "neuron": -1}]},
     )
     result = config.parse(make_model(d_head=4, d_mlp=16), make_prompt(4))
@@ -434,7 +434,7 @@ def test_explicit_coordinates_negative_resolution_uses_coordinate_activation():
 )
 def test_explicit_coordinates_activation_construction_raises(config):
     with pytest.raises(ValueError):
-        from_dict(ModelLocatorConfigMixin, config)
+        from_dict(ModelLocatorConfig, config)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -460,7 +460,7 @@ def test_explicit_coordinates_activation_construction_raises(config):
 )
 def test_construction_raises_value_error(config):
     with pytest.raises(ValueError):
-        from_dict(ModelLocatorConfigMixin, {"activation": ModelLayerLocation.RESIDUAL_POST, **config})
+        from_dict(ModelLocatorConfig, {"activation": ModelLayerLocation.RESIDUAL_POST, **config})
 
 
 # --------------------------------------------------------------------------------------------------
@@ -476,7 +476,7 @@ def test_construction_raises_value_error(config):
 )
 def test_parse_raises_value_error(config):
     mixin = from_dict(
-        ModelLocatorConfigMixin, {"activation": ModelLayerLocation.RESIDUAL_POST, **config}
+        ModelLocatorConfig, {"activation": ModelLayerLocation.RESIDUAL_POST, **config}
     )  # deserialization succeeds
     with pytest.raises(ValueError):
         mixin.parse(make_model(), make_prompt(4))
