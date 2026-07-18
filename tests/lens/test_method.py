@@ -1,12 +1,10 @@
 import pytest
-import torch
 
 from intex.lens.config import LensConfig, LensType
 from intex.lens.method.factory import LensMethodFactory
 from intex.lens.method.lens import AbstractLensMethod
 from intex.lens.method.logit_lens import LogitLens
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from intex.model.index import IndexElement
 
 
 def _config() -> LensConfig:
@@ -17,10 +15,6 @@ def _config() -> LensConfig:
             location=[ModelLocation.LAYER, ModelLocation.POSITION],
         ),
     )
-
-
-def _element(config: LensConfig) -> IndexElement[ModelLocatorConfig]:
-    return IndexElement(config.source, ["activation", "layer", "position"], [ModelLayerLocation.RESIDUAL_POST, 0, 0])
 
 
 def test_abstract_method_cannot_be_instantiated():
@@ -46,11 +40,3 @@ def test_factory_create_builds_configured_instance():
     assert isinstance(method, LogitLens)
     assert method.model is model
     assert method.config is config
-
-
-def test_logit_lens_project_is_not_implemented():
-    config = _config()
-    method = LogitLens(object(), config)
-
-    with pytest.raises(NotImplementedError):
-        method.project(torch.zeros(1, 4), _element(config))

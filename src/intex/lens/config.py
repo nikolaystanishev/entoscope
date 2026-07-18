@@ -14,5 +14,5 @@ class LensType(str, Enum):
 @dataclass(kw_only=True)
 class LensConfig(AbstractConfig):
     type: LensType
-    source: ModelLocatorConfig
     top_k: int = 1
+    source: ModelLocatorConfig

@@ -11,6 +11,7 @@ from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.lens.method.factory import LensMethodFactory
 from intex.lens.method.lens import AbstractLensMethod
+from intex.lens.method.logit_lens import LogitLens
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.model.index import IndexElement
 from intex.operation.config import ConfigFactory
@@ -175,6 +176,23 @@ def test_artifacts_saved_to_disk(model, fake_method, tmp_path):
     assert saved_config["top_k"] == 2
 
 
-def test_logit_lens_stub_is_wired(model):
-    with pytest.raises(NotImplementedError):
-        Lens(model).apply(LensInput(PROMPT, _declarative_config()), verbose=False)
+def test_logit_lens_projection_equals_model_logits(model):
+    lens_input = LensInput(PROMPT, _declarative_config()).prepare(model)
+    method = LogitLens(model, lens_input.config)
+    element = next(iter(lens_input.index)).source
+
+    final_residual = lens_input.cache[f"blocks.{model.cfg.n_layers - 1}.hook_resid_post"]
+    assert torch.allclose(method.project(final_residual, element), lens_input.logits, atol=1e-4)
+
+
+def test_logit_lens_top1_matches_model_prediction_at_final_layer(model):
+    lens_input = LensInput(PROMPT, _declarative_config())
+    collector = Lens(model).apply(lens_input, return_collector=True, verbose=False)
+    result = collector.result
+
+    probabilities = lens_input.logits.softmax(dim=-1)[0]
+    for _, row in result[result.source_layer == model.cfg.n_layers - 1].iterrows():
+        position = row["source_position"]
+        assert row["token_0"] == probabilities[position].argmax().item()
+        assert row["str_token_0"] == escape_token(model.to_single_str_token(row["token_0"]))
+        assert row["probability_0"] == pytest.approx(probabilities[position].max().item(), rel=1e-4)

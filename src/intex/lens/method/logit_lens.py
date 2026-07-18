@@ -12,4 +12,5 @@ class LogitLens(AbstractLensMethod):
         activation: Float[torch.Tensor, "..."],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_vocab"]:
-        raise NotImplementedError
+        with torch.no_grad():
+            return self.model.ln_final(activation) @ self.model.W_U + self.model.b_U
