@@ -135,13 +135,16 @@ class Index(Generic[T]):
     def prepare_output_placeholder(self, device: str | torch.device = "cpu") -> torch.Tensor:
         return torch.zeros(self.axis_range, device=device)
 
-    def to_csv(self, path: str):
+    def to_df(self) -> pd.DataFrame:
         dfs = [self.source.df.add_prefix("source_")]
         if self.target is not None:
             dfs.append(self.target.df.add_prefix("target_"))
         dfs.append(self.output_df.add_prefix("index_"))
 
-        pd.concat(dfs, axis=1).to_csv(path, index=False)
+        return pd.concat(dfs, axis=1)
+
+    def to_csv(self, path: str):
+        self.to_df().to_csv(path, index=False)
 
     def __iter__(self):
         source_columns = self.source.df.columns.to_list()

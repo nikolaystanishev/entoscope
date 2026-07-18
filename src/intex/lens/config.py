@@ -15,3 +15,4 @@ class LensType(str, Enum):
 class LensConfig(AbstractConfig):
     type: LensType
     source: ModelLocatorConfig
+    top_k: int = 1

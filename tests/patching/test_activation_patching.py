@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import pandas as pd
-import pytest
 import torch
 import yaml
 from transformer_lens import HookedTransformer
@@ -21,13 +20,6 @@ from intex.patching.patcher import Patcher
 
 SOURCE_PROMPT = "The capital of France is"
 TARGET_PROMPT = "The capital of Spain is"
-
-
-@pytest.fixture(scope="module")
-def model() -> HookedTransformer:
-    model = HookedTransformer.from_pretrained("gpt2")
-    model.eval()
-    return model
 
 
 def _last_layer_resid_element() -> PatchingElementConfig:

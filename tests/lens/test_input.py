@@ -1,20 +1,12 @@
 import pandas as pd
 import pytest
 import torch
-from transformer_lens import HookedTransformer
 
 from intex.lens.config import LensConfig, LensType
 from intex.lens.input import LensInput
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 
 PROMPT = "The capital of France is"
-
-
-@pytest.fixture(scope="module")
-def model() -> HookedTransformer:
-    model = HookedTransformer.from_pretrained("gpt2")
-    model.eval()
-    return model
 
 
 def _declarative_config() -> LensConfig:

@@ -34,6 +34,14 @@ def test_enum_coercion_by_value():
     assert config.source.location == [ModelLocation.LAYER, ModelLocation.POSITION]
 
 
+def test_top_k_defaults_to_one():
+    assert from_dict(LensConfig, LENS).top_k == 1
+
+
+def test_top_k_explicit():
+    assert from_dict(LensConfig, {**LENS, "top_k": 5}).top_k == 5
+
+
 def test_invalid_type_raises():
     with pytest.raises(ValueError):
         from_dict(LensConfig, {**LENS, "type": "tuned_lens"})
