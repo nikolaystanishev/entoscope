@@ -17,7 +17,6 @@ from intex.model.config import (
     make_df_from_ranges,
 )
 from intex.model.slicer import ActivationSlicer
-from intex.operation.index import Index as OperationIndex
 from intex.util.collections import dataframe_to_list, zip_fill
 
 # Maps intex's dotted ``ModelLayerLocation`` values onto the names ``get_act_name`` expects.
@@ -102,7 +101,7 @@ class SingleIndex(Generic[T]):
         return self
 
 
-class Index(Generic[T], OperationIndex):
+class Index(Generic[T]):
     def __init__(
         self,
         source_config: T,
