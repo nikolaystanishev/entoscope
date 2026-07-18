@@ -56,7 +56,7 @@ def test_prepare_is_idempotent(model):
 
 def test_unprepared_access_asserts():
     with pytest.raises(AssertionError):
-        LensInput(PROMPT, _declarative_config()).tokens
+        _ = LensInput(PROMPT, _declarative_config()).tokens
 
 
 def test_declarative_index_covers_full_grid(model):

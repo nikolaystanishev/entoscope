@@ -5,7 +5,8 @@ from jaxtyping import Float, Int
 from transformer_lens import ActivationCache, HookedTransformer
 
 from intex.lens.config import LensConfig
-from intex.lens.index import LensIndex
+from intex.model.config import ModelLocatorConfig
+from intex.model.index import Index
 from intex.operation.input import OperationInput
 
 
@@ -18,7 +19,7 @@ class LensInput(OperationInput):
     _logits: Float[torch.Tensor, "batch pos d_vocab"] | None = field(init=False, default=None)
     _cache: ActivationCache | None = field(init=False, default=None)
 
-    _index: LensIndex | None = field(init=False, default=None)
+    _index: Index[ModelLocatorConfig] | None = field(init=False, default=None)
 
     def prepare(self, model: HookedTransformer) -> "LensInput":
         if self._index is None:
@@ -27,7 +28,7 @@ class LensInput(OperationInput):
             with torch.no_grad():
                 self._logits, self._cache = model.run_with_cache(self._tokens)
 
-            self._index = LensIndex(self.config.source, self.config.source.parse(model, self.tokens))
+            self._index = Index[ModelLocatorConfig](self.config.source, self.config.source.parse(model, self.tokens))
 
         return self
 
@@ -47,7 +48,7 @@ class LensInput(OperationInput):
         return self._cache
 
     @property
-    def index(self) -> LensIndex:
+    def index(self) -> Index[ModelLocatorConfig]:
         assert self._index is not None
         return self._index
 

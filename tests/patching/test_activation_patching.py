@@ -220,7 +220,7 @@ def test_multi_config_patching_mlp_mhsa_and_pattern(model: HookedTransformer) ->
     # The config carries three patches; each becomes its own index, targeting -- in order -- the MLP
     # post-activation, the MHSA queries, and the attention pattern.
     indices = patching_input.index
-    assert [idx.config.target.activation for idx in indices] == [
+    assert [idx.target_config.activation for idx in indices] == [
         ModelLayerLocation.MLP_POST,
         ModelLayerLocation.ATTENTION_Q,
         ModelLayerLocation.ATTENTION_PATTERN,
