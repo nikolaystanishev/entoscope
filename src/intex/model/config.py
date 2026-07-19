@@ -8,8 +8,6 @@ from typing import Protocol
 
 import numpy as np
 import pandas as pd
-import torch
-from jaxtyping import Int
 from pandas._typing import Axes
 from transformer_lens import HookedTransformer
 
@@ -278,14 +276,14 @@ class Coordinates(list[dict[ModelLocation, int | list[int] | ModelLayerLocation]
     def to_df(
         self,
         model: HookedTransformer,
-        prompt: Int[torch.Tensor, "batch pos"],
+        n_positions: int,
         activation: ModelLayerLocation | None = None,
     ) -> pd.DataFrame:
         keys = sorted(list(self[0].keys()) if self else [], key=lambda key: key == ModelLocation.ACTIVATION)
         return pd.DataFrame(
             {
                 key: pd.Series(
-                    [self._resolve_entry(model, prompt, coordinate, key, activation) for coordinate in self],
+                    [self._resolve_entry(model, n_positions, coordinate, key, activation) for coordinate in self],
                     dtype=object,
                 )
                 for key in keys
@@ -296,7 +294,7 @@ class Coordinates(list[dict[ModelLocation, int | list[int] | ModelLayerLocation]
     def _resolve_entry(
         cls,
         model: HookedTransformer,
-        prompt: Int[torch.Tensor, "batch pos"],
+        n_positions: int,
         coordinate: dict,
         key: ModelLocation,
         activation: ModelLayerLocation | None,
@@ -304,7 +302,7 @@ class Coordinates(list[dict[ModelLocation, int | list[int] | ModelLayerLocation]
         if key == ModelLocation.ACTIVATION:
             return coordinate[key]
         activation = coordinate.get(ModelLocation.ACTIVATION, activation)
-        max_value = MODEL_LOCATION_MAPPER[key](model, activation, prompt.shape[1])
+        max_value = MODEL_LOCATION_MAPPER[key](model, activation, n_positions)
         return cls._resolve_value(coordinate[key], key, max_value)
 
     @classmethod
@@ -370,12 +368,12 @@ class ModelLocatorConfig:
     def _transforms(self) -> list[IndexTransform]:
         return [self.group, self.incremental, self.combination]
 
-    def parse(self, model: HookedTransformer, prompt: Int[torch.Tensor, "batch pos"]) -> ModelLocationIndex:
+    def parse(self, model: HookedTransformer, n_positions: int) -> ModelLocationIndex:
         if self.coordinates is not None:
-            index_df = self.coordinates.to_df(model, prompt, self.activation)
+            index_df = self.coordinates.to_df(model, n_positions, self.activation)
         else:
             location_to_max_value = {
-                el: MODEL_LOCATION_MAPPER[el](model, self.activation, prompt.shape[1]) for el in self.location
+                el: MODEL_LOCATION_MAPPER[el](model, self.activation, n_positions) for el in self.location
             }
             index_df = make_df_from_ranges(
                 self.location, [self.filter.location_range(el, location_to_max_value[el]) for el in self.location]

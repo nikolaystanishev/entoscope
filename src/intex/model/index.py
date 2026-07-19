@@ -51,7 +51,7 @@ class IndexElement(Generic[T]):
         self.index = index
         self.batch_index = None
 
-    def slices(self) -> tuple[slice | int | list[int], ...]:
+    def _index_by_name(self) -> defaultdict[str, int | list[int] | slice]:
         index: defaultdict[str, int | list[int] | slice] = defaultdict(lambda: slice(None))
         index.update(
             {name: idx for name, idx in zip(self.index_names, self.index, strict=True) if isinstance(idx, str) is False}
@@ -60,7 +60,25 @@ class IndexElement(Generic[T]):
         if self.batch_index is not None:
             index["batch"] = self.batch_index
 
-        return ActivationSlicer.get(self.activation()).extract(index)
+        return index
+
+    def slices(self) -> tuple[slice | int | list[int], ...]:
+        return ActivationSlicer.get(self.activation()).extract(self._index_by_name())
+
+    def remaining_axes(self) -> list[ModelLocation | str]:
+        """Names of the activation axes that survive ``slices()``, batch excluded.
+
+        An ``int`` index drops its axis while a ``slice`` or ``list`` keeps it. Two or more
+        ``list`` indices trigger NumPy-style advanced indexing, which merges those axes into
+        one whose name can no longer be attributed — that case raises instead.
+        """
+        slicer = ActivationSlicer.get(self.activation())
+        slices = slicer.extract(self._index_by_name())
+        if sum(isinstance(idx, list) for idx in slices) > 1:
+            raise ValueError("Cannot name the remaining axes when more than one axis is indexed with a list")
+        return [
+            name for name, idx in zip(slicer.AXES, slices, strict=True) if name != "batch" and not isinstance(idx, int)
+        ]
 
     def activation(self) -> ModelLayerLocation:
         return self[ModelLocation.ACTIVATION]

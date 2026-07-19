@@ -2,7 +2,6 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-import torch
 
 from intex.model.config import (
     Combination,
@@ -30,14 +29,9 @@ def make_model(n_layers=4, n_heads=4, n_key_value_heads=2, d_model=8, d_head=4, 
     )
 
 
-def make_prompt(prompt_size):
-    """A stand-in ``[batch, pos]`` token tensor; ``parse`` only reads ``prompt.shape[1]``."""
-    return torch.zeros((1, prompt_size), dtype=torch.long)
-
-
 def parse_config(config, *, layer_location=ModelLayerLocation.RESIDUAL_POST, prompt_size=4, **model_kwargs):
     return from_dict(ModelLocatorConfig, {"activation": layer_location, **config}).parse(
-        make_model(**model_kwargs), make_prompt(prompt_size)
+        make_model(**model_kwargs), prompt_size
     )
 
 
@@ -335,7 +329,7 @@ def test_model_location_keys_in_code_built_config():
         group=Group({ModelLocation.LAYER: "all"}),
         combination=Combination(location=[ModelLocation.LAYER], max_elements=2),
     )
-    result = config.parse(make_model(n_layers=4), make_prompt(4))
+    result = config.parse(make_model(n_layers=4), 4)
     assert result_rows(result) == expected_rows(
         [{"layer": (0,)}, {"layer": (1,)}, {"layer": (2,)}, {"layer": (0, 1)}, {"layer": (0, 2)}, {"layer": (1, 2)}]
     )
@@ -372,7 +366,7 @@ def test_explicit_coordinates_code_built():
         activation=ModelLayerLocation.RESIDUAL_POST,
         coordinates=[{ModelLocation.LAYER: -1, ModelLocation.POSITION: 0}],
     )
-    result = config.parse(make_model(n_layers=3), make_prompt(4))
+    result = config.parse(make_model(n_layers=3), 4)
     assert result_rows(result) == expected_rows([{"layer": 2, "position": 0}])
 
 
@@ -403,7 +397,7 @@ def test_explicit_coordinates_per_coordinate_activation():
         isinstance(coordinate[ModelLocation.ACTIVATION], ModelLayerLocation) for coordinate in config.coordinates
     )
 
-    result = config.parse(make_model(n_layers=3), make_prompt(4))
+    result = config.parse(make_model(n_layers=3), 4)
     assert list(result.df.columns) == [ModelLocation.LAYER, ModelLocation.ACTIVATION]
     assert list(result.df[ModelLocation.ACTIVATION]) == [ModelLayerLocation.RESIDUAL_POST, ModelLayerLocation.MLP_OUT]
     assert list(result.df["layer"]) == [0, 2]
@@ -415,7 +409,7 @@ def test_explicit_coordinates_negative_resolution_uses_coordinate_activation():
         ModelLocatorConfig,
         {"coordinates": [{"activation": "attn.q", "neuron": -1}, {"activation": "mlp.post", "neuron": -1}]},
     )
-    result = config.parse(make_model(d_head=4, d_mlp=16), make_prompt(4))
+    result = config.parse(make_model(d_head=4, d_mlp=16), 4)
     assert list(result.df["neuron"]) == [3, 15]
 
 
@@ -479,4 +473,4 @@ def test_parse_raises_value_error(config):
         ModelLocatorConfig, {"activation": ModelLayerLocation.RESIDUAL_POST, **config}
     )  # deserialization succeeds
     with pytest.raises(ValueError):
-        mixin.parse(make_model(), make_prompt(4))
+        mixin.parse(make_model(), 4)

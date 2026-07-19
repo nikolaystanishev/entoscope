@@ -28,7 +28,9 @@ class LensInput(OperationInput):
             with torch.no_grad():
                 self._logits, self._cache = model.run_with_cache(self._tokens)
 
-            self._index = Index[ModelLocatorConfig](self.config.source, self.config.source.parse(model, self.tokens))
+            self._index = Index[ModelLocatorConfig](
+                self.config.source, self.config.source.parse(model, self.tokens.shape[1])
+            )
 
         return self
 
