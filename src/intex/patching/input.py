@@ -4,9 +4,9 @@ import torch
 from jaxtyping import Float, Int
 from transformer_lens import ActivationCache, HookedTransformer
 
+from intex.model.index import Index
 from intex.operation.input import OperationInput
-from intex.patching.config import PatchingConfig
-from intex.patching.index import PatchingIndex
+from intex.patching.config import PatchingConfig, PatchingElementConfig
 from intex.patching.metric import LogitDiffMixin
 
 
@@ -25,7 +25,7 @@ class PatchingInput(OperationInput):
     _source_cache: ActivationCache | None = field(init=False, default=None)
     _target_cache: ActivationCache | None = field(init=False, default=None)
 
-    _index: list[PatchingIndex] | None = field(init=False, default=None)
+    _index: list[Index[PatchingElementConfig]] | None = field(init=False, default=None)
 
     _source_baseline: torch.Tensor | None = field(init=False, default=None)
     _target_baseline: torch.Tensor | None = field(init=False, default=None)
@@ -45,9 +45,10 @@ class PatchingInput(OperationInput):
             self._target_generation = int(self._target_logits[0, -1].argmax())
 
             index = [
-                PatchingIndex(
-                    patching_config,
+                Index[PatchingElementConfig](
+                    patching_config.source,
                     patching_config.source.parse(model, self.source_tokens),
+                    patching_config.target,
                     patching_config.target.parse(model, self.target_tokens),
                 )
                 for patching_config in self.config.patch
@@ -101,7 +102,7 @@ class PatchingInput(OperationInput):
         return self._target_cache
 
     @property
-    def index(self) -> list[PatchingIndex]:
+    def index(self) -> list[Index[PatchingElementConfig]]:
         assert self._index is not None
         return self._index
 

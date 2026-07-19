@@ -317,7 +317,7 @@ class Coordinates(list[dict[ModelLocation, int | list[int] | ModelLayerLocation]
 
 
 @dataclass(kw_only=True)
-class ModelLocatorConfigMixin:
+class ModelLocatorConfig:
     """Locate model activations either declaratively or explicitly.
 
     Declaratively, ``location`` names the index axes and the full range of every axis is narrowed

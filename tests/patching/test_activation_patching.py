@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import pandas as pd
-import pytest
 import torch
 import yaml
 from transformer_lens import HookedTransformer
@@ -21,13 +20,6 @@ from intex.patching.patcher import Patcher
 
 SOURCE_PROMPT = "The capital of France is"
 TARGET_PROMPT = "The capital of Spain is"
-
-
-@pytest.fixture(scope="module")
-def model() -> HookedTransformer:
-    model = HookedTransformer.from_pretrained("gpt2")
-    model.eval()
-    return model
 
 
 def _last_layer_resid_element() -> PatchingElementConfig:
@@ -220,7 +212,7 @@ def test_multi_config_patching_mlp_mhsa_and_pattern(model: HookedTransformer) ->
     # The config carries three patches; each becomes its own index, targeting -- in order -- the MLP
     # post-activation, the MHSA queries, and the attention pattern.
     indices = patching_input.index
-    assert [idx.config.target.activation for idx in indices] == [
+    assert [idx.target_config.activation for idx in indices] == [
         ModelLayerLocation.MLP_POST,
         ModelLayerLocation.ATTENTION_Q,
         ModelLayerLocation.ATTENTION_PATTERN,

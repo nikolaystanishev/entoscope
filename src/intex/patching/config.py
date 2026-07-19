@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from intex.model.config import ModelLocatorConfigMixin
+from intex.model.config import ModelLocatorConfig
 from intex.operation.config import AbstractConfig
 
 
@@ -21,7 +21,7 @@ class PatchingMetric(str, Enum):
 
 
 @dataclass(kw_only=True)
-class PatchingElementConfig(ModelLocatorConfigMixin):
+class PatchingElementConfig(ModelLocatorConfig):
     type: PatchingType
     value: float = 0.0
 

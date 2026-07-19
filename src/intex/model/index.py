@@ -3,15 +3,20 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from copy import deepcopy
+from typing import Generic, TypeVar
 
 import pandas as pd
 import torch
 from transformer_lens.utilities import get_act_name
 
-from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocationIndex, make_df_from_ranges
-from intex.operation.index import Index
-from intex.patching.config import PatchingElementConfig, SinglePatchingConfig
-from intex.patching.slicer import ActivationSlicer
+from intex.model.config import (
+    ModelLayerLocation,
+    ModelLocation,
+    ModelLocationIndex,
+    ModelLocatorConfig,
+    make_df_from_ranges,
+)
+from intex.model.slicer import ActivationSlicer
 from intex.util.collections import dataframe_to_list, zip_fill
 
 # Maps intex's dotted ``ModelLayerLocation`` values onto the names ``get_act_name`` expects.
@@ -32,9 +37,11 @@ TRANSFORMER_ACT_NAME: dict[ModelLayerLocation, str] = {
     ModelLayerLocation.MLP_OUT: "mlp_out",
 }
 
+T = TypeVar("T", bound="ModelLocatorConfig")
 
-class IndexElement:
-    def __init__(self, config: PatchingElementConfig, index_names: list[str], index: list[int | list[int] | str]):
+
+class IndexElement(Generic[T]):
+    def __init__(self, config: T, index_names: list[str], index: list[int | list[int] | str]):
         self.config = config
         self.index_names = deepcopy(index_names)
         self.index = index
@@ -71,37 +78,48 @@ class IndexElement:
         return self.index[self.index_names.index(item)]
 
 
-class SinglePatchingIndex:
-    def __init__(
-        self,
-        config: SinglePatchingConfig,
-        source_index_names: list[str],
-        target_index_names: list[str],
-        source_index: list[int],
-        target_index: list[int],
-        output_index: list[int],
-    ):
-        self.source = IndexElement(config.source, source_index_names, source_index)
-        self.target = IndexElement(config.target, target_index_names, target_index)
+class SingleIndex(Generic[T]):
+    def __init__(self, source: IndexElement[T], output_index: list[int], target: IndexElement | None = None):
+        self._source = source
+        self._target = target
         self.output = tuple(output_index)
 
-    def set_batch_index(self, batch_index: int) -> SinglePatchingIndex:
+    @property
+    def source(self) -> IndexElement[T]:
+        return self._source
+
+    @property
+    def target(self) -> IndexElement[T]:
+        assert self._target is not None
+        return self._target
+
+    def set_batch_index(self, batch_index: int) -> SingleIndex[T]:
         self.source.set_batch_index(batch_index)
-        self.target.set_batch_index(batch_index)
+        if self.target is not None:
+            self.target.set_batch_index(batch_index)
 
         return self
 
 
-class PatchingIndex(Index):
-    def __init__(self, config: SinglePatchingConfig, source: ModelLocationIndex, target: ModelLocationIndex):
-        self.config = config
+class Index(Generic[T]):
+    def __init__(
+        self,
+        source_config: T,
+        source: ModelLocationIndex,
+        target_config: T | None = None,
+        target: ModelLocationIndex | None = None,
+    ):
+        self.source_config = source_config
         self.source = source
+        self.target_config = target_config
         self.target = target
 
-        output_df = self.target.df if len(self.target.df) >= len(self.source.df) else self.source.df
-        if self.config.source.coordinates is not None and self.config.target.coordinates is not None:
-            if len(self.config.source.coordinates) != len(self.config.target.coordinates):
-                raise ValueError("Source and target coordinates must have same length")
+        output_df = (
+            self.target.df if self.target is not None and len(self.target.df) >= len(self.source.df) else self.source.df
+        )
+        if self.source_config.coordinates is not None and (
+            self.target_config is None or self.target_config.coordinates is not None
+        ):
             self.axis_range = [len(output_df)]
             self.output_df = make_df_from_ranges(["coordinate"], self.axis_range)
         else:
@@ -117,24 +135,38 @@ class PatchingIndex(Index):
     def prepare_output_placeholder(self, device: str | torch.device = "cpu") -> torch.Tensor:
         return torch.zeros(self.axis_range, device=device)
 
+    def to_df(self) -> pd.DataFrame:
+        dfs = [self.source.df.add_prefix("source_")]
+        if self.target is not None:
+            dfs.append(self.target.df.add_prefix("target_"))
+        dfs.append(self.output_df.add_prefix("index_"))
+
+        return pd.concat(dfs, axis=1)
+
     def to_csv(self, path: str):
-        pd.concat(
-            [
-                self.source.df.add_prefix("source_"),
-                self.target.df.add_prefix("target_"),
-                self.output_df.add_prefix("index_"),
-            ],
-            axis=1,
-        ).to_csv(path, index=False)
+        self.to_df().to_csv(path, index=False)
 
     def __iter__(self):
-        return map(
-            lambda el: SinglePatchingIndex(
-                self.config, self.source.df.columns.to_list(), self.target.df.columns.to_list(), *el
-            ),
-            zip_fill(
+        source_columns = self.source.df.columns.to_list()
+
+        if self.target is None or self.target_config is None:
+            return (
+                SingleIndex[T](IndexElement[T](self.source_config, source_columns, source_row), output_row)
+                for source_row, output_row in zip(
+                    dataframe_to_list(self.source.df), dataframe_to_list(self.output_df), strict=True
+                )
+            )
+
+        target_columns = self.target.df.columns.to_list()
+        return (
+            SingleIndex[T](
+                IndexElement[T](self.source_config, source_columns, source_row),
+                output_row,
+                IndexElement[T](self.target_config, target_columns, target_row),
+            )
+            for source_row, target_row, output_row in zip_fill(
                 dataframe_to_list(self.source.df), dataframe_to_list(self.target.df), dataframe_to_list(self.output_df)
-            ),
+            )
         )
 
     def __len__(self) -> int:
