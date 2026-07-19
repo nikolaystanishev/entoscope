@@ -7,7 +7,11 @@ from typing import Generic, TypeVar
 
 import pandas as pd
 import torch
-from transformer_lens.utilities import get_act_name
+
+try:
+    from transformer_lens.utilities import get_act_name
+except ImportError:  # transformer-lens 2.x (Intel macOS fallback)
+    from transformer_lens.utils import get_act_name
 
 from intex.model.config import (
     ModelLayerLocation,

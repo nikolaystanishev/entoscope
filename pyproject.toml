@@ -9,13 +9,26 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
     "jaxtyping>=0.2.37",
-    "numpy>=2.1.0",
+    "numpy>=2.1.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "pandas>=2.3.3",
     "pandas-stubs~=2.3.3",
     "pyyaml>=6.0.3",
-    "torch>=2.9.0",
+    "scikit-learn>=1.7",
+    "torch>=2.9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "tqdm>=4.68.3",
-    "transformer-lens>=3.0.0",
+    "transformer-lens>=3.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    # Intel macOS: torch dropped x86_64 wheels after 2.2.2, which caps
+    # transformer-lens at 2.15.x (2.16+ needs torch>=2.6) and numpy at <2
+    # (torch 2.2 is built against numpy 1.x). Requires Python <=3.12.
+    "numpy>=1.26,<2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "torch>=2.2,<2.3; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "transformer-lens>=2.15.4,<2.16; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
+
+[tool.uv]
+# transformers 5+ needs torch>=2.4 and drops APIs transformer-lens 2.15 uses.
+constraint-dependencies = [
+    "transformers<5; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 
 [build-system]
