@@ -47,9 +47,9 @@ class PatchingInput(OperationInput):
             index = [
                 Index[PatchingElementConfig](
                     patching_config.source,
-                    patching_config.source.parse(model, self.source_tokens),
+                    patching_config.source.parse(model, self.source_tokens.shape[1]),
                     patching_config.target,
-                    patching_config.target.parse(model, self.target_tokens),
+                    patching_config.target.parse(model, self.target_tokens.shape[1]),
                 )
                 for patching_config in self.config.patch
             ]

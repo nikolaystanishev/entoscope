@@ -5,6 +5,9 @@ from intex.model.config import ModelLayerLocation, ModelLocation
 
 
 class ActivationSlicer(abc.ABC):
+    # Axis names of the activation tensor, in the order ``extract`` emits them.
+    AXES: tuple[ModelLocation | str, ...]
+
     @staticmethod
     @abc.abstractmethod
     def extract(index: defaultdict[str, slice | int | list[int]]) -> tuple[slice | int | list[int], ...]:
@@ -39,6 +42,8 @@ class ActivationSlicer(abc.ABC):
 
 
 class LinearActivationSlicer(ActivationSlicer):
+    AXES = ("batch", ModelLocation.POSITION, ModelLocation.NEURON)
+
     @staticmethod
     def extract(index: defaultdict[str, slice | int | list[int]]) -> tuple[slice | int | list[int], ...]:
         # [batch, pos, neuron]
@@ -46,6 +51,8 @@ class LinearActivationSlicer(ActivationSlicer):
 
 
 class HeadActivationSlicer(ActivationSlicer):
+    AXES = ("batch", ModelLocation.POSITION, ModelLocation.HEAD, ModelLocation.NEURON)
+
     @staticmethod
     def extract(index: defaultdict[str, slice | int | list[int]]) -> tuple[slice | int | list[int], ...]:
         # [batch, pos, head, neuron]
@@ -53,6 +60,8 @@ class HeadActivationSlicer(ActivationSlicer):
 
 
 class PatternActivationSlicer(ActivationSlicer):
+    AXES = ("batch", ModelLocation.HEAD, "dest_pos", "src_pos")
+
     @staticmethod
     def extract(index: defaultdict[str, slice | int | list[int]]) -> tuple[slice | int | list[int], ...]:
         # [batch, head, dest_pos, src_pos]
