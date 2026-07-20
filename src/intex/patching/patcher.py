@@ -2,8 +2,9 @@ import torch
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
+from intex.operation.collector import AbstractCollector
 from intex.operation.operator import Operator
-from intex.patching.collector import AbstractCollector, DefaultCollector
+from intex.patching.collector import DefaultCollector
 from intex.patching.input import PatchingInput
 from intex.patching.metric import AbstractMetric
 from intex.patching.processor import HookedPatchProcessor
