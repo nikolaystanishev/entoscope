@@ -474,3 +474,67 @@ def test_parse_raises_value_error(config):
     )  # deserialization succeeds
     with pytest.raises(ValueError):
         mixin.parse(make_model(), 4)
+
+
+# --------------------------------------------------------------------------------------------------
+# Symbolic positions — parse(model, None) keeps positions unresolved when the prompt length varies
+# --------------------------------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "filter_cfg, expected_positions",
+    [
+        ([{"position": 2}], [2]),  # non-negative stays absolute (from the start)
+        ([{"position": -1}], [-1]),  # negative stays symbolic (resolved per prompt at slice time)
+        ([{"position": 0}, {"position": -1}], [-1, 0]),  # mixed anchors are two distinct points
+        ([{"position": [1, -2]}], [-2, 1]),  # lists keep each element's sign
+        ([{"position": {"range": [0, 2]}}], [0, 1, 2]),  # a non-negative range expands as usual
+        ([{"position": {"range": [-3, -1]}}], [-3, -2, -1]),  # a fully-negative range expands in end space
+    ],
+)
+def test_symbolic_position_filter_stays_unresolved(filter_cfg, expected_positions):
+    result = parse_config({"location": ["position"], "filter": filter_cfg}, prompt_size=None)
+    assert result_rows(result) == expected_rows(single("position", expected_positions))
+
+
+def test_symbolic_position_keeps_other_locations():
+    result = parse_config(
+        {"location": ["layer", "position"], "filter": [{"position": -1}]}, prompt_size=None, n_layers=2
+    )
+    assert result_rows(result) == expected_rows([{"layer": 0, "position": -1}, {"layer": 1, "position": -1}])
+
+
+def test_concrete_mode_still_resolves_negative_position():
+    # The contrast: with a known length a negative position collapses to its absolute index.
+    result = parse_config({"location": ["position"], "filter": [{"position": -1}]}, prompt_size=4)
+    assert result_rows(result) == expected_rows(single("position", [3]))
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"location": ["position"]},  # an unfiltered position axis would enumerate every position
+        {"location": ["position"], "filter": [{"not": {"position": 0}}]},  # exclusion still needs the full range
+        {"location": ["position"], "filter": [{"position": {"range": [-1, 1]}}]},  # mixed-sign range
+    ],
+)
+def test_symbolic_position_length_dependent_grid_raises(config):
+    with pytest.raises(ValueError, match="prompt length varies"):
+        parse_config(config, prompt_size=None)
+
+
+def test_symbolic_coordinates_keep_negative_positions():
+    result = parse_config({"coordinates": [{"layer": 1, "position": -2}]}, prompt_size=None)
+    assert result_rows(result) == expected_rows([{"layer": 1, "position": -2}])
+
+
+def test_symbolic_coordinates_keep_signs_inside_lists():
+    result = parse_config({"coordinates": [{"layer": 0, "position": [0, -1]}]}, prompt_size=None)
+    assert result_rows(result) == expected_rows([{"layer": 0, "position": [0, -1]}])
+
+
+def test_transforms_are_value_agnostic_over_symbolic_positions():
+    # Group collapses negative position values just like non-negative ones.
+    result = parse_config(
+        {"location": ["position"], "filter": [{"position": {"range": [-3, -1]}}], "group": {"position": [-2, -1]}},
+        prompt_size=None,
+    )
+    assert result_rows(result) == expected_rows([{"position": -3}, {"position": [-2, -1]}])

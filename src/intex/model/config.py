@@ -125,12 +125,17 @@ class Filter:
 
         return cls(inclusion_terms=inclusion_terms, exclusion_terms=exclusion_terms)
 
-    def included(self, location: ModelLocation, max_value: int) -> set[int]:
+    def included(self, location: ModelLocation, max_value: int | None) -> set[int]:
         if not self.inclusion_terms or any(location not in term for term in self.inclusion_terms):
+            if max_value is None:
+                raise ValueError(
+                    f"Cannot build a grid over '{location.value}' when the prompt length varies; "
+                    "filter to explicit positions or pool over them"
+                )
             return set(range(max_value))
         return set().union(*(self._resolve(term[location], location, max_value) for term in self.inclusion_terms))
 
-    def excluded(self, location: ModelLocation, max_value: int) -> set[int]:
+    def excluded(self, location: ModelLocation, max_value: int | None) -> set[int]:
         return set().union(
             *(
                 self._resolve(term[location], location, max_value)
@@ -139,7 +144,7 @@ class Filter:
             )
         )
 
-    def location_range(self, location: ModelLocation, max_value: int) -> list[int]:
+    def location_range(self, location: ModelLocation, max_value: int | None) -> list[int]:
         return sorted(self.included(location, max_value) - self.excluded(location, max_value))
 
     def apply(self, index_df: pd.DataFrame, location_to_max_value: dict) -> pd.DataFrame:
@@ -167,15 +172,24 @@ class Filter:
         )
 
     @classmethod
-    def _resolve(cls, constraint: int | dict | list, location: ModelLocation, max_value: int) -> set[int]:
+    def _resolve(cls, constraint: int | dict | list, location: ModelLocation, max_value: int | None) -> set[int]:
+        # ``max_value is None`` means the prompt length varies (positions only): keep the value
+        # symbolic so torch resolves a negative against each prompt's own cache at slice time.
         if isinstance(constraint, list):
             return set().union(*(cls._resolve(el, location, max_value) for el in constraint))
         if isinstance(constraint, int):
-            return {constraint if constraint >= 0 else max_value + constraint}
+            return {constraint if constraint >= 0 or max_value is None else max_value + constraint}
         if isinstance(constraint, dict) and set(constraint.keys()) == {"range"}:
             start, end = constraint["range"]
-            start = start if start >= 0 else max_value + start
-            end = end if end >= 0 else max_value + end
+            if max_value is None:
+                if (start < 0) != (end < 0):
+                    raise ValueError(
+                        f"Cannot resolve range {constraint['range']} for '{location.value}' when the prompt "
+                        "length varies; use positions on the same side (all from the start or all from the end)"
+                    )
+            else:
+                start = start if start >= 0 else max_value + start
+                end = end if end >= 0 else max_value + end
             return set(range(start, end + 1))
         raise ValueError(f"Invalid filter constraint for '{location}': {constraint!r}")
 
@@ -276,7 +290,7 @@ class Coordinates(list[dict[ModelLocation, int | list[int] | ModelLayerLocation]
     def to_df(
         self,
         model: HookedTransformer,
-        n_positions: int,
+        n_positions: int | None,
         activation: ModelLayerLocation | None = None,
     ) -> pd.DataFrame:
         keys = sorted(list(self[0].keys()) if self else [], key=lambda key: key == ModelLocation.ACTIVATION)
@@ -294,7 +308,7 @@ class Coordinates(list[dict[ModelLocation, int | list[int] | ModelLayerLocation]
     def _resolve_entry(
         cls,
         model: HookedTransformer,
-        n_positions: int,
+        n_positions: int | None,
         coordinate: dict,
         key: ModelLocation,
         activation: ModelLayerLocation | None,
@@ -306,11 +320,13 @@ class Coordinates(list[dict[ModelLocation, int | list[int] | ModelLayerLocation]
         return cls._resolve_value(coordinate[key], key, max_value)
 
     @classmethod
-    def _resolve_value(cls, value: int | list[int], location: ModelLocation, max_value: int) -> int | list[int]:
+    def _resolve_value(cls, value: int | list[int], location: ModelLocation, max_value: int | None) -> int | list[int]:
+        # ``max_value is None`` (prompt length varies, positions only): keep the value symbolic so a
+        # negative resolves against each prompt's own cache at slice time.
         if isinstance(value, list):
             return [cls._resolve_value(el, location, max_value) for el in value]
         if isinstance(value, int):
-            return value if value >= 0 else max_value + value
+            return value if value >= 0 or max_value is None else max_value + value
         raise ValueError(f"Invalid coordinate value for '{location}': {value!r}")
 
 
@@ -368,7 +384,15 @@ class ModelLocatorConfig:
     def _transforms(self) -> list[IndexTransform]:
         return [self.group, self.incremental, self.combination]
 
-    def parse(self, model: HookedTransformer, n_positions: int) -> ModelLocationIndex:
+    def parse(self, model: HookedTransformer, n_positions: int | None) -> ModelLocationIndex:
+        """Resolve the config into an index DataFrame for a prompt of ``n_positions`` tokens.
+
+        ``n_positions=None`` means the prompt length varies (used when probing prompts of unequal
+        length): positions stay symbolic — non-negative counts from the start, negative from each
+        prompt's own end (torch resolves it at slice time) — and a grid that would enumerate every
+        position (an unfiltered ``position`` axis) is rejected because its size would depend on the
+        prompt. Other locations never depend on the prompt length, so they are unaffected.
+        """
         if self.coordinates is not None:
             index_df = self.coordinates.to_df(model, n_positions, self.activation)
         else:

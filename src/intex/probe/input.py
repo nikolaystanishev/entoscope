@@ -1,29 +1,34 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+import numpy as np
+import pandas as pd
 import torch
 from jaxtyping import Float, Int
 from transformer_lens import HookedTransformer
 
-from intex.model.config import ModelLocatorConfig
+from intex.model.config import ModelLocation, ModelLocatorConfig
 from intex.model.index import Index
 from intex.operation.input import OperationInput
 from intex.probe.config import ProbeConfig
 from intex.probe.pool import pool
-from intex.util.collections import dataframe_to_list
 
 
 @dataclass
 class ProbeInput(OperationInput):
     """Positive/negative example prompts whose pooled activations become probe training data.
 
-    The probe grid is parsed once at the shared-prefix length (the shortest prompt), so every
-    grid position exists in every prompt; unpooled position axes stay full slices and adapt to
-    each prompt's own cache. A per-prompt parse only validates that the location config resolves
-    to the same grid points for every prompt.
+    The location grid is parsed once. When every prompt tokenizes to the same length the grid uses
+    that length, so a filtered position resolves to a concrete index. When prompt lengths differ the
+    grid is parsed length-agnostically (``n_positions=None``): explicit positions stay symbolic —
+    non-negative counts from the start, negative from each prompt's own end (torch resolves it
+    against that prompt's cache at slice time) — and a grid that would enumerate every position (an
+    unfiltered ``position`` axis) is rejected because its size would depend on the prompt. Every
+    explicit position must be valid for the shortest prompt. Position axes left outside the grid
+    stay full slices and adapt to each prompt.
 
-    ``model.to_tokens`` prepends BOS, so mean/sum pooling over positions includes it and
-    last pooling reads the final content token.
+    ``model.to_tokens`` prepends BOS, so mean/sum pooling over positions includes it while ``last``
+    pooling (or a ``-1`` position) reads the final content token.
     """
 
     positive_prompts: list[str]
@@ -41,22 +46,35 @@ class ProbeInput(OperationInput):
         if not self.positive_prompts or not self.negative_prompts:
             raise ValueError("Both positive and negative prompts are required to train a probe")
 
-        tokens_list = [model.to_tokens(prompt) for prompt in self.positive_prompts + self.negative_prompts]
-        min_positions = min(tokens.shape[1] for tokens in tokens_list)
-        index = Index[ModelLocatorConfig](self.config.source, self.config.source.parse(model, min_positions))
-        probe_rows = {str(row) for row in dataframe_to_list(index.source.df)}
+        token_tensors = [model.to_tokens(prompt) for prompt in self.positive_prompts + self.negative_prompts]
+        lengths = {tokens.shape[1] for tokens in token_tensors}
 
-        vectors: dict[tuple[int, ...], list[torch.Tensor]] = defaultdict(list)
+        n_positions = next(iter(lengths)) if len(lengths) == 1 else None
+        source = self.config.source.parse(model, n_positions)
+        self._validate_positions(source.df, min(lengths))
+        index = Index[ModelLocatorConfig](self.config.source, source)
+
+        self._features = self._collect_features(model, token_tensors, index)
+        self._labels = torch.cat(
+            [
+                torch.ones(len(self.positive_prompts), dtype=torch.long),
+                torch.zeros(len(self.negative_prompts), dtype=torch.long),
+            ]
+        )
+        self._index = index
+
+        return self
+
+    def _collect_features(
+        self,
+        model: HookedTransformer,
+        token_tensors: list[Int[torch.Tensor, "batch pos"]],
+        index: Index[ModelLocatorConfig],
+    ) -> dict[tuple[int, ...], Float[torch.Tensor, "examples features"]]:
         # One prompt at a time keeps a single activation cache alive; features go to CPU
         # immediately, so memory stays bounded regardless of the number of examples.
-        for tokens in tokens_list:
-            prompt_rows = {str(row) for row in dataframe_to_list(self.config.source.parse(model, tokens.shape[1]).df)}
-            if not probe_rows <= prompt_rows:
-                raise ValueError(
-                    "Location grid resolves differently across prompts; positions that depend on "
-                    "the prompt length (e.g. negative values) require equal-length prompts"
-                )
-
+        vectors: dict[tuple[int, ...], list[torch.Tensor]] = defaultdict(list)
+        for tokens in token_tensors:
             with torch.no_grad():
                 _, cache = model.run_with_cache(tokens)
 
@@ -75,16 +93,19 @@ class ProbeInput(OperationInput):
                 )
             features[output] = torch.stack(feature_list)
 
-        self._labels = torch.cat(
-            [
-                torch.ones(len(self.positive_prompts), dtype=torch.long),
-                torch.zeros(len(self.negative_prompts), dtype=torch.long),
-            ]
-        )
-        self._features = features
-        self._index = index
+        return features
 
-        return self
+    @staticmethod
+    def _validate_positions(index_df: pd.DataFrame, min_length: int) -> None:
+        """Every explicit position must land inside the shortest prompt (for both anchors)."""
+        if ModelLocation.POSITION not in index_df.columns:
+            return
+        for cell in index_df[ModelLocation.POSITION]:
+            for position in cell if isinstance(cell, list) else [cell]:
+                if isinstance(position, (int, np.integer)) and not -min_length <= position < min_length:
+                    raise ValueError(
+                        f"Position {int(position)} is out of range for the shortest prompt ({min_length} tokens)"
+                    )
 
     @property
     def labels(self) -> Int[torch.Tensor, " examples"]:
