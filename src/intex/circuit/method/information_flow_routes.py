@@ -21,15 +21,17 @@ from __future__ import annotations
 
 from enum import Enum
 
+import einops
 import networkx as nx
 import torch
-from jaxtyping import Int
+from jaxtyping import Float, Int
 from transformer_lens import ActivationCache, HookedTransformer
 
-from intex.circuit import activations
 from intex.circuit.method.circuit import AbstractCircuitMethod, PromptCircuit
 from intex.circuit.vendor import contributions
 from intex.lens.collector import escape_token
+from intex.model.config import ModelLayerLocation
+from intex.model.index import TRANSFORMER_ACT_NAME
 
 # Sentinel head id for edges that are not attention (residual skips and the MLP block).
 NON_ATTENTION_HEAD = -1
@@ -127,6 +129,43 @@ class _GraphBuilder:
 
 
 @torch.no_grad()
+def decomposed_attn(
+    model: HookedTransformer,
+    cache: ActivationCache,
+    layer: int,
+    batch_i: int = 0,
+) -> Float[torch.Tensor, "pos key_pos head d_model"]:
+    """Per (query_pos, key_pos, head) attention contribution to the residual stream, in d_model space.
+
+    Reconstructs each head's output written to the residual stream, split by the key position it came
+    from, before the residual add (no layernorm is applied — the attention output is added to the
+    residual stream unnormalized). Summing over ``key_pos`` and ``head`` recovers ``attn_out`` minus
+    the ``b_O`` bias. Handles grouped-query attention by repeating the value heads across their group.
+    """
+    hook_v = cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.ATTENTION_V], layer][batch_i]  # [key_pos, head_kv, d_head]
+    b_v = model.blocks[layer].attn.b_V  # [head, d_head]
+
+    num_head_groups = b_v.shape[-2] // hook_v.shape[-2]
+    hook_v = hook_v.repeat_interleave(num_head_groups, dim=-2)  # [key_pos, head, d_head]
+
+    v = hook_v + b_v
+    pattern = cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.ATTENTION_PATTERN], layer][batch_i].to(
+        v.dtype
+    )  # [head, query_pos, key_pos]
+
+    z = einops.einsum(
+        v,
+        pattern,
+        "key_pos head d_head, head query_pos key_pos -> query_pos key_pos head d_head",
+    )
+    return einops.einsum(
+        z,
+        model.W_O[layer],  # [head, d_head, d_model]
+        "query_pos key_pos head d_head, head d_head d_model -> query_pos key_pos head d_model",
+    )
+
+
+@torch.no_grad()
 def build_information_flow_graph(
     model: HookedTransformer,
     cache: ActivationCache,
@@ -140,9 +179,9 @@ def build_information_flow_graph(
 
     for layer in range(n_layers):
         c_attn, c_resid_attn = contributions.get_attention_contributions(
-            resid_pre=activations.residual_in(cache, layer),
-            resid_mid=activations.residual_after_attn(cache, layer),
-            decomposed_attn=activations.decomposed_attn(model, cache, layer).unsqueeze(0),
+            resid_pre=cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.RESIDUAL_PRE], layer],
+            resid_mid=cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.RESIDUAL_MID], layer],
+            decomposed_attn=decomposed_attn(model, cache, layer).unsqueeze(0),
         )
         c_attn, c_resid_attn = contributions.apply_threshold_and_renormalize(threshold, c_attn, c_resid_attn)
 
@@ -158,9 +197,9 @@ def build_information_flow_graph(
                 builder.add_residual_to_attn(layer, token_to, resid_w)
 
         c_ffn, c_resid_ffn = contributions.get_mlp_contributions(
-            resid_mid=activations.residual_after_attn(cache, layer),
-            resid_post=activations.residual_out(cache, layer),
-            mlp_out=activations.ffn_out(cache, layer),
+            resid_mid=cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.RESIDUAL_MID], layer],
+            resid_post=cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.RESIDUAL_POST], layer],
+            mlp_out=cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.MLP_OUT], layer],
         )
         # apply_threshold_and_renormalize renormalizes over the block dims via
         # ``c_blocks.sum(dim=range(resid_dims, block_dims))``. Here c_ffn and c_resid_ffn have equal

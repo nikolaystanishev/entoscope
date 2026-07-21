@@ -5,9 +5,8 @@ import pytest
 import torch
 from transformer_lens import HookedTransformer
 
-from intex.circuit import activations
 from intex.circuit.config import CircuitConfig, CircuitMethodType
-from intex.circuit.method.information_flow_routes import InformationFlowRoutes
+from intex.circuit.method.information_flow_routes import InformationFlowRoutes, decomposed_attn
 
 PROMPT = "The capital of France is"
 
@@ -99,7 +98,7 @@ def test_decomposed_attn_reconstructs_attn_out(model: HookedTransformer):
         _, cache = model.run_with_cache(tokens)
 
     layer = model.cfg.n_layers // 2
-    decomposed = activations.decomposed_attn(model, cache, layer)  # [pos, key_pos, head, d_model]
+    decomposed = decomposed_attn(model, cache, layer)  # [pos, key_pos, head, d_model]
     reconstructed = decomposed.sum(dim=(1, 2))  # [pos, d_model]
 
     expected = cache["attn_out", layer][0] - model.blocks[layer].attn.b_O
