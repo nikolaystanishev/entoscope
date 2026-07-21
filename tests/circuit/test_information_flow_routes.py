@@ -100,8 +100,14 @@ def test_parallel_attn_mlp_is_rejected():
     # decomposition, so the sequential resid_mid-based flow does not apply. The guard raises before
     # touching the cache, so a dummy cache is fine.
     cfg = HookedTransformerConfig(
-        n_layers=1, d_model=8, n_ctx=8, d_head=4, n_heads=2, d_vocab=10,
-        act_fn="gelu", parallel_attn_mlp=True,
+        n_layers=1,
+        d_model=8,
+        n_ctx=8,
+        d_head=4,
+        n_heads=2,
+        d_vocab=10,
+        act_fn="gelu",
+        parallel_attn_mlp=True,
     )
     model = HookedTransformer(cfg)
     with pytest.raises(NotImplementedError):
