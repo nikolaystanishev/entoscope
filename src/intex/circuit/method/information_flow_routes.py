@@ -174,6 +174,11 @@ def build_information_flow_graph(
     threshold: float,
 ) -> nx.MultiDiGraph:
     """Build the full per-head contribution graph for one cached forward pass (batch item 0)."""
+    if model.cfg.parallel_attn_mlp:
+        raise NotImplementedError(
+            "Information Flow Routes assumes a sequential attn -> resid_mid -> MLP block; parallel "
+            "attention/MLP architectures (model.cfg.parallel_attn_mlp) are not supported."
+        )
     n_layers = model.cfg.n_layers
     builder = _GraphBuilder(n_layers, n_tokens, str_tokens)
 

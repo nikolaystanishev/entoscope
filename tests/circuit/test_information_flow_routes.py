@@ -3,10 +3,14 @@ from collections import Counter
 import networkx as nx
 import pytest
 import torch
-from transformer_lens import HookedTransformer
+from transformer_lens import HookedTransformer, HookedTransformerConfig
 
 from intex.circuit.config import CircuitConfig, CircuitMethodType
-from intex.circuit.method.information_flow_routes import InformationFlowRoutes, decomposed_attn
+from intex.circuit.method.information_flow_routes import (
+    InformationFlowRoutes,
+    build_information_flow_graph,
+    decomposed_attn,
+)
 
 PROMPT = "The capital of France is"
 
@@ -89,6 +93,19 @@ def test_higher_threshold_prunes_more(model: HookedTransformer):
     sparse, _ = _build(model, threshold=0.2)
     dense, _ = _build(model, threshold=0.0)
     assert sparse.graph.number_of_edges() <= dense.graph.number_of_edges()
+
+
+def test_parallel_attn_mlp_is_rejected():
+    # Parallel attn/MLP architectures never fire hook_resid_mid and use a different residual
+    # decomposition, so the sequential resid_mid-based flow does not apply. The guard raises before
+    # touching the cache, so a dummy cache is fine.
+    cfg = HookedTransformerConfig(
+        n_layers=1, d_model=8, n_ctx=8, d_head=4, n_heads=2, d_vocab=10,
+        act_fn="gelu", parallel_attn_mlp=True,
+    )
+    model = HookedTransformer(cfg)
+    with pytest.raises(NotImplementedError):
+        build_information_flow_graph(model, cache=None, n_tokens=1, str_tokens=["a"], threshold=0.0)
 
 
 def test_decomposed_attn_reconstructs_attn_out(model: HookedTransformer):

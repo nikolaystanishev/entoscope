@@ -9,6 +9,8 @@ pruned routes-to-prediction (headline) and the full contribution graph.
 
 from __future__ import annotations
 
+from html import escape
+
 import networkx as nx
 import plotly.graph_objects as go
 
@@ -186,7 +188,7 @@ def render_circuit_html(circuit: PromptCircuit, n_layers: int, path: str) -> Non
 
     parts = [
         "<!doctype html><html><head><meta charset='utf-8'/>",
-        f"<title>Circuit — {circuit.prompt}</title></head><body>",
+        f"<title>Circuit — {escape(circuit.prompt)}</title></head><body>",
         routes_fig.to_html(full_html=False, include_plotlyjs=True),
         "<hr/>",
         full_fig.to_html(full_html=False, include_plotlyjs=False),
