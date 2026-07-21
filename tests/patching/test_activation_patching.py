@@ -138,6 +138,19 @@ def test_activation_patching_from_source_into_target(model: HookedTransformer) -
     assert torch.allclose(result.squeeze(), torch.tensor(1.0))
 
 
+def test_caches_restricted_to_used_activations(model: HookedTransformer) -> None:
+    patching_input = PatchingInput(SOURCE_PROMPT, TARGET_PROMPT, _last_layer_resid_patch_config()).prepare(model)
+
+    # Only the last layer's residual is read; both caches are filtered down to it.
+    expected = set().union(*(idx.source_activation_names() for idx in patching_input.index))
+    assert expected == {f"blocks.{model.cfg.n_layers - 1}.hook_resid_post"}
+    assert set(patching_input.source_cache.keys()) == expected
+    assert set(patching_input.target_cache.keys()) == expected
+
+    _, full_cache = model.run_with_cache(patching_input.source_tokens)
+    assert set(patching_input.source_cache.keys()) < set(full_cache.keys())
+
+
 def test_zero_ablation_patching(model: HookedTransformer) -> None:
     torch.manual_seed(42)
 

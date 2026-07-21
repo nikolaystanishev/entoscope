@@ -1,7 +1,7 @@
 import torch
 from tqdm import tqdm
-from transformer_lens import HookedTransformer
 
+from intex.model import Model
 from intex.operation.collector import AbstractCollector
 from intex.operation.operator import Operator
 from intex.patching.collector import DefaultCollector
@@ -14,7 +14,7 @@ from intex.util.collections import batch_generator, zip_fill
 class Patcher(Operator):
     def __init__(
         self,
-        model: HookedTransformer,
+        model: Model,
         collector_class: type[AbstractCollector] = DefaultCollector,
         batch_size: int = 1,
     ):

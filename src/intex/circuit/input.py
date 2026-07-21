@@ -2,9 +2,9 @@ from dataclasses import dataclass, field
 
 import torch
 from jaxtyping import Int
-from transformer_lens import HookedTransformer
 
 from intex.circuit.config import CircuitConfig
+from intex.model import Model
 from intex.operation.input import OperationInput
 
 
@@ -22,7 +22,7 @@ class CircuitInput(OperationInput):
 
     _tokens: list[Int[torch.Tensor, "batch pos"]] | None = field(init=False, default=None)
 
-    def prepare(self, model: HookedTransformer) -> "CircuitInput":
+    def prepare(self, model: Model) -> "CircuitInput":
         if self._tokens is None:
             if not self.prompts:
                 raise ValueError("At least one prompt is required for circuit discovery")

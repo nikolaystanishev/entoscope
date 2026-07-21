@@ -1,7 +1,8 @@
+import pandas as pd
 import pytest
 
-from intex.model.config import ModelLayerLocation, ModelLocation
-from intex.model.index import IndexElement
+from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocationIndex, ModelLocatorConfig
+from intex.model.index import Index, IndexElement
 
 
 def _element(activation: ModelLayerLocation, **index) -> IndexElement:
@@ -38,3 +39,43 @@ def test_remaining_axes_multiple_lists_raise():
     element = _element(ModelLayerLocation.ATTENTION_Z, layer=0, position=[0, 1], head=[0, 1])
     with pytest.raises(ValueError, match="more than one axis"):
         element.remaining_axes()
+
+
+def _source_index(df: pd.DataFrame) -> Index:
+    # ``source_activation_names`` reads only the source df, so the config is a placeholder.
+    return Index(ModelLocatorConfig(), ModelLocationIndex(df))
+
+
+def test_source_activation_names_dedupes_over_non_layer_axes():
+    # A layer x position grid over resid.post: names depend only on the layer, so the two positions
+    # collapse to one hook name per layer.
+    df = pd.DataFrame(
+        {
+            ModelLocation.LAYER: [0, 0, 1, 1],
+            ModelLocation.POSITION: [0, 1, 0, 1],
+            ModelLocation.ACTIVATION: [ModelLayerLocation.RESIDUAL_POST] * 4,
+        }
+    )
+    assert _source_index(df).source_activation_names() == {
+        "blocks.0.hook_resid_post",
+        "blocks.1.hook_resid_post",
+    }
+
+
+def test_source_activation_names_mixed_activations():
+    # Coordinate-style rows carrying their own activation resolve to per-row hook names.
+    df = pd.DataFrame(
+        {
+            ModelLocation.LAYER: [10, 11],
+            ModelLocation.ACTIVATION: [ModelLayerLocation.RESIDUAL_POST, ModelLayerLocation.MLP_OUT],
+        }
+    )
+    assert _source_index(df).source_activation_names() == {
+        "blocks.10.hook_resid_post",
+        "blocks.11.hook_mlp_out",
+    }
+
+
+def test_source_activation_names_empty_index_is_empty():
+    df = pd.DataFrame({ModelLocation.ACTIVATION: pd.Series([], dtype=object)})
+    assert _source_index(df).source_activation_names() == set()

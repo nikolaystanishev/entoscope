@@ -2,15 +2,15 @@ import abc
 
 import torch
 from jaxtyping import Float
-from transformer_lens import HookedTransformer
 
 from intex.lens.config import LensConfig
+from intex.model import Model
 from intex.model.config import ModelLocatorConfig
 from intex.model.index import IndexElement
 
 
 class AbstractLensMethod(abc.ABC):
-    def __init__(self, model: HookedTransformer, config: LensConfig):
+    def __init__(self, model: Model, config: LensConfig):
         self.model = model
         self.config = config
 

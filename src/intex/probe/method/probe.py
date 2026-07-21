@@ -4,13 +4,13 @@ from typing import Any
 import numpy as np
 import torch
 from jaxtyping import Float, Int
-from transformer_lens import HookedTransformer
 
+from intex.model import Model
 from intex.probe.config import ProbeConfig
 
 
 class AbstractProbeMethod(abc.ABC):
-    def __init__(self, model: HookedTransformer, config: ProbeConfig):
+    def __init__(self, model: Model, config: ProbeConfig):
         self.model = model
         self.config = config
 

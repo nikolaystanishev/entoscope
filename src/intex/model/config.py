@@ -9,8 +9,8 @@ from typing import Protocol
 import numpy as np
 import pandas as pd
 from pandas._typing import Axes
-from transformer_lens import HookedTransformer
 
+from intex.model.base import Model
 from intex.util.collections import range_combinations
 
 
@@ -289,7 +289,7 @@ class Coordinates(list[dict[ModelLocation, int | list[int] | ModelLayerLocation]
 
     def to_df(
         self,
-        model: HookedTransformer,
+        model: Model,
         n_positions: int | None,
         activation: ModelLayerLocation | None = None,
     ) -> pd.DataFrame:
@@ -307,7 +307,7 @@ class Coordinates(list[dict[ModelLocation, int | list[int] | ModelLayerLocation]
     @classmethod
     def _resolve_entry(
         cls,
-        model: HookedTransformer,
+        model: Model,
         n_positions: int | None,
         coordinate: dict,
         key: ModelLocation,
@@ -384,7 +384,7 @@ class ModelLocatorConfig:
     def _transforms(self) -> list[IndexTransform]:
         return [self.group, self.incremental, self.combination]
 
-    def parse(self, model: HookedTransformer, n_positions: int | None) -> ModelLocationIndex:
+    def parse(self, model: Model, n_positions: int | None) -> ModelLocationIndex:
         """Resolve the config into an index DataFrame for a prompt of ``n_positions`` tokens.
 
         ``n_positions=None`` means the prompt length varies (used when probing prompts of unequal

@@ -40,6 +40,19 @@ def test_prepare_populates_input(model):
     assert len(lens_input.index) == model.cfg.n_layers * lens_input.tokens.shape[1]
 
 
+def test_cache_is_restricted_to_used_activations(model):
+    lens_input = LensInput(PROMPT, _declarative_config()).prepare(model)
+
+    # resid.post over every layer -> exactly one hook per layer and nothing else is cached.
+    expected = {f"blocks.{layer}.hook_resid_post" for layer in range(model.cfg.n_layers)}
+    assert lens_input.index.source_activation_names() == expected
+    assert set(lens_input.cache.keys()) == expected
+
+    # ...and that is a strict subset of what an unfiltered run would have cached.
+    _, full_cache = model.run_with_cache(lens_input.tokens)
+    assert set(lens_input.cache.keys()) < set(full_cache.keys())
+
+
 def test_prepare_is_idempotent(model):
     lens_input = LensInput(PROMPT, _declarative_config()).prepare(model)
     index = lens_input.index

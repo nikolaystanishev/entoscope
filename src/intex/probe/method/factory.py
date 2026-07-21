@@ -1,5 +1,4 @@
-from transformer_lens import HookedTransformer
-
+from intex.model import Model
 from intex.probe.config import ProbeConfig, ProbeType
 from intex.probe.method.linear import LinearProbe
 from intex.probe.method.probe import AbstractProbeMethod
@@ -17,5 +16,5 @@ class ProbeMethodFactory:
                 raise ValueError(f"Unknown probe type: {probe_type}")
 
     @classmethod
-    def create(cls, config: ProbeConfig, model: HookedTransformer) -> AbstractProbeMethod:
+    def create(cls, config: ProbeConfig, model: Model) -> AbstractProbeMethod:
         return cls.get(config.type)(model, config)

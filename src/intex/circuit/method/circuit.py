@@ -4,9 +4,9 @@ from dataclasses import dataclass
 import networkx as nx
 import torch
 from jaxtyping import Int
-from transformer_lens import HookedTransformer
 
 from intex.circuit.config import CircuitConfig
+from intex.model import Model
 
 
 @dataclass
@@ -24,7 +24,7 @@ class PromptCircuit:
 
 
 class AbstractCircuitMethod(abc.ABC):
-    def __init__(self, model: HookedTransformer, config: CircuitConfig):
+    def __init__(self, model: Model, config: CircuitConfig):
         self.model = model
         self.config = config
 

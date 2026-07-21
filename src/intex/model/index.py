@@ -154,6 +154,11 @@ class Index(Generic[T]):
                 {col: codes for col, (codes, _) in factorized.items()}, index=coordinate_df.index
             )
 
+    def source_activation_names(self) -> set[str]:
+        columns = self.source.df.columns.to_list()
+        elements = (IndexElement(self.source_config, columns, row) for row in dataframe_to_list(self.source.df))
+        return {element.transformer_activation() for element in elements if element.activation() is not None}
+
     def prepare_output_placeholder(self, device: str | torch.device = "cpu") -> torch.Tensor:
         return torch.zeros(self.axis_range, device=device)
 

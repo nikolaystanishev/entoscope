@@ -1,16 +1,16 @@
 from tqdm import tqdm
-from transformer_lens import HookedTransformer
 
 from intex.circuit.collector import CircuitCollector, CircuitVisualizationCollector
 from intex.circuit.input import CircuitInput
 from intex.circuit.method.factory import CircuitMethodFactory
+from intex.model import Model
 from intex.operation.operator import Operator
 
 
 class CircuitDiscoverer(Operator):
     def __init__(
         self,
-        model: HookedTransformer,
+        model: Model,
         collector_class: type[CircuitCollector] = CircuitVisualizationCollector,
     ):
         self.model = model

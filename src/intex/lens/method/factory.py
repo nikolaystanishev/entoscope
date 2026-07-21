@@ -1,8 +1,7 @@
-from transformer_lens import HookedTransformer
-
 from intex.lens.config import LensConfig, LensType
 from intex.lens.method.lens import AbstractLensMethod
 from intex.lens.method.logit_lens import LogitLens
+from intex.model import Model
 
 
 class LensMethodFactory:
@@ -15,5 +14,5 @@ class LensMethodFactory:
                 raise ValueError(f"Unknown lens type: {lens_type}")
 
     @classmethod
-    def create(cls, config: LensConfig, model: HookedTransformer) -> AbstractLensMethod:
+    def create(cls, config: LensConfig, model: Model) -> AbstractLensMethod:
         return cls.get(config.type)(model, config)

@@ -1,14 +1,14 @@
 from tqdm import tqdm
-from transformer_lens import HookedTransformer
 
 from intex.lens.collector import LensCollector
 from intex.lens.input import LensInput
 from intex.lens.method.factory import LensMethodFactory
+from intex.model import Model
 from intex.operation.operator import Operator
 
 
 class Lens(Operator):
-    def __init__(self, model: HookedTransformer, collector_class: type[LensCollector] = LensCollector):
+    def __init__(self, model: Model, collector_class: type[LensCollector] = LensCollector):
         self.model = model
         self.collector_class = collector_class
 

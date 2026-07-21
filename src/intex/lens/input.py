@@ -2,9 +2,10 @@ from dataclasses import dataclass, field
 
 import torch
 from jaxtyping import Float, Int
-from transformer_lens import ActivationCache, HookedTransformer
+from transformer_lens import ActivationCache
 
 from intex.lens.config import LensConfig
+from intex.model import Model
 from intex.model.config import ModelLocatorConfig
 from intex.model.index import Index
 from intex.operation.input import OperationInput
@@ -21,16 +22,18 @@ class LensInput(OperationInput):
 
     _index: Index[ModelLocatorConfig] | None = field(init=False, default=None)
 
-    def prepare(self, model: HookedTransformer) -> "LensInput":
+    def prepare(self, model: Model) -> "LensInput":
         if self._index is None:
             self._tokens = model.to_tokens(self.prompt)
-
-            with torch.no_grad():
-                self._logits, self._cache = model.run_with_cache(self._tokens)
 
             self._index = Index[ModelLocatorConfig](
                 self.config.source, self.config.source.parse(model, self.tokens.shape[1])
             )
+
+            with torch.no_grad():
+                self._logits, self._cache = model.run_with_cache(
+                    self._tokens, names_filter=sorted(self._index.source_activation_names())
+                )
 
         return self
 

@@ -1,8 +1,7 @@
-from transformer_lens import HookedTransformer
-
 from intex.circuit.config import CircuitConfig, CircuitMethodType
 from intex.circuit.method.circuit import AbstractCircuitMethod
 from intex.circuit.method.information_flow_routes import InformationFlowRoutes
+from intex.model import Model
 
 
 class CircuitMethodFactory:
@@ -15,5 +14,5 @@ class CircuitMethodFactory:
                 raise ValueError(f"Unknown circuit method type: {method_type}")
 
     @classmethod
-    def create(cls, config: CircuitConfig, model: HookedTransformer) -> AbstractCircuitMethod:
+    def create(cls, config: CircuitConfig, model: Model) -> AbstractCircuitMethod:
         return cls.get(config.type)(model, config)
