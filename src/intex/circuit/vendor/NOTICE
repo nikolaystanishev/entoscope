@@ -1,0 +1,27 @@
+Vendored third-party code
+=========================
+
+contributions.py
+----------------
+Source:  LM Transparency Tool
+         https://github.com/facebookresearch/llm-transparency-tool
+         llm_transparency_tool/routes/contributions.py
+Commit:  f1340f0757b959c75c139f7aa91aef16eddced67
+Author:  Meta Platforms, Inc. and affiliates
+License: Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)
+         https://creativecommons.org/licenses/by-nc/4.0/
+
+Modifications: none to the code. An attribution header was prepended to the file.
+
+Reference paper:
+  Javier Ferrando and Elena Voita.
+  "Information Flow Routes: Automatically Interpreting Language Models at Scale." 2024.
+  https://arxiv.org/abs/2403.00824
+
+IMPORTANT: The CC BY-NC 4.0 license permits NON-COMMERCIAL use only. The graph-building
+math in this file, and any intex code that imports it (the Circuit Discovery
+"information_flow_routes" method), may therefore be used for non-commercial purposes only.
+
+The intex per-head graph assembly and route-pruning in ../graph.py are original intex code,
+inspired by the structure of the same tool's llm_transparency_tool/routes/graph.py (node
+naming X0_/A/M/I and the layer/token contribution loop).
