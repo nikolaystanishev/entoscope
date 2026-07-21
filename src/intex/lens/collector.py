@@ -3,9 +3,9 @@ from collections.abc import Sequence
 
 import pandas as pd
 import torch
-from transformer_lens import HookedTransformer
 
 from intex.lens.input import LensInput
+from intex.model import Model
 from intex.operation.collector import AbstractCollector
 from intex.util.collections import dataframe_to_list
 
@@ -16,7 +16,7 @@ def escape_token(token: str) -> str:
 
 
 class LensCollector(AbstractCollector[LensInput]):
-    def __init__(self, lens_input: LensInput, model: HookedTransformer, save_dir: str | None = None):
+    def __init__(self, lens_input: LensInput, model: Model, save_dir: str | None = None):
         super().__init__(lens_input, save_dir)
         self.model = model
 

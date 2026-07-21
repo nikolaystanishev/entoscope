@@ -2,8 +2,9 @@ from dataclasses import dataclass, field
 
 import torch
 from jaxtyping import Float, Int
-from transformer_lens import ActivationCache, HookedTransformer
+from transformer_lens import ActivationCache
 
+from intex.model import Model
 from intex.model.index import Index
 from intex.operation.input import OperationInput
 from intex.patching.config import PatchingConfig, PatchingElementConfig
@@ -32,17 +33,10 @@ class PatchingInput(OperationInput):
     _source_probabilities: torch.Tensor | None = field(init=False, default=None)
     _target_probabilities: torch.Tensor | None = field(init=False, default=None)
 
-    def prepare(self, model: HookedTransformer) -> "PatchingInput":
+    def prepare(self, model: Model) -> "PatchingInput":
         if self._index is None:
             self._source_tokens = model.to_tokens(self.source_prompt)
             self._target_tokens = model.to_tokens(self.target_prompt)
-
-            with torch.no_grad():
-                self._source_logits, self._source_cache = model.run_with_cache(self._source_tokens)
-                self._target_logits, self._target_cache = model.run_with_cache(self._target_tokens)
-
-            self._source_generation = int(self._source_logits[0, -1].argmax())
-            self._target_generation = int(self._target_logits[0, -1].argmax())
 
             index = [
                 Index[PatchingElementConfig](
@@ -58,6 +52,14 @@ class PatchingInput(OperationInput):
                 length == max(index_lengths) or length == 1 for length in index_lengths
             )
             self._index = index
+
+            names = sorted(set().union(*(idx.source_activation_names() for idx in index))) if index else []
+            with torch.no_grad():
+                self._source_logits, self._source_cache = model.run_with_cache(self._source_tokens, names_filter=names)
+                self._target_logits, self._target_cache = model.run_with_cache(self._target_tokens, names_filter=names)
+
+            self._source_generation = int(self._source_logits[0, -1].argmax())
+            self._target_generation = int(self._target_logits[0, -1].argmax())
 
         return self
 

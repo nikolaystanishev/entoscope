@@ -1,6 +1,6 @@
 from tqdm import tqdm
-from transformer_lens import HookedTransformer
 
+from intex.model import Model
 from intex.operation.operator import Operator
 from intex.probe.collector import ProbeCollector
 from intex.probe.input import ProbeInput
@@ -11,7 +11,7 @@ from intex.probe.metric import AbstractProbeMetric
 class Prober(Operator):
     """Trains one probe per location and scores it on the training examples (no held-out split)."""
 
-    def __init__(self, model: HookedTransformer, collector_class: type[ProbeCollector] = ProbeCollector):
+    def __init__(self, model: Model, collector_class: type[ProbeCollector] = ProbeCollector):
         self.model = model
         self.collector_class = collector_class
 

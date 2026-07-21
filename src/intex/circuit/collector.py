@@ -1,11 +1,11 @@
 import os
 
 import networkx as nx
-from transformer_lens import HookedTransformer
 
 from intex.circuit.input import CircuitInput
 from intex.circuit.method.circuit import PromptCircuit
 from intex.circuit.visualization import render_circuit_html
+from intex.model import Model
 from intex.operation.collector import AbstractCollector
 from intex.util.data import write_json
 
@@ -24,7 +24,7 @@ class CircuitCollector(AbstractCollector[CircuitInput]):
     can construct either collector uniformly (the subclass needs it for ``cfg.n_layers``).
     """
 
-    def __init__(self, circuit_input: CircuitInput, model: HookedTransformer, save_dir: str | None = None):
+    def __init__(self, circuit_input: CircuitInput, model: Model, save_dir: str | None = None):
         super().__init__(circuit_input, save_dir)
         self.model = model
 

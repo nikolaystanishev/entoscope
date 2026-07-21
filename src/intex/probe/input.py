@@ -5,8 +5,8 @@ import numpy as np
 import pandas as pd
 import torch
 from jaxtyping import Float, Int
-from transformer_lens import HookedTransformer
 
+from intex.model import Model
 from intex.model.config import ModelLocation, ModelLocatorConfig
 from intex.model.index import Index
 from intex.operation.input import OperationInput
@@ -39,7 +39,7 @@ class ProbeInput(OperationInput):
     _features: dict[tuple[int, ...], Float[torch.Tensor, "examples features"]] | None = field(init=False, default=None)
     _index: Index[ModelLocatorConfig] | None = field(init=False, default=None)
 
-    def prepare(self, model: HookedTransformer) -> "ProbeInput":
+    def prepare(self, model: Model) -> "ProbeInput":
         if self._index is not None:
             return self
 
@@ -67,7 +67,7 @@ class ProbeInput(OperationInput):
 
     def _collect_features(
         self,
-        model: HookedTransformer,
+        model: Model,
         token_tensors: list[Int[torch.Tensor, "batch pos"]],
         index: Index[ModelLocatorConfig],
     ) -> dict[tuple[int, ...], Float[torch.Tensor, "examples features"]]:
@@ -76,7 +76,7 @@ class ProbeInput(OperationInput):
         vectors: dict[tuple[int, ...], list[torch.Tensor]] = defaultdict(list)
         for tokens in token_tensors:
             with torch.no_grad():
-                _, cache = model.run_with_cache(tokens)
+                _, cache = model.run_with_cache(tokens, names_filter=sorted(index.source_activation_names()))
 
             for single_index in index:
                 activation = cache[single_index.source.transformer_activation()][single_index.source.slices()]

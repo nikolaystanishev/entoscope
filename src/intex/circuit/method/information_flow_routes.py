@@ -25,11 +25,12 @@ import einops
 import networkx as nx
 import torch
 from jaxtyping import Float, Int
-from transformer_lens import ActivationCache, HookedTransformer
+from transformer_lens import ActivationCache
 
 from intex.circuit.method.circuit import AbstractCircuitMethod, PromptCircuit
 from intex.circuit.vendor import contributions
 from intex.lens.collector import escape_token
+from intex.model import Model
 from intex.model.config import ModelLayerLocation
 from intex.model.index import TRANSFORMER_ACT_NAME
 
@@ -130,7 +131,7 @@ class _GraphBuilder:
 
 @torch.no_grad()
 def decomposed_attn(
-    model: HookedTransformer,
+    model: Model,
     cache: ActivationCache,
     layer: int,
     batch_i: int = 0,
@@ -167,7 +168,7 @@ def decomposed_attn(
 
 @torch.no_grad()
 def build_information_flow_graph(
-    model: HookedTransformer,
+    model: Model,
     cache: ActivationCache,
     n_tokens: int,
     str_tokens: list[str],
@@ -272,7 +273,7 @@ def prune_routes_to_predictions(
     return nx.MultiDiGraph(search.edge_subgraph(edges).reverse(copy=True))
 
 
-def str_tokens_for(model: HookedTransformer, tokens: Int[torch.Tensor, "batch pos"]) -> list[str]:
+def str_tokens_for(model: Model, tokens: Int[torch.Tensor, "batch pos"]) -> list[str]:
     """Human-readable, CSV/XML-safe token strings for one prompt (batch item 0)."""
     return [escape_token(token) for token in model.to_str_tokens(tokens[0])]
 
