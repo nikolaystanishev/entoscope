@@ -29,20 +29,20 @@ from intex.util.data import create_if_not_exists
 
 FORMAT_VERSION = 1
 
-# ``run_with_cache`` kwargs that change the shape/content of the returned logits and cache and so
-# must take part in the cache key. ``names_filter`` and ``remove_batch_dim`` are handled explicitly;
-# these are the remaining ones. ``device`` only moves the result and is deliberately excluded.
-_KEY_KWARGS = (
-    "return_type",
-    "loss_per_token",
-    "pos_slice",
-    "prepend_bos",
-    "padding_side",
-    "start_at_layer",
-    "stop_at_layer",
-)
+# ``run_with_cache`` kwargs that must NOT be folded into the cache key here: ``names_filter`` and
+# ``remove_batch_dim`` are keyed explicitly, ``incl_bwd`` diverts uncacheable requests upstream, and
+# ``device`` only moves the result. Every other kwarg (return_type, prepend_bos, attention_mask,
+# tokens, ...) changes the returned logits/cache and so is folded into the key verbatim.
+_NON_DIGEST_KWARGS = frozenset({"names_filter", "remove_batch_dim", "incl_bwd", "device"})
 
 _ALL_ACTIVATIONS = "*ALL*"
+
+# torch dtypes ``Tensor.numpy()`` cannot materialize; their raw bytes are reinterpreted instead.
+_NUMPY_UNSUPPORTED_DTYPES = frozenset(
+    dtype
+    for name in ("bfloat16", "float8_e4m3fn", "float8_e5m2", "float8_e4m3fnuz", "float8_e5m2fnuz")
+    if (dtype := getattr(torch, name, None)) is not None
+)
 
 
 def _normalize_names_filter(names_filter: Any) -> str | list[str]:
@@ -62,7 +62,13 @@ def _encode_input(model_input: Any) -> bytes:
     """Deterministic byte encoding of one ``run_with_cache`` positional argument."""
     if isinstance(model_input, torch.Tensor):
         tensor = model_input.detach().cpu().contiguous()
-        return b"T|" + f"{tensor.dtype}|{tuple(tensor.shape)}|".encode() + tensor.numpy().tobytes()
+        header = f"{tensor.dtype}|{tuple(tensor.shape)}|".encode()
+        # ``Tensor.numpy()`` rejects dtypes NumPy has no equivalent for (bfloat16, float8, ...).
+        # Reinterpret their raw bytes through a same-width integer view; the original dtype is
+        # already recorded in ``header`` so distinct dtypes can never collide on the same bytes.
+        if tensor.dtype in _NUMPY_UNSUPPORTED_DTYPES:
+            tensor = tensor.view(torch.int16 if tensor.element_size() == 2 else torch.uint8)
+        return b"T|" + header + tensor.numpy().tobytes()
     if isinstance(model_input, str):
         return b"S|" + model_input.encode("utf-8")
     return b"R|" + repr(model_input).encode("utf-8")
@@ -100,7 +106,13 @@ class ActivationDiskCache:
         names = names_filter if isinstance(names_filter, str) else "|".join(names_filter)
         digest.update(names.encode("utf-8"))
         digest.update(b"\x00extra\x00")
-        digest.update(repr(sorted(extra.items())).encode("utf-8"))
+        # Values may be tensors (e.g. ``attention_mask``), so reuse the deterministic input encoder
+        # rather than ``repr`` — ``repr`` truncates large tensors and would let distinct inputs collide.
+        for extra_name, extra_value in sorted(extra.items()):
+            digest.update(extra_name.encode("utf-8"))
+            digest.update(b"\x00")
+            digest.update(_encode_input(extra_value))
+            digest.update(b"\x00")
         return digest.hexdigest()
 
     def _path(self, digest: str, model_name: str) -> str:
@@ -165,7 +177,7 @@ class CachedModel:
         model_name = self._model.cfg.model_name or "unknown"
         names_normalized = _normalize_names_filter(names_filter)
         remove_batch_dim = bool(kwargs.get("remove_batch_dim", False))
-        extra = {key: kwargs[key] for key in _KEY_KWARGS if key in kwargs}
+        extra = {key: value for key, value in kwargs.items() if key not in _NON_DIGEST_KWARGS}
         extra["remove_batch_dim"] = remove_batch_dim
 
         digest = self._cache.key(

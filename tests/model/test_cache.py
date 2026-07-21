@@ -40,6 +40,13 @@ def test_key_distinguishes_relevant_inputs(tmp_path):
     assert _key(cache, names=["a"]) != _key(cache, names=["a", "b"])  # subset differs
     assert _key(cache, fingerprint="fingerprint-b") != base  # different model
     assert _key(cache, extra={"remove_batch_dim": True}) != base  # output-shaping kwarg
+    # Tensor-valued model-input kwargs (e.g. attention_mask) must not collide, even at sizes where
+    # ``repr`` would truncate the tensor to identical text.
+    mask_a = torch.ones(1, 40, dtype=torch.long)
+    mask_b = mask_a.clone()
+    mask_b[0, -1] = 0
+    assert _key(cache, extra={"attention_mask": mask_a}) != base
+    assert _key(cache, extra={"attention_mask": mask_a}) != _key(cache, extra={"attention_mask": mask_b})
 
 
 def test_normalize_names_filter():
