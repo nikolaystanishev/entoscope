@@ -87,8 +87,7 @@ def _figure(graph: nx.MultiDiGraph, str_tokens: list[str], n_layers: int, title:
             attn_head.append(head)
             attn_size.append(_marker_size(weight))
             attn_hover.append(
-                f"attention · L{graph.nodes[v]['layer']} · head {head}<br>"
-                f"{u} → {v}<br>weight {weight:.3f}"
+                f"attention · L{graph.nodes[v]['layer']} · head {head}<br>{u} → {v}<br>weight {weight:.3f}"
             )
         else:
             (resid_lines if kind == "residual" else mlp_lines).extend([(x0, y0), (x1, y1)])
@@ -182,12 +181,8 @@ def _figure(graph: nx.MultiDiGraph, str_tokens: list[str], n_layers: int, title:
 
 
 def render_circuit_html(circuit: PromptCircuit, n_layers: int, path: str) -> None:
-    routes_fig = _figure(
-        circuit.routes, circuit.str_tokens, n_layers, f"Information Flow Routes — {circuit.prompt!r}"
-    )
-    full_fig = _figure(
-        circuit.graph, circuit.str_tokens, n_layers, f"Full contribution graph — {circuit.prompt!r}"
-    )
+    routes_fig = _figure(circuit.routes, circuit.str_tokens, n_layers, f"Information Flow Routes — {circuit.prompt!r}")
+    full_fig = _figure(circuit.graph, circuit.str_tokens, n_layers, f"Full contribution graph — {circuit.prompt!r}")
 
     parts = [
         "<!doctype html><html><head><meta charset='utf-8'/>",
