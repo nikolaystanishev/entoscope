@@ -17,8 +17,8 @@ class CircuitInput(OperationInput):
     of how many prompts are passed (mirrors ``intex.probe.input.ProbeInput``).
     """
 
-    prompts: list[str]
     config: CircuitConfig
+    prompts: list[str]
 
     _tokens: list[Int[torch.Tensor, "batch pos"]] | None = field(init=False, default=None)
 

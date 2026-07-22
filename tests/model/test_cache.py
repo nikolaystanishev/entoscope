@@ -150,10 +150,10 @@ def test_lens_operation_reuses_cached_activations(model, tmp_path, monkeypatch):
     calls = _count_forward_passes(model, monkeypatch)
     wrapped = CachedModel(model, str(tmp_path))
 
-    Lens(wrapped).apply(LensInput(PROMPT, _lens_config()), return_collector=True, verbose=False)
+    Lens(wrapped).apply(LensInput(_lens_config(), PROMPT), return_collector=True, verbose=False)
     assert calls["n"] == 1
     assert list(tmp_path.rglob("*.pt"))
 
     # A second run over the same prompt/model reads its activations from disk.
-    Lens(wrapped).apply(LensInput(PROMPT, _lens_config()), return_collector=True, verbose=False)
+    Lens(wrapped).apply(LensInput(_lens_config(), PROMPT), return_collector=True, verbose=False)
     assert calls["n"] == 1

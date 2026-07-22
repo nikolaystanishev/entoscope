@@ -20,7 +20,7 @@ def _config(**kwargs) -> CircuitConfig:
 
 
 def test_one_circuit_per_prompt(model: HookedTransformer):
-    collector = CircuitDiscoverer(model).apply(CircuitInput(PROMPTS, _config()), return_collector=True, verbose=False)
+    collector = CircuitDiscoverer(model).apply(CircuitInput(_config(), PROMPTS), return_collector=True, verbose=False)
     assert collector is not None
     assert len(collector.result) == len(PROMPTS)
     assert all(isinstance(c, PromptCircuit) for c in collector.result)
@@ -37,7 +37,7 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path):
     save_dir = tmp_path / "circuit_run"
     # CircuitDiscoverer defaults to the visualization collector, so HTML is written too.
     collector = CircuitDiscoverer(model).apply(
-        CircuitInput(PROMPTS, config), save_dir=str(save_dir), return_collector=True, verbose=False
+        CircuitInput(config, PROMPTS), save_dir=str(save_dir), return_collector=True, verbose=False
     )
     assert collector is not None
     assert isinstance(collector, CircuitVisualizationCollector)
@@ -80,7 +80,7 @@ def test_base_collector_skips_html(model: HookedTransformer, tmp_path: Path):
     # The base collector persists graph data only; visualization is opt-in via the subclass.
     save_dir = tmp_path / "no_viz"
     collector = CircuitDiscoverer(model, collector_class=CircuitCollector).apply(
-        CircuitInput(PROMPTS[:1], _config()), save_dir=str(save_dir), return_collector=True, verbose=False
+        CircuitInput(_config(), PROMPTS[:1]), save_dir=str(save_dir), return_collector=True, verbose=False
     )
     assert collector is not None
     assert type(collector) is CircuitCollector

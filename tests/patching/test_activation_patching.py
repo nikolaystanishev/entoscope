@@ -126,7 +126,7 @@ def test_activation_patching_from_source_into_target(model: HookedTransformer) -
     # A full residual replacement requires matching sequence lengths between the two prompts.
     assert model.to_tokens(SOURCE_PROMPT).shape == model.to_tokens(TARGET_PROMPT).shape
 
-    patching_input = PatchingInput(SOURCE_PROMPT, TARGET_PROMPT, _last_layer_resid_patch_config())
+    patching_input = PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT)
 
     collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
 
@@ -139,7 +139,7 @@ def test_activation_patching_from_source_into_target(model: HookedTransformer) -
 
 
 def test_caches_restricted_to_used_activations(model: HookedTransformer) -> None:
-    patching_input = PatchingInput(SOURCE_PROMPT, TARGET_PROMPT, _last_layer_resid_patch_config()).prepare(model)
+    patching_input = PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT).prepare(model)
 
     # Only the last layer's residual is read; both caches are filtered down to it.
     expected = set().union(*(idx.source_activation_names() for idx in patching_input.index))
@@ -157,7 +157,7 @@ def test_zero_ablation_patching(model: HookedTransformer) -> None:
     # Zero ablation writes zeros into the target run, so the source run's activations are never read;
     # its forward pass only supplies the source generation token that the logit-diff metric compares
     # against the target one. Distinct prompts keep those two tokens distinct.
-    patching_input = PatchingInput(SOURCE_PROMPT, TARGET_PROMPT, _last_layer_resid_zero_ablation_config())
+    patching_input = PatchingInput(_last_layer_resid_zero_ablation_config(), SOURCE_PROMPT, TARGET_PROMPT)
 
     collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
 
@@ -179,7 +179,7 @@ def _run_value_scale(model: HookedTransformer, scale: float) -> torch.Tensor:
     # Scaling the source residual and writing it into the target requires matching sequence lengths.
     assert model.to_tokens(SOURCE_PROMPT).shape == model.to_tokens(TARGET_PROMPT).shape
 
-    patching_input = PatchingInput(SOURCE_PROMPT, TARGET_PROMPT, _resid_value_scale_config(scale, _VALUE_SCALE_LAYER))
+    patching_input = PatchingInput(_resid_value_scale_config(scale, _VALUE_SCALE_LAYER), SOURCE_PROMPT, TARGET_PROMPT)
 
     collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
 
@@ -217,7 +217,7 @@ def test_multi_config_patching_mlp_mhsa_and_pattern(model: HookedTransformer) ->
     assert model.to_tokens(SOURCE_PROMPT).shape == model.to_tokens(TARGET_PROMPT).shape
 
     patching_input = PatchingInput(
-        SOURCE_PROMPT, TARGET_PROMPT, _mlp_mhsa_pattern_patch_config(_MULTI_PATCH_LAYER, _MULTI_PATCH_HEAD)
+        _mlp_mhsa_pattern_patch_config(_MULTI_PATCH_LAYER, _MULTI_PATCH_HEAD), SOURCE_PROMPT, TARGET_PROMPT
     )
 
     collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
@@ -282,7 +282,7 @@ def _run_explicit(
     activation: ModelLayerLocation | None = ModelLayerLocation.RESIDUAL_POST,
 ) -> torch.Tensor:
     patching_input = PatchingInput(
-        SOURCE_PROMPT, TARGET_PROMPT, _explicit_patch_config(source_coordinates, target_coordinates, activation)
+        _explicit_patch_config(source_coordinates, target_coordinates, activation), SOURCE_PROMPT, TARGET_PROMPT
     )
     collector = Patcher(model).apply(patching_input, save_dir=save_dir, return_collector=True, verbose=False)
     assert collector is not None
@@ -389,7 +389,7 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
         )
     )
     config = ConfigFactory[PatchingConfig](str(config_yaml)).create("last_layer_resid_patch")
-    patching_input = PatchingInput(SOURCE_PROMPT, TARGET_PROMPT, config)
+    patching_input = PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT)
 
     save_dir = tmp_path / "patch_run"
     collector = Patcher(model).apply(patching_input, save_dir=str(save_dir), return_collector=True, verbose=False)

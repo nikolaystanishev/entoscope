@@ -4,7 +4,7 @@ import torch
 from jaxtyping import Float, Int
 from transformer_lens import ActivationCache
 
-from intex.lens.config import LensConfig
+from intex.lens.config import LensConfig, LensType
 from intex.model import Model
 from intex.model.config import ModelLocatorConfig
 from intex.model.index import Index
@@ -13,8 +13,8 @@ from intex.operation.input import OperationInput
 
 @dataclass
 class LensInput(OperationInput):
-    prompt: str
     config: LensConfig
+    prompt: str | None = None
 
     _tokens: Int[torch.Tensor, "batch pos"] | None = field(init=False, default=None)
     _logits: Float[torch.Tensor, "batch pos d_vocab"] | None = field(init=False, default=None)
@@ -22,18 +22,30 @@ class LensInput(OperationInput):
 
     _index: Index[ModelLocatorConfig] | None = field(init=False, default=None)
 
+    def __post_init__(self):
+        if self.config.type is LensType.PARAMETER_LENS and self.prompt is not None:
+            raise ValueError("The parameter lens reads the model's weights, not its activations, so it takes no prompt")
+        if self.config.type is not LensType.PARAMETER_LENS and self.prompt is None:
+            raise ValueError(f"A '{self.config.type.value}' reads activations, so it needs a prompt")
+
     def prepare(self, model: Model) -> "LensInput":
-        if self._index is None:
-            self._tokens = model.to_tokens(self.prompt)
+        if self._index is not None:
+            return self
 
-            self._index = Index[ModelLocatorConfig](
-                self.config.source, self.config.source.parse(model, self.tokens.shape[1])
+        if self.prompt is None:
+            self._index = Index[ModelLocatorConfig](self.config.source, self.config.source.parse(model, None))
+            return self
+
+        self._tokens = model.to_tokens(self.prompt)
+
+        self._index = Index[ModelLocatorConfig](
+            self.config.source, self.config.source.parse(model, self.tokens.shape[1])
+        )
+
+        with torch.no_grad():
+            self._logits, self._cache = model.run_with_cache(
+                self._tokens, names_filter=sorted(self._index.source_activation_names())
             )
-
-            with torch.no_grad():
-                self._logits, self._cache = model.run_with_cache(
-                    self._tokens, names_filter=sorted(self._index.source_activation_names())
-                )
 
         return self
 

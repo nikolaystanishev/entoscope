@@ -3,8 +3,66 @@
 A mechanistic-interpretability toolkit for large language models, built on
 [`transformer_lens`](https://github.com/TransformerLensOrg/TransformerLens). Each operation follows
 the same shape — `Config → Input → Operator → Collector` — and can be driven inline or from an
-experiment script. Current operations: Logit Lens, Tuned Lens, Probing, Activation Patching, and
-Circuit Discovery.
+experiment script. Current operations: Logit Lens, Tuned Lens, Parameter Lens, Probing, Activation
+Patching, and Circuit Discovery.
+
+## Parameter Lens
+
+Reads the model's **weights** in vocabulary space, following
+[Analyzing Transformers in Embedding Space](https://arxiv.org/abs/2209.02535): a `d_model`
+parameter vector is projected onto the vocabulary directly, without LayerNorm or biases. Nothing
+about it depends on an input, so a run takes no prompt at all — it is the same `Lens` operator and
+the same `LensInput`, with `prompt=None`.
+
+```python
+from transformer_lens import HookedTransformer
+
+from intex.lens.config import LensConfig, LensType
+from intex.lens.input import LensInput
+from intex.lens.lens import Lens
+from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+
+model = HookedTransformer.from_pretrained("gpt2")
+model.eval()
+
+config = LensConfig(
+    type=LensType.PARAMETER_LENS,
+    top_k=5,
+    source=ModelLocatorConfig(
+        activation=ModelLayerLocation.MLP_POST,
+        location=[ModelLocation.LAYER, ModelLocation.NEURON],
+        filter=Filter(inclusion_terms=[{ModelLocation.NEURON: 373}]),
+    ),
+)
+
+collector = Lens(model).apply(
+    LensInput(config), save_dir="runs/parameter_lens", return_collector=True
+)
+print(collector.result)  # one row per (layer, neuron), with its top-k tokens
+```
+
+An index element needs a single layer — each weight lives in one block — while a list of neurons
+(or heads) sums those weight vectors into one direction before projecting it, and leaving the
+location out sums all of them, exactly as grouped neurons and heads work in the logit lens.
+`position` is not a valid location:
+
+| location | weight | reading |
+| --- | --- | --- |
+| `mlp.pre` | column of `W_in` (`W_gate` on a gated MLP) | the key vector the neuron reads with |
+| `mlp.pre_linear` | column of `W_in` (gated MLPs only) | the key vector of the linear branch |
+| `mlp.post` | row of `W_out` | the value vector the neuron writes |
+| `attn.q` / `attn.k` / `attn.v` | column of `W_Q` / `W_K` / `W_V` | what the subhead reads |
+| `attn.z` | row of `W_O` | what the subhead writes |
+
+`projection` picks the vocabulary space: `unembedding` (the default) multiplies by `W_U`,
+`embedding` by the embedding matrix `E`, as in the paper. The two differ whenever a model does not
+tie them — including GPT-2, once `transformer_lens` has folded LayerNorm in and centered the
+unembedding. The collector's `probability_*` columns are a softmax over the projected weight
+vector: a ranking score over the vocabulary, not a probability the model ever produces.
+
+Configs can also be loaded from YAML via `intex.operation.config.ConfigFactory[LensConfig]` (see
+`example_config.yaml`), and the operation can be run from an `@intex.script.experiment.experiment`
+script (see `example_lens_script.py`).
 
 ## Circuit Discovery
 
@@ -26,7 +84,7 @@ config = CircuitConfig(type=CircuitMethodType.INFORMATION_FLOW_ROUTES, threshold
 prompts = ["The capital of France is", "The Eiffel Tower is in"]
 
 collector = CircuitDiscoverer(model).apply(
-    CircuitInput(prompts, config), save_dir="runs/circuit", return_collector=True
+    CircuitInput(config, prompts), save_dir="runs/circuit", return_collector=True
 )
 
 # In memory: one PromptCircuit per prompt, each with a full graph and the pruned routes.
