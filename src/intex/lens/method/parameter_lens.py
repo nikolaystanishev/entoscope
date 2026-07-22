@@ -1,5 +1,4 @@
 import abc
-from collections.abc import Sequence
 
 import torch
 from jaxtyping import Float
