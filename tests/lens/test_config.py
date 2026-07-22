@@ -44,7 +44,7 @@ def test_top_k_explicit():
 
 def test_invalid_type_raises():
     with pytest.raises(ValueError):
-        from_dict(LensConfig, {**LENS, "type": "tuned_lens"})
+        from_dict(LensConfig, {**LENS, "type": "attention_lens"})
 
 
 def test_missing_type_raises():
@@ -60,6 +60,20 @@ def test_missing_source_raises():
 def test_unknown_key_raises():
     with pytest.raises(ValueError, match="Unknown keys for LensConfig.*target"):
         from_dict(LensConfig, {**LENS, "target": SOURCE})
+
+
+def test_tuned_lens_yaml_shape():
+    config = from_dict(LensConfig, {"type": "tuned_lens", "translators": "gpt2", "source": SOURCE})
+    assert config == LensConfig(type=LensType.TUNED_LENS, translators="gpt2", source=source_config())
+
+
+def test_translators_defaults_to_none():
+    assert from_dict(LensConfig, {**LENS, "type": "tuned_lens"}).translators is None
+
+
+def test_translators_on_a_logit_lens_raises():
+    with pytest.raises(ValueError, match="'translators' is a tuned lens setting"):
+        from_dict(LensConfig, {**LENS, "translators": "gpt2"})
 
 
 def test_config_factory_stamps_config_id(tmp_path):

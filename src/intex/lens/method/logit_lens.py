@@ -52,7 +52,7 @@ class LogitLens(AbstractLensMethod):
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_vocab"]:
         with torch.no_grad():
-            residual = self._to_residual(activation, index)
+            residual = self._to_final_residual(self._to_residual(activation, index), index)
             return self.model.ln_final(residual) @ self.model.W_U + self.model.b_U
 
     def _to_residual(
@@ -61,6 +61,13 @@ class LogitLens(AbstractLensMethod):
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_model"]:
         return activation
+
+    def _to_final_residual(
+        self,
+        residual: Float[torch.Tensor, "... d_model"],
+        index: IndexElement[ModelLocatorConfig],
+    ) -> Float[torch.Tensor, "... d_model"]:
+        return residual
 
 
 class MLPLogitLens(LogitLens):
