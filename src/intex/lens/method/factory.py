@@ -1,18 +1,41 @@
 from intex.lens.config import LensConfig, LensType
 from intex.lens.method.lens import AbstractLensMethod
-from intex.lens.method.logit_lens import LogitLens
+from intex.lens.method.logit_lens import LogitLens, MLPLogitLens
 from intex.model import Model
+from intex.model.config import ModelLayerLocation
 
 
 class LensMethodFactory:
-    @staticmethod
-    def get(lens_type: LensType) -> type[AbstractLensMethod]:
+    """Builds one lens per index element — the class follows the space the activation lives in."""
+
+    @classmethod
+    def get(cls, lens_type: LensType, activation: ModelLayerLocation) -> type[AbstractLensMethod]:
         match lens_type:
             case LensType.LOGIT_LENS:
-                return LogitLens
+                return cls._logit_lens(activation)
             case _:
                 raise ValueError(f"Unknown lens type: {lens_type}")
 
+    @staticmethod
+    def _logit_lens(activation: ModelLayerLocation) -> type[AbstractLensMethod]:
+        match activation:
+            case (
+                ModelLayerLocation.EMBEDDING
+                | ModelLayerLocation.RESIDUAL_PRE
+                | ModelLayerLocation.RESIDUAL_MID
+                | ModelLayerLocation.RESIDUAL_POST
+                | ModelLayerLocation.ATTENTION_OUT
+                | ModelLayerLocation.MLP_OUT
+            ):
+                return LogitLens
+            case ModelLayerLocation.MLP_PRE | ModelLayerLocation.MLP_PRE_LINEAR | ModelLayerLocation.MLP_POST:
+                return MLPLogitLens
+            case _:
+                raise ValueError(
+                    f"Logit lens cannot project {activation}: only residual-stream and MLP-hidden "
+                    "activations map onto the vocabulary"
+                )
+
     @classmethod
-    def create(cls, config: LensConfig, model: Model) -> AbstractLensMethod:
-        return cls.get(config.type)(model, config)
+    def create(cls, config: LensConfig, model: Model, activation: ModelLayerLocation) -> AbstractLensMethod:
+        return cls.get(config.type, activation)(model, config)

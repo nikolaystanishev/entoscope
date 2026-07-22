@@ -45,7 +45,7 @@ T = TypeVar("T", bound="ModelLocatorConfig")
 
 
 class IndexElement(Generic[T]):
-    def __init__(self, config: T, index_names: list[str], index: list[int | list[int] | str]):
+    def __init__(self, config: T, index_names: list[str], index: list[int | list[int] | str | ModelLayerLocation]):
         self.config = config
         self.index_names = deepcopy(index_names)
         self.index = index
@@ -87,17 +87,19 @@ class IndexElement(Generic[T]):
         return get_act_name(TRANSFORMER_ACT_NAME[self.activation()], layer=self.layer())
 
     def layer(self) -> int | None:
-        if "layer" in self.index_names:
-            layer = self.index[self.index_names.index("layer")]
-            if not isinstance(layer, str) and not isinstance(layer, Sequence):
-                return layer
+        layer = self.get(ModelLocation.LAYER)
+        if not isinstance(layer, str) and not isinstance(layer, Sequence):
+            return layer
         return None
 
     def set_batch_index(self, batch_index: int):
         self.batch_index = batch_index
 
-    def __getitem__(self, item):
-        return self.index[self.index_names.index(item)]
+    def get(self, location: ModelLocation | str) -> int | list[int] | str | None:
+        return self[location] if location in self.index_names else None
+
+    def __getitem__(self, location: ModelLocation | str):
+        return self.index[self.index_names.index(location)]
 
 
 class SingleIndex(Generic[T]):

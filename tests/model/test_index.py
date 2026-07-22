@@ -41,6 +41,25 @@ def test_remaining_axes_multiple_lists_raise():
         element.remaining_axes()
 
 
+def test_get_returns_the_indexed_value():
+    element = _element(ModelLayerLocation.MLP_POST, layer=1, neuron=373)
+
+    assert element.get(ModelLocation.NEURON) == 373
+    assert element.get(ModelLocation.ACTIVATION) == ModelLayerLocation.MLP_POST
+
+
+def test_get_missing_location_is_none():
+    element = _element(ModelLayerLocation.MLP_POST, layer=1)
+
+    assert element.get(ModelLocation.NEURON) is None
+
+
+def test_layer_only_for_a_single_layer():
+    assert _element(ModelLayerLocation.MLP_POST, layer=2).layer() == 2
+    assert _element(ModelLayerLocation.MLP_POST, layer=[0, 1]).layer() is None
+    assert _element(ModelLayerLocation.MLP_POST, position=0).layer() is None
+
+
 def _source_index(df: pd.DataFrame) -> Index:
     # ``source_activation_names`` reads only the source df, so the config is a placeholder.
     return Index(ModelLocatorConfig(), ModelLocationIndex(df))
