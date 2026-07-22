@@ -9,9 +9,11 @@ from intex.lens.collector import escape_token
 from intex.lens.config import LensConfig, LensType
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
+from intex.lens.method import tuned_lens
 from intex.lens.method.factory import LensMethodFactory
 from intex.lens.method.lens import AbstractLensMethod
 from intex.lens.method.logit_lens import AttentionLogitLens, AttentionQKLogitLens, LogitLens, MLPLogitLens
+from intex.lens.method.tuned_lens import TunedLens
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.model.index import IndexElement
 from intex.operation.config import ConfigFactory
@@ -52,8 +54,8 @@ def _coordinates_config() -> LensConfig:
     )
 
 
-def _coordinates_config_of(*coordinates: dict, top_k: int = 1) -> LensConfig:
-    return LensConfig(type=LensType.LOGIT_LENS, source=ModelLocatorConfig(coordinates=list(coordinates)), top_k=top_k)
+def _coordinates_config_of(*coordinates: dict, top_k: int = 1, lens_type: LensType = LensType.LOGIT_LENS) -> LensConfig:
+    return LensConfig(type=lens_type, source=ModelLocatorConfig(coordinates=list(coordinates)), top_k=top_k)
 
 
 def _sliced(lens_input: LensInput, element: IndexElement) -> torch.Tensor:
@@ -398,6 +400,111 @@ def test_negative_neuron_resolves_against_d_mlp(model):
     assert len(result) == 1
     assert result["source_neuron"].tolist() == [model.cfg.d_mlp - 1]
     assert 0 <= result["token_0"].iloc[0] < model.cfg.d_vocab
+
+
+@pytest.fixture
+def translators(model, monkeypatch):
+    """Installs scaled-identity translators, so a translated residual stays hand-checkable."""
+    requested = []
+
+    def install(scale=lambda index: 0.0) -> list:
+        built = torch.nn.ModuleList()
+        for index in range(model.cfg.n_layers):
+            linear = torch.nn.Linear(model.cfg.d_model, model.cfg.d_model)
+            linear.weight.data = scale(index) * torch.eye(model.cfg.d_model)
+            linear.bias.data = torch.zeros(model.cfg.d_model)
+            built.append(linear)
+        built.requires_grad_(False)
+
+        def load(_, resource):
+            requested.append(resource)
+            return built
+
+        monkeypatch.setattr(tuned_lens, "load_translators", load)
+        return requested
+
+    return install
+
+
+@pytest.mark.parametrize(
+    "coordinate",
+    [
+        {"activation": "embed", "position": -1},
+        {"activation": "resid.post", "layer": 3, "position": -1},
+        {"activation": "attn.out", "layer": 3, "position": -1},
+        {"activation": "mlp.post", "layer": 3, "position": -1, "neuron": NEURON},
+        {"activation": "attn.z", "layer": 3, "position": -1, "head": HEAD},
+    ],
+)
+def test_tuned_lens_with_zero_translators_equals_the_logit_lens(model, translators, coordinate):
+    translators()
+    config = _coordinates_config_of(coordinate, lens_type=LensType.TUNED_LENS)
+    lens_input = LensInput(PROMPT, config).prepare(model)
+    element = next(iter(lens_input.index)).source
+    activation = _sliced(lens_input, element)
+
+    tuned = LensMethodFactory.create(config, model, element.activation()).project(activation, element)
+    logit = LensMethodFactory.create(_coordinates_config_of(coordinate), model, element.activation()).project(
+        activation, element
+    )
+
+    assert torch.allclose(tuned, logit, atol=1e-5)
+
+
+@pytest.mark.parametrize(
+    ("coordinate", "translator_index"),
+    [
+        ({"activation": "resid.pre", "layer": 3, "position": -1}, 3),
+        ({"activation": "resid.post", "layer": 3, "position": -1}, 4),
+        ({"activation": "resid.mid", "layer": 3, "position": -1}, 4),
+    ],
+)
+def test_tuned_lens_translates_the_residual_of_its_state(model, translators, coordinate, translator_index):
+    translators(scale=lambda index: index / 10)
+    config = _coordinates_config_of(coordinate, lens_type=LensType.TUNED_LENS)
+    lens_input = LensInput(PROMPT, config).prepare(model)
+    element = next(iter(lens_input.index)).source
+    activation = _sliced(lens_input, element)
+
+    logits = TunedLens(model, config).project(activation, element)
+
+    assert torch.allclose(logits, _unembed(model, (1 + translator_index / 10) * activation), atol=1e-4)
+
+
+def test_tuned_lens_leaves_the_last_state_untranslated(model, translators):
+    translators(scale=lambda index: index / 10)
+    config = _coordinates_config_of(
+        {"activation": "resid.post", "layer": -1, "position": -1}, lens_type=LensType.TUNED_LENS
+    )
+    lens_input = LensInput(PROMPT, config).prepare(model)
+    element = next(iter(lens_input.index)).source
+
+    logits = TunedLens(model, config).project(_sliced(lens_input, element), element)
+
+    assert torch.allclose(logits, lens_input.logits[:, -1], atol=1e-4)
+
+
+def test_tuned_lens_declarative_run(model, translators):
+    requested = translators(scale=lambda index: index / 10)
+    config = LensConfig(
+        type=LensType.TUNED_LENS,
+        translators="gpt2",
+        source=ModelLocatorConfig(
+            activation=ModelLayerLocation.RESIDUAL_POST,
+            location=[ModelLocation.LAYER, ModelLocation.POSITION],
+            filter=Filter.from_config([{"position": -1}]),
+        ),
+    )
+    lens_input = LensInput(PROMPT, config)
+    result = Lens(model).apply(lens_input, return_collector=True, verbose=False).result
+
+    assert len(result) == model.cfg.n_layers
+    assert requested == ["gpt2"] * model.cfg.n_layers
+
+    method = TunedLens(model, config)
+    for single_index, (_, row) in zip(lens_input.index, result.iterrows(), strict=True):
+        logits = method.project(_sliced(lens_input, single_index.source), single_index.source)
+        assert row["token_0"] == logits.squeeze(0).argmax().item()
 
 
 def test_logit_lens_top1_matches_model_prediction_at_final_layer(model):

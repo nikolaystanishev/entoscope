@@ -19,6 +19,7 @@ dependencies = [
     "torch>=2.9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "tqdm>=4.68.3",
     "transformer-lens>=3.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "tuned-lens>=0.2.0",
     # Intel macOS: torch dropped x86_64 wheels after 2.2.2, which caps
     # transformer-lens at 2.15.x (2.16+ needs torch>=2.6) and numpy at <2
     # (torch 2.2 is built against numpy 1.x). Requires Python <=3.12.

@@ -3,8 +3,8 @@
 A mechanistic-interpretability toolkit for large language models, built on
 [`transformer_lens`](https://github.com/TransformerLensOrg/TransformerLens). Each operation follows
 the same shape — `Config → Input → Operator → Collector` — and can be driven inline or from an
-experiment script. Current operations: Logit Lens, Probing, Activation Patching, and Circuit
-Discovery.
+experiment script. Current operations: Logit Lens, Tuned Lens, Probing, Activation Patching, and
+Circuit Discovery.
 
 ## Circuit Discovery
 
