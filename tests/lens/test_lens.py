@@ -11,13 +11,14 @@ from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.lens.method.factory import LensMethodFactory
 from intex.lens.method.lens import AbstractLensMethod
-from intex.lens.method.logit_lens import LogitLens, MLPLogitLens
+from intex.lens.method.logit_lens import AttentionLogitLens, AttentionQKLogitLens, LogitLens, MLPLogitLens
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.model.index import IndexElement
 from intex.operation.config import ConfigFactory
 
 PROMPT = "The capital of France is"
 NEURON = 373
+HEAD = 7
 
 LENS_YAML = {
     "my_lens": {
@@ -51,7 +52,7 @@ def _coordinates_config() -> LensConfig:
     )
 
 
-def _mlp_coordinates_config(*coordinates: dict, top_k: int = 1) -> LensConfig:
+def _coordinates_config_of(*coordinates: dict, top_k: int = 1) -> LensConfig:
     return LensConfig(type=LensType.LOGIT_LENS, source=ModelLocatorConfig(coordinates=list(coordinates)), top_k=top_k)
 
 
@@ -201,7 +202,7 @@ def test_logit_lens_projection_equals_model_logits(model):
 
 def test_logit_lens_projects_a_single_mlp_neuron(model):
     layer = model.cfg.n_layers - 1
-    config = _mlp_coordinates_config({"activation": "mlp.post", "layer": -1, "position": -1, "neuron": NEURON})
+    config = _coordinates_config_of({"activation": "mlp.post", "layer": -1, "position": -1, "neuron": NEURON})
     lens_input = LensInput(PROMPT, config).prepare(model)
     element = next(iter(lens_input.index)).source
 
@@ -218,7 +219,7 @@ def test_logit_lens_projects_a_single_mlp_neuron(model):
 def test_logit_lens_sums_a_list_of_mlp_neurons(model):
     layer = model.cfg.n_layers - 1
     neurons = [NEURON, NEURON + 1]
-    config = _mlp_coordinates_config({"activation": "mlp.post", "layer": -1, "position": -1, "neuron": neurons})
+    config = _coordinates_config_of({"activation": "mlp.post", "layer": -1, "position": -1, "neuron": neurons})
     lens_input = LensInput(PROMPT, config).prepare(model)
     element = next(iter(lens_input.index)).source
 
@@ -234,7 +235,7 @@ def test_logit_lens_sums_a_list_of_mlp_neurons(model):
 
 def test_logit_lens_over_all_mlp_neurons_is_mlp_out_without_its_bias(model):
     layer = model.cfg.n_layers - 1
-    config = _mlp_coordinates_config(
+    config = _coordinates_config_of(
         {"activation": "mlp.post", "layer": -1, "position": -1},
         {"activation": "mlp.out", "layer": -1, "position": -1},
     )
@@ -272,8 +273,125 @@ def test_neuron_lens_declarative_run(model):
         assert row["token_0"] == logits.squeeze(0).argmax().item()
 
 
+def test_attention_logit_lens_projects_a_single_head(model):
+    layer = model.cfg.n_layers - 1
+    config = _coordinates_config_of({"activation": "attn.z", "layer": -1, "position": -1, "head": HEAD})
+    lens_input = LensInput(PROMPT, config).prepare(model)
+    element = next(iter(lens_input.index)).source
+
+    activation = _sliced(lens_input, element)
+    assert activation.shape == (1, model.cfg.d_head)
+
+    logits = AttentionLogitLens(model, config).project(activation, element)
+
+    expected = _unembed(model, activation @ model.blocks[layer].attn.W_O[HEAD])
+    assert logits.shape == (1, model.cfg.d_vocab)
+    assert torch.allclose(logits, expected, atol=1e-5)
+
+
+def test_attention_logit_lens_projects_a_single_head_dimension(model):
+    layer = model.cfg.n_layers - 1
+    config = _coordinates_config_of({"activation": "attn.z", "layer": -1, "position": -1, "head": HEAD, "neuron": 11})
+    lens_input = LensInput(PROMPT, config).prepare(model)
+    element = next(iter(lens_input.index)).source
+
+    activation = _sliced(lens_input, element)
+    assert activation.shape == (1,)  # both the head and the d_head axes are dropped
+
+    logits = AttentionLogitLens(model, config).project(activation, element)
+
+    expected = _unembed(model, activation.unsqueeze(-1) * model.blocks[layer].attn.W_O[HEAD, 11])
+    assert torch.allclose(logits, expected, atol=1e-5)
+
+
+def test_attention_logit_lens_sums_a_list_of_heads(model):
+    layer = model.cfg.n_layers - 1
+    heads = [HEAD, HEAD + 1]
+    config = _coordinates_config_of({"activation": "attn.z", "layer": -1, "position": -1, "head": heads})
+    lens_input = LensInput(PROMPT, config).prepare(model)
+    element = next(iter(lens_input.index)).source
+
+    activation = _sliced(lens_input, element)
+    assert activation.shape == (1, len(heads), model.cfg.d_head)
+
+    logits = AttentionLogitLens(model, config).project(activation, element)
+
+    w_o = model.blocks[layer].attn.W_O
+    contribution = sum(activation[:, i] @ w_o[head] for i, head in enumerate(heads))
+    assert torch.allclose(logits, _unembed(model, contribution), atol=1e-5)
+
+
+def test_attention_logit_lens_over_all_heads_is_attn_out_without_its_bias(model):
+    layer = model.cfg.n_layers - 1
+    config = _coordinates_config_of(
+        {"activation": "attn.z", "layer": -1, "position": -1},
+        {"activation": "attn.out", "layer": -1, "position": -1},
+    )
+    lens_input = LensInput(PROMPT, config).prepare(model)
+    z_element, out_element = (single_index.source for single_index in lens_input.index)
+
+    logits = AttentionLogitLens(model, config).project(_sliced(lens_input, z_element), z_element)
+
+    expected = _unembed(model, _sliced(lens_input, out_element) - model.blocks[layer].attn.b_O)
+    assert torch.allclose(logits, expected, atol=1e-4)
+
+
+def test_attention_logit_lens_projects_values_through_the_same_route(model):
+    layer = model.cfg.n_layers - 1
+    config = _coordinates_config_of({"activation": "attn.v", "layer": -1, "position": -1, "head": HEAD})
+    lens_input = LensInput(PROMPT, config).prepare(model)
+    element = next(iter(lens_input.index)).source
+
+    activation = _sliced(lens_input, element)
+    logits = AttentionLogitLens(model, config).project(activation, element)
+
+    expected = _unembed(model, activation @ model.blocks[layer].attn.W_O[HEAD])
+    assert torch.allclose(logits, expected, atol=1e-5)
+
+
+@pytest.mark.parametrize(("activation_name", "weight_name"), [("attn.q", "W_K"), ("attn.k", "W_Q")])
+def test_qk_logit_lens_reads_against_the_embedding(model, activation_name, weight_name):
+    layer = model.cfg.n_layers - 1
+    config = _coordinates_config_of({"activation": activation_name, "layer": -1, "position": -1, "head": HEAD})
+    lens_input = LensInput(PROMPT, config).prepare(model)
+    element = next(iter(lens_input.index)).source
+
+    activation = _sliced(lens_input, element)
+    assert activation.shape == (1, model.cfg.d_head)
+
+    logits = AttentionQKLogitLens(model, config).project(activation, element)
+
+    with torch.no_grad():
+        weight = getattr(model.blocks[layer].attn, weight_name)[HEAD]
+        expected = activation @ weight.T @ model.W_E.T / model.cfg.attn_scale
+    assert logits.shape == (1, model.cfg.d_vocab)
+    assert torch.allclose(logits, expected, atol=1e-4)
+
+
+def test_head_lens_declarative_run(model):
+    config = LensConfig(
+        type=LensType.LOGIT_LENS,
+        source=ModelLocatorConfig(
+            activation=ModelLayerLocation.ATTENTION_Z,
+            location=[ModelLocation.LAYER, ModelLocation.HEAD, ModelLocation.POSITION],
+            filter=Filter.from_config([{"position": -1}]),
+        ),
+    )
+    lens_input = LensInput(PROMPT, config)
+    collector = Lens(model).apply(lens_input, return_collector=True, verbose=False)
+    result = collector.result
+
+    assert len(result) == model.cfg.n_layers * model.cfg.n_heads
+    assert sorted(result["source_head"].unique()) == list(range(model.cfg.n_heads))
+
+    method = AttentionLogitLens(model, config)
+    for single_index, (_, row) in zip(lens_input.index, result.iterrows(), strict=True):
+        logits = method.project(_sliced(lens_input, single_index.source), single_index.source)
+        assert row["token_0"] == logits.squeeze(0).argmax().item()
+
+
 def test_negative_neuron_resolves_against_d_mlp(model):
-    config = _mlp_coordinates_config({"activation": "mlp.post", "layer": -1, "position": -1, "neuron": -1})
+    config = _coordinates_config_of({"activation": "mlp.post", "layer": -1, "position": -1, "neuron": -1})
     collector = Lens(model).apply(LensInput(PROMPT, config), return_collector=True, verbose=False)
     result = collector.result
 
