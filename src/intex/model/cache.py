@@ -11,7 +11,7 @@ Usage::
 
     model = HookedTransformer.from_pretrained(config.model_name)
     model = CachedModel(model, cache_dir="./.activation_cache")  # cache_dir=None => pass-through
-    Lens(model).apply(LensInput("Paris is located in", LensConfig(...)))
+    Lens(model).apply(LensInput(LensConfig(...), "Paris is located in"))
 """
 
 from __future__ import annotations

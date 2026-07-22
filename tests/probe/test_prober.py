@@ -79,7 +79,7 @@ def fake_method(monkeypatch) -> type[FakeProbeMethod]:
 
 
 def test_metrics_computed_per_location(model, fake_method):
-    probe_input = ProbeInput(POSITIVE, NEGATIVE, _config())
+    probe_input = ProbeInput(_config(), POSITIVE, NEGATIVE)
     collector = Prober(model).apply(probe_input, return_collector=True, verbose=False)
     result = collector.result
 
@@ -93,7 +93,7 @@ def test_metrics_computed_per_location(model, fake_method):
 
 
 def test_fresh_probe_per_location_trained_on_pooled_features(model, fake_method):
-    probe_input = ProbeInput(POSITIVE, NEGATIVE, _config())
+    probe_input = ProbeInput(_config(), POSITIVE, NEGATIVE)
     collector = Prober(model).apply(probe_input, return_collector=True, verbose=False)
 
     assert len(fake_method.instances) == len(probe_input.index)
@@ -114,7 +114,7 @@ def test_artifacts_saved_to_disk(model, fake_method, tmp_path):
     config = ConfigFactory[ProbeConfig](str(config_yaml)).create("my_probe")
 
     save_dir = tmp_path / "probe_run"
-    probe_input = ProbeInput(POSITIVE, NEGATIVE, config)
+    probe_input = ProbeInput(config, POSITIVE, NEGATIVE)
     collector = Prober(model).apply(probe_input, save_dir=str(save_dir), return_collector=True, verbose=False)
 
     result_df = pd.read_csv(save_dir / "result.csv")
@@ -157,7 +157,7 @@ def test_linear_probe_separates_sentiment(model):
             filter=Filter(inclusion_terms=[{ModelLocation.LAYER: -1}]),
         )
     )
-    collector = Prober(model).apply(ProbeInput(positive, negative, config), return_collector=True, verbose=False)
+    collector = Prober(model).apply(ProbeInput(config, positive, negative), return_collector=True, verbose=False)
     result = collector.result
 
     assert len(result) == 1

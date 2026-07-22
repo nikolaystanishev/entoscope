@@ -32,7 +32,7 @@ def _coordinates_config() -> LensConfig:
 
 
 def test_prepare_populates_input(model):
-    lens_input = LensInput(PROMPT, _declarative_config()).prepare(model)
+    lens_input = LensInput(_declarative_config(), PROMPT).prepare(model)
 
     assert lens_input.tokens.shape[0] == 1
     assert lens_input.logits.shape[:2] == lens_input.tokens.shape
@@ -41,7 +41,7 @@ def test_prepare_populates_input(model):
 
 
 def test_cache_is_restricted_to_used_activations(model):
-    lens_input = LensInput(PROMPT, _declarative_config()).prepare(model)
+    lens_input = LensInput(_declarative_config(), PROMPT).prepare(model)
 
     # resid.post over every layer -> exactly one hook per layer and nothing else is cached.
     expected = {f"blocks.{layer}.hook_resid_post" for layer in range(model.cfg.n_layers)}
@@ -54,18 +54,18 @@ def test_cache_is_restricted_to_used_activations(model):
 
 
 def test_prepare_is_idempotent(model):
-    lens_input = LensInput(PROMPT, _declarative_config()).prepare(model)
+    lens_input = LensInput(_declarative_config(), PROMPT).prepare(model)
     index = lens_input.index
     assert lens_input.prepare(model).index is index
 
 
 def test_unprepared_access_asserts():
     with pytest.raises(AssertionError):
-        _ = LensInput(PROMPT, _declarative_config()).tokens
+        _ = LensInput(_declarative_config(), PROMPT).tokens
 
 
 def test_declarative_index_covers_full_grid(model):
-    lens_input = LensInput(PROMPT, _declarative_config()).prepare(model)
+    lens_input = LensInput(_declarative_config(), PROMPT).prepare(model)
     index = lens_input.index
     n_pos = lens_input.tokens.shape[1]
 
@@ -75,7 +75,7 @@ def test_declarative_index_covers_full_grid(model):
 
 
 def test_elements_slice_the_cache(model):
-    lens_input = LensInput(PROMPT, _declarative_config()).prepare(model)
+    lens_input = LensInput(_declarative_config(), PROMPT).prepare(model)
 
     for element in lens_input.index:
         layer = element.source[ModelLocation.LAYER]
@@ -90,7 +90,7 @@ def test_elements_slice_the_cache(model):
 
 
 def test_coordinates_index(model):
-    lens_input = LensInput(PROMPT, _coordinates_config()).prepare(model)
+    lens_input = LensInput(_coordinates_config(), PROMPT).prepare(model)
     index = lens_input.index
 
     assert index.axis_range == [2]
@@ -104,7 +104,7 @@ def test_coordinates_index(model):
 
 
 def test_to_csv(model, tmp_path):
-    lens_input = LensInput(PROMPT, _declarative_config()).prepare(model)
+    lens_input = LensInput(_declarative_config(), PROMPT).prepare(model)
     path = tmp_path / "index.csv"
     lens_input.index.to_csv(str(path))
 

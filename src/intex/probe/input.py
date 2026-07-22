@@ -31,9 +31,9 @@ class ProbeInput(OperationInput):
     pooling (or a ``-1`` position) reads the final content token.
     """
 
+    config: ProbeConfig
     positive_prompts: list[str]
     negative_prompts: list[str]
-    config: ProbeConfig
 
     _labels: Int[torch.Tensor, " examples"] | None = field(init=False, default=None)
     _features: dict[tuple[int, ...], Float[torch.Tensor, "examples features"]] | None = field(init=False, default=None)

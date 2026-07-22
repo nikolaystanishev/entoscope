@@ -3,6 +3,7 @@ from collections.abc import Sequence
 import torch
 from jaxtyping import Float
 
+from intex.lens.input import LensInput
 from intex.lens.method.lens import AbstractLensMethod
 from intex.model import Model
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
@@ -21,10 +22,13 @@ def _layer(index: IndexElement[ModelLocatorConfig]) -> int:
     return layer
 
 
-def _axis_index(value: int | Sequence[int] | None) -> int | list[int] | slice:
+def _selection(index: IndexElement[ModelLocatorConfig], location: ModelLocation) -> list[int] | slice:
+    # Always a list or a slice: a single advanced index per bracket keeps the axis and never pairs
+    # 'head' with 'neuron' the way two list indices in one bracket would.
+    value = index.get(location)
     if value is None:
         return slice(None)
-    return list(value) if isinstance(value, Sequence) else value
+    return list(value) if isinstance(value, Sequence) else [value]
 
 
 def _attention_layer(model: Model, index: IndexElement[ModelLocatorConfig]) -> int:
@@ -41,11 +45,18 @@ def _head_lift(
     weight: Float[torch.Tensor, "head d_head d_out"],
     index: IndexElement[ModelLocatorConfig],
 ) -> Float[torch.Tensor, "... d_out"]:
-    weight = weight[_axis_index(index.get(ModelLocation.HEAD)), _axis_index(index.get(ModelLocation.NEURON))]
+    weight = weight[_selection(index, ModelLocation.HEAD), _selection(index, ModelLocation.NEURON)]
     return torch.tensordot(activation, weight, dims=weight.ndim - 1)
 
 
 class LogitLens(AbstractLensMethod):
+    def extract(
+        self,
+        lens_input: LensInput,
+        index: IndexElement[ModelLocatorConfig],
+    ) -> Float[torch.Tensor, "..."]:
+        return lens_input.cache[index.transformer_activation()][index.slices()]
+
     def project(
         self,
         activation: Float[torch.Tensor, "..."],

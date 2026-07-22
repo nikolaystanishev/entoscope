@@ -13,9 +13,9 @@ from intex.patching.metric import LogitDiffMixin
 
 @dataclass
 class PatchingInput(OperationInput):
+    config: PatchingConfig
     source_prompt: str
     target_prompt: str
-    config: PatchingConfig
 
     _source_tokens: Int[torch.Tensor, "batch pos"] | None = field(init=False, default=None)
     _target_tokens: Int[torch.Tensor, "batch pos"] | None = field(init=False, default=None)

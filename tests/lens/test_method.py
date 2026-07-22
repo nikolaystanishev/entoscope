@@ -3,11 +3,18 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from intex.lens.config import LensConfig, LensType
+from intex.lens.config import LensConfig, LensType, ProjectionSpace
 from intex.lens.method import tuned_lens
 from intex.lens.method.factory import LensMethodFactory
 from intex.lens.method.lens import AbstractLensMethod
 from intex.lens.method.logit_lens import AttentionLogitLens, AttentionQKLogitLens, LogitLens, MLPLogitLens
+from intex.lens.method.parameter_lens import (
+    AbstractParameterLensMethod,
+    AttentionReadParameterLens,
+    AttentionWriteParameterLens,
+    MLPKeyParameterLens,
+    MLPValueParameterLens,
+)
 from intex.lens.method.tuned_lens import AttentionTunedLens, MLPTunedLens, TunedLens
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.model.index import IndexElement
@@ -312,3 +319,114 @@ def test_translators_of_another_model_raise(monkeypatch, d_model, n_layers):
 
     with pytest.raises(ValueError, match="was trained for a model with"):
         tuned_lens.load_translators(_TunedModel(), "other-model")
+
+
+PARAMETER_ACTIVATIONS = [
+    (ModelLayerLocation.MLP_PRE, MLPKeyParameterLens),
+    (ModelLayerLocation.MLP_PRE_LINEAR, MLPKeyParameterLens),
+    (ModelLayerLocation.MLP_POST, MLPValueParameterLens),
+    (ModelLayerLocation.ATTENTION_Q, AttentionReadParameterLens),
+    (ModelLayerLocation.ATTENTION_K, AttentionReadParameterLens),
+    (ModelLayerLocation.ATTENTION_V, AttentionReadParameterLens),
+    (ModelLayerLocation.ATTENTION_Z, AttentionWriteParameterLens),
+]
+
+UNPROJECTABLE_PARAMETER_ACTIVATIONS = [
+    ModelLayerLocation.EMBEDDING,
+    ModelLayerLocation.RESIDUAL_PRE,
+    ModelLayerLocation.RESIDUAL_MID,
+    ModelLayerLocation.RESIDUAL_POST,
+    ModelLayerLocation.ATTENTION_OUT,
+    ModelLayerLocation.ATTENTION_PATTERN,
+    ModelLayerLocation.MLP_OUT,
+]
+
+
+def _parameter_config(projection: ProjectionSpace | None = None) -> LensConfig:
+    return LensConfig(
+        type=LensType.PARAMETER_LENS,
+        projection=projection,
+        source=ModelLocatorConfig(
+            activation=ModelLayerLocation.MLP_POST,
+            location=[ModelLocation.LAYER, ModelLocation.NEURON],
+        ),
+    )
+
+
+def _parameter_model(gated_mlp: bool = False, n_heads: int = 8, n_key_value_heads: int | None = None):
+    return SimpleNamespace(
+        W_U=torch.arange(12.0).reshape(3, 4),
+        W_E=torch.zeros(4, 3),
+        cfg=SimpleNamespace(n_heads=n_heads, n_key_value_heads=n_key_value_heads, gated_mlp=gated_mlp),
+    )
+
+
+def test_abstract_parameter_method_cannot_be_instantiated():
+    with pytest.raises(TypeError):
+        AbstractParameterLensMethod(object(), _parameter_config())
+
+
+@pytest.mark.parametrize(("activation", "expected_class"), PARAMETER_ACTIVATIONS)
+def test_factory_get_returns_the_parameter_lens_of_the_weight(activation, expected_class):
+    assert LensMethodFactory.get(LensType.PARAMETER_LENS, activation) is expected_class
+
+
+@pytest.mark.parametrize("activation", UNPROJECTABLE_PARAMETER_ACTIVATIONS)
+def test_factory_get_activation_without_a_weight_vector_raises(activation):
+    with pytest.raises(ValueError, match="Parameter lens cannot project"):
+        LensMethodFactory.get(LensType.PARAMETER_LENS, activation)
+
+
+@pytest.mark.parametrize(("activation", "expected_class"), PARAMETER_ACTIVATIONS)
+def test_factory_create_builds_configured_parameter_instance(activation, expected_class):
+    model = object()
+    config = _parameter_config()
+
+    method = LensMethodFactory.create(config, model, activation)
+
+    assert isinstance(method, expected_class)
+    assert method.model is model
+    assert method.config is config
+
+
+def test_projection_defaults_to_the_unembedding():
+    method = MLPValueParameterLens(_parameter_model(), _parameter_config())
+
+    assert torch.equal(method._projection(), method.model.W_U)
+
+
+def test_projection_embedding_reads_the_transposed_embedding():
+    method = MLPValueParameterLens(_parameter_model(), _parameter_config(ProjectionSpace.EMBEDDING))
+
+    assert torch.equal(method._projection(), method.model.W_E.T)
+
+
+@pytest.mark.parametrize(
+    ("method_class", "activation"),
+    [
+        (MLPKeyParameterLens, ModelLayerLocation.MLP_PRE),
+        (MLPValueParameterLens, ModelLayerLocation.MLP_POST),
+        (AttentionReadParameterLens, ModelLayerLocation.ATTENTION_Q),
+        (AttentionWriteParameterLens, ModelLayerLocation.ATTENTION_Z),
+    ],
+)
+def test_parameter_weight_without_a_single_layer_raises(method_class, activation):
+    method = method_class(_parameter_model(), _parameter_config())
+
+    with pytest.raises(ValueError, match="needs a single layer"):
+        method.extract(None, _element(activation, layer=[0, 1], head=0, neuron=3))
+
+
+def test_parameter_weight_of_a_gated_branch_on_a_plain_mlp_raises():
+    method = MLPKeyParameterLens(_parameter_model(gated_mlp=False), _parameter_config())
+
+    with pytest.raises(ValueError, match="which this model does not have"):
+        method.extract(None, _element(ModelLayerLocation.MLP_PRE_LINEAR, layer=0, neuron=3))
+
+
+@pytest.mark.parametrize("activation", [ModelLayerLocation.ATTENTION_K, ModelLayerLocation.ATTENTION_V])
+def test_parameter_weight_of_key_value_on_grouped_query_attention_raises(activation):
+    method = AttentionReadParameterLens(_parameter_model(n_heads=8, n_key_value_heads=2), _parameter_config())
+
+    with pytest.raises(ValueError, match="grouped-query attention"):
+        method.extract(None, _element(activation, layer=0, head=0, neuron=3))
