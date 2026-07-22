@@ -75,6 +75,8 @@ def single(location, values):
         ("head", ModelLayerLocation.RESIDUAL_POST, {"n_heads": 4}, 4, [0, 1, 2, 3]),
         ("head", ModelLayerLocation.ATTENTION_K, {"n_heads": 4, "n_key_value_heads": 2}, 4, [0, 1]),
         ("head", ModelLayerLocation.ATTENTION_V, {"n_heads": 4, "n_key_value_heads": 2}, 4, [0, 1]),
+        # Multi-head attention leaves n_key_value_heads unset; the head axis is then the query heads.
+        ("head", ModelLayerLocation.ATTENTION_K, {"n_heads": 4, "n_key_value_heads": None}, 4, [0, 1, 2, 3]),
         ("neuron", ModelLayerLocation.RESIDUAL_PRE, {"d_model": 2}, 4, [0, 1]),
         ("neuron", ModelLayerLocation.MLP_POST, {"d_mlp": 3}, 4, [0, 1, 2]),
         ("neuron", ModelLayerLocation.ATTENTION_Q, {"d_head": 2}, 4, [0, 1]),

@@ -20,11 +20,11 @@ class Lens(Operator):
         verbose: bool = True,
     ) -> LensCollector | None:
         lens_input.prepare(self.model)
-        method = LensMethodFactory.create(lens_input.config, self.model)
         collector = self.collector_class(lens_input, self.model, save_dir)
         collector.prepare()
 
         for single_index in tqdm(lens_input.index, total=len(lens_input.index), disable=not verbose):
+            method = LensMethodFactory.create(lens_input.config, self.model, single_index.source.activation())
             activation = lens_input.cache[single_index.source.transformer_activation()][single_index.source.slices()]
             collector.collect(method.project(activation, single_index.source), single_index.output)
 

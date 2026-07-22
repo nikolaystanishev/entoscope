@@ -49,7 +49,7 @@ MODEL_LOCATION_MAPPER: dict[ModelLocation, Callable] = {
     ModelLocation.HEAD: lambda model, layer_location, _: (
         model.cfg.n_heads
         if layer_location not in {ModelLayerLocation.ATTENTION_K, ModelLayerLocation.ATTENTION_V}
-        else model.cfg.n_key_value_heads
+        else model.cfg.n_key_value_heads or model.cfg.n_heads
     ),
     ModelLocation.NEURON: (
         lambda model, layer_location, _: {
