@@ -1,4 +1,5 @@
 import abc
+from collections.abc import Sequence
 
 import torch
 from jaxtyping import Float
@@ -6,7 +7,7 @@ from jaxtyping import Float
 from intex.lens.config import ProjectionSpace
 from intex.lens.input import LensInput
 from intex.lens.method.lens import AbstractLensMethod
-from intex.lens.method.logit_lens import _attention_layer, _layer, _selection
+from intex.lens.method.logit_lens import _attention_layer, _layer
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.model.index import IndexElement
 
@@ -15,6 +16,15 @@ _ATTENTION_READ_WEIGHT = {
     ModelLayerLocation.ATTENTION_K: "W_K",
     ModelLayerLocation.ATTENTION_V: "W_V",
 }
+
+
+def _selection(index: IndexElement[ModelLocatorConfig], location: ModelLocation) -> list[int] | slice:
+    # Always a list or a slice: a single advanced index per bracket keeps the axis and never pairs
+    # 'head' with 'neuron' the way two list indices in one bracket would.
+    value = index.get(location)
+    if value is None:
+        return slice(None)
+    return list(value) if isinstance(value, Sequence) else [value]
 
 
 class AbstractParameterLensMethod(AbstractLensMethod):

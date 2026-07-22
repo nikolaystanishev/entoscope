@@ -22,13 +22,13 @@ def _layer(index: IndexElement[ModelLocatorConfig]) -> int:
     return layer
 
 
-def _selection(index: IndexElement[ModelLocatorConfig], location: ModelLocation) -> list[int] | slice:
-    # Always a list or a slice: a single advanced index per bracket keeps the axis and never pairs
-    # 'head' with 'neuron' the way two list indices in one bracket would.
+def _axis_index(index: IndexElement[ModelLocatorConfig], location: ModelLocation) -> int | list[int] | slice:
+    # An int drops the axis, the same way ``IndexElement.slices()`` drops it on the activation, so
+    # ``_head_lift`` contracts the same axes on both sides.
     value = index.get(location)
     if value is None:
         return slice(None)
-    return list(value) if isinstance(value, Sequence) else [value]
+    return list(value) if isinstance(value, Sequence) else value
 
 
 def _attention_layer(model: Model, index: IndexElement[ModelLocatorConfig]) -> int:
@@ -45,7 +45,7 @@ def _head_lift(
     weight: Float[torch.Tensor, "head d_head d_out"],
     index: IndexElement[ModelLocatorConfig],
 ) -> Float[torch.Tensor, "... d_out"]:
-    weight = weight[_selection(index, ModelLocation.HEAD), _selection(index, ModelLocation.NEURON)]
+    weight = weight[_axis_index(index, ModelLocation.HEAD), _axis_index(index, ModelLocation.NEURON)]
     return torch.tensordot(activation, weight, dims=weight.ndim - 1)
 
 
