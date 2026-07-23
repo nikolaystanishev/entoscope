@@ -1,10 +1,18 @@
-from types import SimpleNamespace
+"""``ModelLocatorConfig`` — the shape a config file provides, and the index it resolves to.
+
+Two steps are under test and nothing else: ``from_dict``, which turns the raw mapping into the config,
+and ``parse(model, n_positions)``, which resolves it into an index DataFrame. The model is real because
+every axis is sized from its ``cfg`` — the layer count, the head count, ``d_model`` / ``d_mlp`` /
+``d_head`` — but no forward pass happens here.
+"""
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from intex.model.config import (
     Combination,
+    Coordinates,
     Filter,
     Group,
     Incremental,
@@ -14,529 +22,567 @@ from intex.model.config import (
 )
 from intex.operation.config import from_dict
 
-
-def make_model(n_layers=4, n_heads=4, n_key_value_heads=2, d_model=8, d_head=4, d_mlp=16):
-    """A stand-in for ``HookedTransformer`` exposing only the ``cfg`` fields the mapper reads."""
-    return SimpleNamespace(
-        cfg=SimpleNamespace(
-            n_layers=n_layers,
-            n_heads=n_heads,
-            n_key_value_heads=n_key_value_heads,
-            d_model=d_model,
-            d_head=d_head,
-            d_mlp=d_mlp,
-        )
-    )
+PROMPT_SIZE = 4
 
 
-def parse_config(config, *, layer_location=ModelLayerLocation.RESIDUAL_POST, prompt_size=4, **model_kwargs):
-    return from_dict(ModelLocatorConfig, {"activation": layer_location, **config}).parse(
-        make_model(**model_kwargs), prompt_size
-    )
+def parse(model, n_positions: int | None = PROMPT_SIZE, **source) -> pd.DataFrame:
+    """The index a code-built config resolves to on this model."""
+    return ModelLocatorConfig(**source).parse(model, n_positions).df
 
 
-def _norm(value):
-    """Canonicalise a cell so lists/tuples/numpy ints compare equal regardless of container type."""
+def deserialize(raw: dict, **overrides) -> ModelLocatorConfig:
+    """The config a raw mapping (a YAML file's shape) deserializes into."""
+    return from_dict(ModelLocatorConfig, {**raw, **overrides})
+
+
+def _cell(value):
+    """Canonicalise a cell so lists, tuples and numpy ints compare equal regardless of container."""
     if isinstance(value, (list, tuple, np.ndarray)):
-        return tuple(_norm(v) for v in value)
+        return tuple(_cell(element) for element in value)
     if isinstance(value, np.integer):
         return int(value)
     return value
 
 
-def result_rows(index):
-    df = index.df
-    rows = [
-        tuple(
-            sorted((ModelLocation(col).value, _norm(row[col])) for col in df.columns if col != ModelLocation.ACTIVATION)
-        )
-        for _, row in df.iterrows()
+def coordinates_of(index_df: pd.DataFrame, *locations: ModelLocation) -> list[tuple]:
+    return [tuple(_cell(row[location]) for location in locations) for _, row in index_df.iterrows()]
+
+
+def values_of(index_df: pd.DataFrame, location: ModelLocation) -> list:
+    return [coordinate[0] for coordinate in coordinates_of(index_df, location)]
+
+
+# --------------------------------------------------------------------------------------------------
+# Location axes — every location enumerates the model dimension it names
+# --------------------------------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("model_fixture", "activation", "location", "axis_size"),
+    [
+        ("small_model", ModelLayerLocation.RESIDUAL_POST, ModelLocation.LAYER, lambda cfg: cfg.n_layers),
+        ("small_model", ModelLayerLocation.ATTENTION_Z, ModelLocation.HEAD, lambda cfg: cfg.n_heads),
+        # Key/value heads are their own axis: grouped-query attention has fewer of them than query heads,
+        # while multi-head attention leaves n_key_value_heads unset and the axis is the query heads.
+        ("gqa_model", ModelLayerLocation.ATTENTION_K, ModelLocation.HEAD, lambda cfg: cfg.n_key_value_heads),
+        ("gqa_model", ModelLayerLocation.ATTENTION_V, ModelLocation.HEAD, lambda cfg: cfg.n_key_value_heads),
+        ("small_model", ModelLayerLocation.ATTENTION_K, ModelLocation.HEAD, lambda cfg: cfg.n_heads),
+        ("small_model", ModelLayerLocation.RESIDUAL_PRE, ModelLocation.NEURON, lambda cfg: cfg.d_model),
+        ("small_model", ModelLayerLocation.MLP_POST, ModelLocation.NEURON, lambda cfg: cfg.d_mlp),
+        ("small_model", ModelLayerLocation.ATTENTION_Q, ModelLocation.NEURON, lambda cfg: cfg.d_head),
+        # The pattern has no neuron axis at all, so the location contributes no rows.
+        ("small_model", ModelLayerLocation.ATTENTION_PATTERN, ModelLocation.NEURON, lambda cfg: 0),
+        # The position axis is the only one sized by the prompt rather than the model.
+        ("small_model", ModelLayerLocation.RESIDUAL_POST, ModelLocation.POSITION, lambda cfg: PROMPT_SIZE),
+    ],
+)
+def test_a_location_enumerates_the_model_dimension_it_names(request, model_fixture, activation, location, axis_size):
+    model = request.getfixturevalue(model_fixture)
+
+    index_df = parse(model, activation=activation, location=[location])
+
+    assert values_of(index_df, location) == list(range(axis_size(model.cfg)))
+
+
+def test_locations_form_a_cartesian_product(small_model):
+    index_df = parse(
+        small_model,
+        activation=ModelLayerLocation.MLP_POST,
+        location=[ModelLocation.LAYER, ModelLocation.NEURON],
+    )
+
+    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.NEURON) == [
+        (layer, neuron) for layer in range(small_model.cfg.n_layers) for neuron in range(small_model.cfg.d_mlp)
     ]
-    return sorted(rows, key=repr)
 
 
-def expected_rows(rows):
-    canonical = (tuple(sorted((loc, _norm(val)) for loc, val in row.items())) for row in rows)
-    return sorted(canonical, key=repr)
+def test_the_configured_activation_is_stamped_on_every_row(small_model):
+    index_df = parse(small_model, activation=ModelLayerLocation.ATTENTION_OUT, location=[ModelLocation.LAYER])
 
-
-def single(location, values):
-    """Expected rows for a single-location index, one row per value."""
-    return [{location: value} for value in values]
-
-
-# --------------------------------------------------------------------------------------------------
-# Location sizing — MODEL_LOCATION_MAPPER picks the right model dimension per location/layer_location
-# --------------------------------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    "location, layer_location, model_kwargs, prompt_size, expected_values",
-    [
-        ("layer", ModelLayerLocation.RESIDUAL_POST, {"n_layers": 3}, 4, [0, 1, 2]),
-        ("head", ModelLayerLocation.RESIDUAL_POST, {"n_heads": 4}, 4, [0, 1, 2, 3]),
-        ("head", ModelLayerLocation.ATTENTION_K, {"n_heads": 4, "n_key_value_heads": 2}, 4, [0, 1]),
-        ("head", ModelLayerLocation.ATTENTION_V, {"n_heads": 4, "n_key_value_heads": 2}, 4, [0, 1]),
-        # Multi-head attention leaves n_key_value_heads unset; the head axis is then the query heads.
-        ("head", ModelLayerLocation.ATTENTION_K, {"n_heads": 4, "n_key_value_heads": None}, 4, [0, 1, 2, 3]),
-        ("neuron", ModelLayerLocation.RESIDUAL_PRE, {"d_model": 2}, 4, [0, 1]),
-        ("neuron", ModelLayerLocation.MLP_POST, {"d_mlp": 3}, 4, [0, 1, 2]),
-        ("neuron", ModelLayerLocation.ATTENTION_Q, {"d_head": 2}, 4, [0, 1]),
-        ("neuron", ModelLayerLocation.ATTENTION_PATTERN, {}, 4, []),  # pattern maps to 0 -> no neuron rows
-        ("position", ModelLayerLocation.RESIDUAL_POST, {}, 3, [0, 1, 2]),
-    ],
-)
-def test_location_sizing(location, layer_location, model_kwargs, prompt_size, expected_values):
-    result = parse_config(
-        {"location": [location]}, layer_location=layer_location, prompt_size=prompt_size, **model_kwargs
-    )
-    assert result_rows(result) == expected_rows(single(location, expected_values))
-
-
-def test_empty_location_has_only_activation_column():
-    # With no locations the index has no coordinate columns (the product over zero axes leaves a
-    # single empty row); only the stamped activation column remains.
-    result = parse_config({"location": []})
-    assert list(result.df.columns) == [ModelLocation.ACTIVATION]
-
-
-def test_missing_location_key_matches_empty_list():
-    # No ``location`` key at all behaves like an empty list.
-    assert list(parse_config({}).df.columns) == [ModelLocation.ACTIVATION]
-
-
-def test_location_cartesian_product():
-    result = parse_config({"location": ["layer", "head"]}, n_layers=2, n_heads=3)
-    assert result_rows(result) == expected_rows(
-        [{"layer": layer, "head": head} for layer in range(2) for head in range(3)]
+    assert ModelLocation.ACTIVATION in index_df.columns
+    assert (
+        values_of(index_df, ModelLocation.ACTIVATION) == [ModelLayerLocation.ATTENTION_OUT] * small_model.cfg.n_layers
     )
 
 
-# --------------------------------------------------------------------------------------------------
-# Activation column — the configured ``activation`` is stamped onto every row of the index
-# --------------------------------------------------------------------------------------------------
-def test_activation_column_is_stamped():
-    result = parse_config({"location": ["layer"]}, layer_location=ModelLayerLocation.ATTENTION_OUT, n_layers=3)
-    assert ModelLocation.ACTIVATION in result.df.columns
-    assert list(result.df[ModelLocation.ACTIVATION]) == [ModelLayerLocation.ATTENTION_OUT.value] * 3
+def test_without_a_location_only_the_activation_is_left(small_model):
+    # The product over zero axes leaves a single empty row, so nothing but the stamped activation remains.
+    from_empty = parse(small_model, activation=ModelLayerLocation.RESIDUAL_POST, location=[])
+    from_missing = parse(small_model, activation=ModelLayerLocation.RESIDUAL_POST)
+
+    assert list(from_empty.columns) == list(from_missing.columns) == [ModelLocation.ACTIVATION]
+    assert len(from_empty) == len(from_missing) == 1
 
 
 # --------------------------------------------------------------------------------------------------
-# Filter — single location (covers int / range / list / negatives / inclusion / exclusion)
+# Filter — inclusion terms are OR-ed, keys within a term AND-ed, exclusions subtracted
 # --------------------------------------------------------------------------------------------------
 @pytest.mark.parametrize(
-    "filter_cfg, n_layers, expected_layers",
+    ("filter_config", "expected_layers"),
     [
-        # no filter -> the full range (docstring: "everything when there are none")
-        ([], 4, [0, 1, 2, 3]),
-        # inclusion constraints
-        ([{"layer": 1}], 5, [1]),
-        ([{"layer": {"range": [1, 3]}}], 5, [1, 2, 3]),
-        ([{"layer": [0, 2, 4]}], 5, [0, 2, 4]),
-        ([{"layer": [0, {"range": [2, 3]}]}], 5, [0, 2, 3]),
-        # negatives count from the end
-        ([{"layer": -1}], 4, [3]),
-        ([{"layer": {"range": [-2, -1]}}], 4, [2, 3]),
-        # exclusion only
-        ([{"not": {"layer": 0}}], 3, [1, 2]),
-        # inclusion AND exclusion together
-        ([{"layer": {"range": [0, 3]}}, {"not": {"layer": 1}}], 5, [0, 2, 3]),
-        # multiple inclusion terms are OR-ed
-        ([{"layer": 0}, {"layer": 4}], 5, [0, 4]),
+        ([], list(range(12))),  # no filter keeps the full range
+        ([{"layer": 1}], [1]),
+        ([{"layer": {"range": [1, 3]}}], [1, 2, 3]),
+        ([{"layer": [0, 2, 4]}], [0, 2, 4]),
+        ([{"layer": [0, {"range": [2, 3]}]}], [0, 2, 3]),
+        ([{"layer": -1}], [11]),  # negatives count from the end
+        ([{"layer": {"range": [-2, -1]}}], [10, 11]),
+        ([{"not": {"layer": 0}}], list(range(1, 12))),  # exclusion only
+        ([{"layer": {"range": [0, 3]}}, {"not": {"layer": 1}}], [0, 2, 3]),  # inclusion minus exclusion
+        ([{"layer": 0}, {"layer": 4}], [0, 4]),  # separate terms are OR-ed
     ],
 )
-def test_filter_single_location(filter_cfg, n_layers, expected_layers):
-    result = parse_config({"location": ["layer"], "filter": filter_cfg}, n_layers=n_layers)
-    assert result_rows(result) == expected_rows(single("layer", expected_layers))
+def test_a_filter_narrows_a_single_axis(model, filter_config, expected_layers):
+    # GPT-2's 12 layers give the ranges and negative anchors above room to differ from each other.
+    assert model.cfg.n_layers == 12
 
-
-# --------------------------------------------------------------------------------------------------
-# Filter — multiple locations (keys within a term AND, terms OR)
-# --------------------------------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    "filter_cfg, expected",
-    [
-        # one term with two keys -> AND
-        ([{"layer": 0, "head": 1}], [{"layer": 0, "head": 1}]),
-        # two terms -> OR (layer == 0 for any head, OR head == 1 for any layer)
-        (
-            [{"layer": 0}, {"head": 1}],
-            [
-                {"layer": 0, "head": 0},
-                {"layer": 0, "head": 1},
-                {"layer": 0, "head": 2},
-                {"layer": 1, "head": 1},
-                {"layer": 2, "head": 1},
-            ],
-        ),
-    ],
-)
-def test_filter_multi_location(filter_cfg, expected):
-    result = parse_config({"location": ["layer", "head"], "filter": filter_cfg}, n_layers=3, n_heads=3)
-    assert result_rows(result) == expected_rows(expected)
-
-
-# --------------------------------------------------------------------------------------------------
-# Group — collapse listed values into a shared list, dropping the resulting duplicate rows
-# --------------------------------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    "config, model_kwargs, expected",
-    [
-        # explicit values 0 and 1 collapse into [0, 1]; 2 is left untouched
-        ({"location": ["layer"], "group": {"layer": [0, 1]}}, {"n_layers": 3}, [{"layer": [0, 1]}, {"layer": 2}]),
-        # "all" collapses every value into a single grouped row
-        ({"location": ["layer"], "group": {"layer": "all"}}, {"n_layers": 3}, [{"layer": [0, 1, 2]}]),
-        # grouping one axis collapses the duplicate rows it creates across the other axis
-        (
-            {"location": ["layer", "head"], "group": {"layer": [0, 1]}},
-            {"n_layers": 2, "n_heads": 2},
-            [{"layer": [0, 1], "head": 0}, {"layer": [0, 1], "head": 1}],
-        ),
-    ],
-)
-def test_group(config, model_kwargs, expected):
-    result = parse_config(config, **model_kwargs)
-    assert result_rows(result) == expected_rows(expected)
-
-
-# --------------------------------------------------------------------------------------------------
-# Incremental — append incrementing prefixes of the configured values to every row
-# --------------------------------------------------------------------------------------------------
-def test_incremental_single_location():
-    result = parse_config({"location": ["layer"], "incremental": {"layer": [7, 8]}}, n_layers=2)
-    assert result_rows(result) == expected_rows(
-        [
-            {"layer": [0]},
-            {"layer": [0, 7]},
-            {"layer": [0, 7, 8]},
-            {"layer": [1]},
-            {"layer": [1, 7]},
-            {"layer": [1, 7, 8]},
-        ]
+    index_df = parse(
+        model,
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER],
+        filter=Filter.from_config(filter_config),
     )
 
+    assert values_of(index_df, ModelLocation.LAYER) == expected_layers
 
-def test_incremental_keeps_other_locations():
-    config = {"location": ["layer", "head"], "filter": [{"layer": 0}], "incremental": {"head": [9]}}
-    result = parse_config(config, n_layers=2, n_heads=2)
-    assert result_rows(result) == expected_rows(
-        [
-            {"layer": 0, "head": [0]},
-            {"layer": 0, "head": [0, 9]},
-            {"layer": 0, "head": [1]},
-            {"layer": 0, "head": [1, 9]},
-        ]
+
+def test_the_keys_within_a_filter_term_are_and_ed(small_model):
+    index_df = parse(
+        small_model,
+        activation=ModelLayerLocation.ATTENTION_Z,
+        location=[ModelLocation.LAYER, ModelLocation.HEAD],
+        filter=Filter.from_config([{"layer": 0, "head": 1}]),
     )
 
+    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.HEAD) == [(0, 1)]
 
-def test_incremental_not_filtered():
-    config = {
-        "location": ["layer"],
-        "filter": [{"layer": 0}],
-        "incremental": {"neuron": [10, 11]},
+
+def test_filter_terms_are_or_ed_across_locations(small_model):
+    # layer 0 for any head, OR head 1 for any layer.
+    index_df = parse(
+        small_model,
+        activation=ModelLayerLocation.ATTENTION_Z,
+        location=[ModelLocation.LAYER, ModelLocation.HEAD],
+        filter=Filter.from_config([{"layer": 0}, {"head": 1}]),
+    )
+
+    assert set(coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.HEAD)) == {
+        *((0, head) for head in range(small_model.cfg.n_heads)),
+        *((layer, 1) for layer in range(small_model.cfg.n_layers)),
     }
-    result = parse_config(config, n_layers=2)
-    assert result_rows(result) == expected_rows(
-        [
-            {"layer": 0, "neuron": [10]},
-            {"layer": 0, "neuron": [10, 11]},
-        ]
+
+
+# --------------------------------------------------------------------------------------------------
+# Transforms — group collapses values into one cell, incremental grows prefixes, combination expands
+# a grouped cell again. They run in that order, after the filter.
+# --------------------------------------------------------------------------------------------------
+def _layers(model, **source) -> list:
+    return values_of(parse(model, activation=ModelLayerLocation.RESIDUAL_POST, **source), ModelLocation.LAYER)
+
+
+def test_group_collapses_the_listed_values_into_one_row(small_model):
+    # 0 and 1 collapse into one row addressing both; 2 is left untouched.
+    assert _layers(small_model, location=[ModelLocation.LAYER], group=Group({ModelLocation.LAYER: [0, 1]})) == [
+        (0, 1),
+        2,
+    ]
+
+
+def test_group_all_collapses_the_whole_axis(small_model):
+    layers = _layers(small_model, location=[ModelLocation.LAYER], group=Group({ModelLocation.LAYER: "all"}))
+
+    assert layers == [tuple(range(small_model.cfg.n_layers))]
+
+
+def test_group_drops_the_duplicate_rows_it_creates(small_model):
+    # Grouping one axis leaves one row per value of the other, not one per pair.
+    index_df = parse(
+        small_model,
+        activation=ModelLayerLocation.ATTENTION_Z,
+        location=[ModelLocation.LAYER, ModelLocation.HEAD],
+        group=Group({ModelLocation.LAYER: "all"}),
     )
 
+    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.HEAD) == [
+        (tuple(range(small_model.cfg.n_layers)), head) for head in range(small_model.cfg.n_heads)
+    ]
 
-# --------------------------------------------------------------------------------------------------
-# Combination — expand a list-valued location into all of its value combinations
-# (runs after ``group``, which is what turns the cells into lists in the first place)
-# --------------------------------------------------------------------------------------------------
+
+def test_incremental_appends_growing_prefixes_to_every_row(small_model):
+    layers = _layers(
+        small_model,
+        location=[ModelLocation.LAYER],
+        filter=Filter.from_config([{"layer": [0, 1]}]),
+        incremental=Incremental({ModelLocation.LAYER: [7, 8]}),
+    )
+
+    assert layers == [(0,), (0, 7), (0, 7, 8), (1,), (1, 7), (1, 7, 8)]
+
+
+def test_incremental_can_add_a_location_the_index_does_not_have(small_model):
+    # The neuron axis is not in the index, so only the incremented rows exist.
+    index_df = parse(
+        small_model,
+        activation=ModelLayerLocation.MLP_POST,
+        location=[ModelLocation.LAYER],
+        filter=Filter.from_config([{"layer": 0}]),
+        incremental=Incremental({ModelLocation.NEURON: [4, 5]}),
+    )
+
+    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.NEURON) == [(0, (4,)), (0, (4, 5))]
+
+
+def test_incremental_keeps_the_other_locations(small_model):
+    index_df = parse(
+        small_model,
+        activation=ModelLayerLocation.ATTENTION_Z,
+        location=[ModelLocation.LAYER, ModelLocation.HEAD],
+        filter=Filter.from_config([{"layer": 0, "head": [0, 1]}]),
+        incremental=Incremental({ModelLocation.HEAD: [9]}),
+    )
+
+    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.HEAD) == [
+        (0, (0,)),
+        (0, (0, 9)),
+        (0, (1,)),
+        (0, (1, 9)),
+    ]
+
+
 @pytest.mark.parametrize(
-    "combination_cfg, expected",
+    ("max_elements", "expected"),
     [
-        # max_elements caps the combination size at 2
-        (
-            {"location": ["layer"], "max_elements": 2},
-            [
-                {"layer": (0,)},
-                {"layer": (1,)},
-                {"layer": (2,)},
-                {"layer": (0, 1)},
-                {"layer": (0, 2)},
-                {"layer": (1, 2)},
-            ],
-        ),
-        # without max_elements every non-empty combination is produced (sizes 1..n)
-        (
-            {"location": ["layer"]},
-            [
-                {"layer": (0,)},
-                {"layer": (1,)},
-                {"layer": (2,)},
-                {"layer": (0, 1)},
-                {"layer": (0, 2)},
-                {"layer": (1, 2)},
-                {"layer": (0, 1, 2)},
-            ],
-        ),
+        # max_elements caps the size of a combination...
+        (2, [(0,), (1,), (2,), (0, 1), (0, 2), (1, 2)]),
+        # ...and without it every non-empty combination is produced.
+        (None, [(0,), (1,), (2,), (0, 1), (0, 2), (1, 2), (0, 1, 2)]),
     ],
 )
-def test_combination_after_group(combination_cfg, expected):
-    config = {"location": ["layer"], "group": {"layer": "all"}, "combination": combination_cfg}
-    result = parse_config(config, n_layers=3)
-    assert result_rows(result) == expected_rows(expected)
+def test_combination_expands_a_grouped_axis(small_model, max_elements, expected):
+    assert small_model.cfg.n_layers == 3
 
-
-# --------------------------------------------------------------------------------------------------
-# Full pipeline — several sections together, exercising filter -> group -> combination ordering
-# --------------------------------------------------------------------------------------------------
-def test_full_config_filter_group_combination():
-    config = {
-        "location": ["layer"],
-        "filter": [{"layer": {"range": [0, 2]}}],
-        "group": {"layer": "all"},
-        "combination": {"location": ["layer"], "max_elements": 2},
-    }
-    result = parse_config(config, n_layers=4)
-    assert result_rows(result) == expected_rows(
-        [{"layer": (0,)}, {"layer": (1,)}, {"layer": (2,)}, {"layer": (0, 1)}, {"layer": (0, 2)}, {"layer": (1, 2)}]
+    layers = _layers(
+        small_model,
+        location=[ModelLocation.LAYER],
+        group=Group({ModelLocation.LAYER: "all"}),
+        combination=Combination(
+            location=[ModelLocation.LAYER], **({} if max_elements is None else {"max_elements": max_elements})
+        ),
     )
 
+    assert layers == expected
+
+
+def test_filter_group_and_combination_run_in_that_order(model):
+    # The filter narrows the axis to 0..2 first, so the combinations never mention any later layer.
+    layers = _layers(
+        model,
+        location=[ModelLocation.LAYER],
+        filter=Filter.from_config([{"layer": {"range": [0, 2]}}]),
+        group=Group({ModelLocation.LAYER: "all"}),
+        combination=Combination(location=[ModelLocation.LAYER], max_elements=2),
+    )
+
+    assert layers == [(0,), (1,), (2,), (0, 1), (0, 2), (1, 2)]
+
 
 # --------------------------------------------------------------------------------------------------
-# ModelLocation keys — deserialization converts the config file's strings to ModelLocation members
+# Explicit coordinates — the exact points, in the order they are listed
 # --------------------------------------------------------------------------------------------------
-def test_deserialized_section_keys_are_model_location():
-    config = from_dict(
-        ModelLocatorConfig,
+def test_coordinates_are_indexed_in_order(model):
+    index_df = parse(
+        model,
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        coordinates=[
+            {ModelLocation.LAYER: 2, ModelLocation.POSITION: 1},
+            {ModelLocation.LAYER: 0, ModelLocation.POSITION: 3},
+        ],
+    )
+
+    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.POSITION) == [(2, 1), (0, 3)]
+    assert values_of(index_df, ModelLocation.ACTIVATION) == [ModelLayerLocation.RESIDUAL_POST] * 2
+
+
+def test_coordinates_resolve_negative_values(model):
+    index_df = parse(
+        model,
+        activation=ModelLayerLocation.MLP_POST,
+        coordinates=[{ModelLocation.LAYER: -1, ModelLocation.NEURON: -2}],
+    )
+
+    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.NEURON) == [
+        (model.cfg.n_layers - 1, model.cfg.d_mlp - 2)
+    ]
+
+
+def test_a_coordinate_list_addresses_several_values_in_one_row(model):
+    # A list value addresses those elements together in one row; negatives resolve inside lists too.
+    index_df = parse(
+        model,
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        coordinates=[{ModelLocation.LAYER: 1, ModelLocation.POSITION: [0, -1]}],
+    )
+
+    assert coordinates_of(index_df, ModelLocation.POSITION) == [((0, PROMPT_SIZE - 1),)]
+
+
+def test_coordinates_carry_their_own_activation(model):
+    config = deserialize(
+        {"coordinates": [{"activation": "resid.post", "layer": 0}, {"activation": "mlp.out", "layer": -1}]}
+    )
+
+    # The deserializer turns the values into members, and parse orders the activation column last.
+    assert all(
+        isinstance(coordinate[ModelLocation.ACTIVATION], ModelLayerLocation) for coordinate in config.coordinates
+    )
+    index_df = config.parse(model, PROMPT_SIZE).df
+    assert list(index_df.columns) == [ModelLocation.LAYER, ModelLocation.ACTIVATION]
+    assert values_of(index_df, ModelLocation.ACTIVATION) == [
+        ModelLayerLocation.RESIDUAL_POST,
+        ModelLayerLocation.MLP_OUT,
+    ]
+    assert values_of(index_df, ModelLocation.LAYER) == [0, model.cfg.n_layers - 1]
+
+
+def test_a_negative_coordinate_resolves_against_its_own_activations_dimension(model):
+    # The same {neuron: -1} is d_head-1 for a head activation and d_mlp-1 for an MLP one.
+    config = deserialize(
+        {"coordinates": [{"activation": "attn.q", "neuron": -1}, {"activation": "mlp.post", "neuron": -1}]}
+    )
+
+    assert values_of(config.parse(model, PROMPT_SIZE).df, ModelLocation.NEURON) == [
+        model.cfg.d_head - 1,
+        model.cfg.d_mlp - 1,
+    ]
+
+
+def test_an_empty_coordinate_list_yields_no_rows(model):
+    index_df = parse(model, activation=ModelLayerLocation.RESIDUAL_POST, coordinates=[])
+
+    assert len(index_df) == 0
+    assert ModelLocation.ACTIVATION in index_df.columns
+
+
+# --------------------------------------------------------------------------------------------------
+# Deserialization — the config file's strings become ModelLocation / ModelLayerLocation members
+# --------------------------------------------------------------------------------------------------
+def test_every_section_is_keyed_by_model_location(model):
+    config = deserialize(
         {
-            "activation": ModelLayerLocation.RESIDUAL_POST,
+            "activation": "resid.post",
             "location": ["layer"],
             "filter": [{"layer": 0}, {"not": {"head": 1}}],
             "group": {"layer": "all"},
             "incremental": {"head": [1]},
             "combination": {"location": ["layer"]},
-        },
+        }
     )
+
+    assert config.activation is ModelLayerLocation.RESIDUAL_POST
+    assert config.location == [ModelLocation.LAYER]
     terms = config.filter.inclusion_terms + config.filter.exclusion_terms
     assert all(isinstance(location, ModelLocation) for term in terms for location in term)
     assert isinstance(config.group, Group)
-    assert all(isinstance(location, ModelLocation) for location in config.group)
     assert isinstance(config.incremental, Incremental)
-    assert all(isinstance(location, ModelLocation) for location in config.incremental)
+    assert isinstance(config.combination, Combination)
+    assert all(isinstance(location, ModelLocation) for location in [*config.group, *config.incremental])
     assert all(isinstance(location, ModelLocation) for location in config.combination.location)
 
 
-def test_model_location_keys_in_code_built_config():
-    # The enum-keyed twin of ``test_full_config_filter_group_combination``, built without raw strings.
-    config = ModelLocatorConfig(
+def test_coordinate_keys_are_model_location(model):
+    config = deserialize({"coordinates": [{"activation": "resid.post", "layer": 0, "position": -1}]})
+
+    assert isinstance(config.coordinates, Coordinates)
+    assert all(isinstance(location, ModelLocation) for coordinate in config.coordinates for location in coordinate)
+
+
+def test_a_raw_config_parses_like_its_code_built_twin(model):
+    raw = deserialize(
+        {
+            "activation": "resid.post",
+            "location": ["layer"],
+            "filter": [{"layer": {"range": [0, 2]}}],
+            "group": {"layer": "all"},
+            "combination": {"location": ["layer"], "max_elements": 2},
+        }
+    )
+    in_code = ModelLocatorConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
         location=[ModelLocation.LAYER],
         filter=Filter(inclusion_terms=[{ModelLocation.LAYER: {"range": [0, 2]}}]),
         group=Group({ModelLocation.LAYER: "all"}),
         combination=Combination(location=[ModelLocation.LAYER], max_elements=2),
     )
-    result = config.parse(make_model(n_layers=4), 4)
-    assert result_rows(result) == expected_rows(
-        [{"layer": (0,)}, {"layer": (1,)}, {"layer": (2,)}, {"layer": (0, 1)}, {"layer": (0, 2)}, {"layer": (1, 2)}]
-    )
 
-
-def test_full_config_filter_group_multi_location():
-    config = {"location": ["layer", "head"], "filter": [{"layer": {"range": [0, 1]}}], "group": {"head": "all"}}
-    result = parse_config(config, n_layers=3, n_heads=2)
-    assert result_rows(result) == expected_rows([{"layer": 0, "head": [0, 1]}, {"layer": 1, "head": [0, 1]}])
+    assert raw == in_code
+    assert values_of(raw.parse(model, PROMPT_SIZE).df, ModelLocation.LAYER) == [
+        (0,),
+        (1,),
+        (2,),
+        (0, 1),
+        (0, 2),
+        (1, 2),
+    ]
 
 
 # --------------------------------------------------------------------------------------------------
-# Explicit coordinates — enumerate the exact coordinates instead of generating them from location ranges
+# Symbolic positions — parse(model, None) keeps a position unresolved when the prompt length varies
 # --------------------------------------------------------------------------------------------------
-def test_explicit_coordinates_rows_in_order():
-    result = parse_config({"coordinates": [{"layer": 2, "position": 1}, {"layer": 0, "position": 3}]})
-    assert [(row["layer"], row["position"]) for _, row in result.df.iterrows()] == [(2, 1), (0, 3)]
-    assert list(result.df[ModelLocation.ACTIVATION]) == [ModelLayerLocation.RESIDUAL_POST.value] * 2
-
-
-def test_explicit_coordinates_negative_values_resolve():
-    result = parse_config({"coordinates": [{"layer": -1, "position": -2}]}, n_layers=5, prompt_size=4)
-    assert result_rows(result) == expected_rows([{"layer": 4, "position": 2}])
-
-
-def test_explicit_coordinates_list_cells():
-    # A list value addresses those elements together in one row; negatives resolve inside lists too.
-    result = parse_config({"coordinates": [{"layer": 1, "position": [0, -1]}]}, prompt_size=4)
-    assert result_rows(result) == expected_rows([{"layer": 1, "position": [0, 3]}])
-
-
-def test_explicit_coordinates_code_built():
-    config = ModelLocatorConfig(
-        activation=ModelLayerLocation.RESIDUAL_POST,
-        coordinates=[{ModelLocation.LAYER: -1, ModelLocation.POSITION: 0}],
-    )
-    result = config.parse(make_model(n_layers=3), 4)
-    assert result_rows(result) == expected_rows([{"layer": 2, "position": 0}])
-
-
-def test_explicit_coordinates_empty_list_yields_no_rows():
-    result = parse_config({"coordinates": []})
-    assert len(result.df) == 0
-    assert ModelLocation.ACTIVATION in result.df.columns
-
-
-def test_deserialized_coordinate_keys_are_model_location():
-    config = from_dict(
-        ModelLocatorConfig,
-        {"activation": ModelLayerLocation.RESIDUAL_POST, "coordinates": [{"layer": 0, "position": -1}]},
-    )
-    assert config.coordinates is not None
-    assert all(isinstance(location, ModelLocation) for coordinate in config.coordinates for location in coordinate)
-
-
-def test_explicit_coordinates_per_coordinate_activation():
-    # Coordinates may carry their own activation instead of the config-level one; the deserializer turns
-    # the values into ModelLayerLocation members and parse orders the activation column last.
-    config = from_dict(
-        ModelLocatorConfig,
-        {"coordinates": [{"activation": "resid.post", "layer": 0}, {"activation": "mlp.out", "layer": -1}]},
-    )
-    assert config.coordinates is not None
-    assert all(
-        isinstance(coordinate[ModelLocation.ACTIVATION], ModelLayerLocation) for coordinate in config.coordinates
-    )
-
-    result = config.parse(make_model(n_layers=3), 4)
-    assert list(result.df.columns) == [ModelLocation.LAYER, ModelLocation.ACTIVATION]
-    assert list(result.df[ModelLocation.ACTIVATION]) == [ModelLayerLocation.RESIDUAL_POST, ModelLayerLocation.MLP_OUT]
-    assert list(result.df["layer"]) == [0, 2]
-
-
-def test_explicit_coordinates_negative_resolution_uses_coordinate_activation():
-    # The same {neuron: -1} resolves against each coordinate's own activation dimension.
-    config = from_dict(
-        ModelLocatorConfig,
-        {"coordinates": [{"activation": "attn.q", "neuron": -1}, {"activation": "mlp.post", "neuron": -1}]},
-    )
-    result = config.parse(make_model(d_head=4, d_mlp=16), 4)
-    assert list(result.df["neuron"]) == [3, 15]
-
-
 @pytest.mark.parametrize(
-    "config",
+    ("filter_config", "expected_positions"),
     [
-        # config-level and per-coordinate activation together
-        {"activation": "resid.post", "coordinates": [{"activation": "resid.post", "layer": 0}]},
-        # only some coordinates carry activation
-        {"coordinates": [{"activation": "resid.post", "layer": 0}, {"layer": 1}]},
-        # invalid activation value
-        {"coordinates": [{"activation": "bogus", "layer": 0}]},
-        # empty coordinate
-        {"coordinates": [{}]},
+        ([{"position": 2}], [2]),  # non-negative stays absolute, counted from the start
+        ([{"position": -1}], [-1]),  # negative stays symbolic, resolved per prompt at slice time
+        ([{"position": 0}, {"position": -1}], [-1, 0]),  # mixed anchors are two distinct points
+        ([{"position": [1, -2]}], [-2, 1]),  # a list keeps each element's sign
+        ([{"position": {"range": [0, 2]}}], [0, 1, 2]),  # a non-negative range expands from the start
+        ([{"position": {"range": [-3, -1]}}], [-3, -2, -1]),  # a negative range expands in end space
     ],
 )
-def test_explicit_coordinates_activation_construction_raises(config):
-    with pytest.raises(ValueError):
-        from_dict(ModelLocatorConfig, config)
+def test_a_position_stays_symbolic_when_the_prompt_length_varies(small_model, filter_config, expected_positions):
+    index_df = parse(
+        small_model,
+        n_positions=None,
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.POSITION],
+        filter=Filter.from_config(filter_config),
+    )
+
+    assert values_of(index_df, ModelLocation.POSITION) == expected_positions
+
+
+def test_a_symbolic_position_keeps_the_other_locations(small_model):
+    index_df = parse(
+        small_model,
+        n_positions=None,
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        filter=Filter.from_config([{"position": -1}]),
+    )
+
+    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.POSITION) == [
+        (layer, -1) for layer in range(small_model.cfg.n_layers)
+    ]
+
+
+def test_a_known_prompt_length_resolves_a_negative_position(small_model):
+    # The contrast: with a length to count against, -1 collapses to its absolute index.
+    index_df = parse(
+        small_model,
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.POSITION],
+        filter=Filter.from_config([{"position": -1}]),
+    )
+
+    assert values_of(index_df, ModelLocation.POSITION) == [PROMPT_SIZE - 1]
+
+
+def test_symbolic_coordinates_keep_their_signs(small_model):
+    index_df = parse(
+        small_model,
+        n_positions=None,
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        coordinates=[
+            {ModelLocation.LAYER: 1, ModelLocation.POSITION: -2},
+            {ModelLocation.LAYER: 0, ModelLocation.POSITION: [0, -1]},
+        ],
+    )
+
+    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.POSITION) == [(1, -2), (0, (0, -1))]
+
+
+def test_a_transform_treats_a_symbolic_position_like_any_other_value(small_model):
+    # Group collapses negative positions just as it collapses non-negative ones.
+    index_df = parse(
+        small_model,
+        n_positions=None,
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.POSITION],
+        filter=Filter.from_config([{"position": {"range": [-3, -1]}}]),
+        group=Group({ModelLocation.POSITION: [-2, -1]}),
+    )
+
+    assert values_of(index_df, ModelLocation.POSITION) == [-3, (-2, -1)]
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        # an unfiltered position axis would enumerate every position
+        ({"location": [ModelLocation.POSITION]}, "prompt length varies"),
+        # an exclusion still needs the full range to subtract from
+        (
+            {
+                "location": [ModelLocation.POSITION],
+                "filter": Filter.from_config([{"not": {"position": 0}}]),
+            },
+            "prompt length varies",
+        ),
+        # a mixed-sign range has no length-independent meaning
+        (
+            {
+                "location": [ModelLocation.POSITION],
+                "filter": Filter.from_config([{"position": {"range": [-1, 1]}}]),
+            },
+            "positions on the same side",
+        ),
+    ],
+)
+def test_a_position_grid_that_depends_on_the_prompt_length_raises(small_model, source, message):
+    with pytest.raises(ValueError, match=message):
+        parse(small_model, n_positions=None, activation=ModelLayerLocation.RESIDUAL_POST, **source)
 
 
 # --------------------------------------------------------------------------------------------------
-# Error cases raised while *deserializing* the mixin (Filter.from_config / ModelLocation enum / strict keys)
+# Rejected configurations
 # --------------------------------------------------------------------------------------------------
 @pytest.mark.parametrize(
-    "config",
+    "source",
     [
         {"filter": [{}]},  # empty pattern
         {"filter": [{"not": {}}]},  # empty negated pattern
-        {"filter": ["foo"]},  # term is not a dict
-        {"filter": [5]},  # term is not a dict
+        {"filter": ["foo"]},  # term is not a mapping
+        {"filter": [5]},
         {"location": ["bogus"]},  # not a ModelLocation value
-        {"fitler": [{"layer": 0}]},  # unknown key (typo) is rejected, not ignored
-        {"filter": [{"bogus": 0}]},  # pattern key is not a ModelLocation value
-        {"group": {"bogus": "all"}},  # group key is not a ModelLocation value
+        {"fitler": [{"layer": 0}]},  # a typo is rejected, not ignored
+        {"filter": [{"bogus": 0}]},
+        {"group": {"bogus": "all"}},
+        {"group": "all"},  # a section that keys values by location needs a mapping
+        {"incremental": [1, 2]},
         {"location": ["activation"]},  # activation is not a declarative location
-        {"coordinates": [{"bogus": 0}]},  # coordinate key is not a ModelLocation value
-        {"coordinates": [{"layer": 0}], "location": ["layer"]},  # explicit and declarative modes are exclusive
-        {"coordinates": [{"layer": 0}], "filter": [{"layer": 0}]},  # explicit and declarative modes are exclusive
-        {"coordinates": [{"layer": 0}, {"head": 0}]},  # coordinates do not share the same locations
+        {"coordinates": [{"bogus": 0}]},
+        {"coordinates": [{"layer": 0}], "location": ["layer"]},  # the two modes are exclusive
+        {"coordinates": [{"layer": 0}], "filter": [{"layer": 0}]},
+        {"coordinates": [{"layer": 0}, {"head": 0}]},  # coordinates do not share their locations
+        {"coordinates": [{}]},  # empty coordinate
+        {"coordinates": "layer"},  # coordinates are a list of mappings, not a scalar
+        {"coordinates": [{"activation": "bogus", "layer": 0}]},  # invalid activation value
+        {"activation": "resid.post", "coordinates": [{"activation": "resid.post", "layer": 0}]},  # activation twice
+        {"coordinates": [{"activation": "resid.post", "layer": 0}, {"layer": 1}]},  # only some carry one
     ],
 )
-def test_construction_raises_value_error(config):
+def test_a_malformed_source_is_rejected_when_it_is_deserialized(source):
+    # Coordinates carry their own activation, so only the declarative shapes get the config-level one.
+    default = {} if "coordinates" in source else {"activation": "resid.post"}
+
     with pytest.raises(ValueError):
-        from_dict(ModelLocatorConfig, {"activation": ModelLayerLocation.RESIDUAL_POST, **config})
+        deserialize({**default, **source})
 
 
-# --------------------------------------------------------------------------------------------------
-# Error cases that parse cleanly at construction but raise during parse()
-# --------------------------------------------------------------------------------------------------
+def test_a_code_built_coordinate_is_checked_too(model):
+    # Built as ``Coordinates`` the deserializer's own checks are skipped, so the config repeats them.
+    with pytest.raises(ValueError, match="Invalid coordinate"):
+        ModelLocatorConfig(activation=ModelLayerLocation.RESIDUAL_POST, coordinates=Coordinates([{}]))
+
+
 @pytest.mark.parametrize(
-    "config",
+    "source",
     [
         {"location": ["layer"], "filter": [{"layer": "x"}]},  # invalid constraint type
-        {"location": ["layer"], "filter": [{"head": 0}]},  # references a location not in the index
+        {"location": ["layer"], "filter": [{"head": 0}]},  # references a location the index does not have
         {"coordinates": [{"layer": "x"}]},  # invalid coordinate value type
     ],
 )
-def test_parse_raises_value_error(config):
-    mixin = from_dict(
-        ModelLocatorConfig, {"activation": ModelLayerLocation.RESIDUAL_POST, **config}
-    )  # deserialization succeeds
+def test_a_source_the_model_cannot_resolve_raises_when_it_is_parsed(small_model, source):
+    config = deserialize({"activation": "resid.post", **source})  # deserialization succeeds
+
     with pytest.raises(ValueError):
-        mixin.parse(make_model(), 4)
-
-
-# --------------------------------------------------------------------------------------------------
-# Symbolic positions — parse(model, None) keeps positions unresolved when the prompt length varies
-# --------------------------------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    "filter_cfg, expected_positions",
-    [
-        ([{"position": 2}], [2]),  # non-negative stays absolute (from the start)
-        ([{"position": -1}], [-1]),  # negative stays symbolic (resolved per prompt at slice time)
-        ([{"position": 0}, {"position": -1}], [-1, 0]),  # mixed anchors are two distinct points
-        ([{"position": [1, -2]}], [-2, 1]),  # lists keep each element's sign
-        ([{"position": {"range": [0, 2]}}], [0, 1, 2]),  # a non-negative range expands as usual
-        ([{"position": {"range": [-3, -1]}}], [-3, -2, -1]),  # a fully-negative range expands in end space
-    ],
-)
-def test_symbolic_position_filter_stays_unresolved(filter_cfg, expected_positions):
-    result = parse_config({"location": ["position"], "filter": filter_cfg}, prompt_size=None)
-    assert result_rows(result) == expected_rows(single("position", expected_positions))
-
-
-def test_symbolic_position_keeps_other_locations():
-    result = parse_config(
-        {"location": ["layer", "position"], "filter": [{"position": -1}]}, prompt_size=None, n_layers=2
-    )
-    assert result_rows(result) == expected_rows([{"layer": 0, "position": -1}, {"layer": 1, "position": -1}])
-
-
-def test_concrete_mode_still_resolves_negative_position():
-    # The contrast: with a known length a negative position collapses to its absolute index.
-    result = parse_config({"location": ["position"], "filter": [{"position": -1}]}, prompt_size=4)
-    assert result_rows(result) == expected_rows(single("position", [3]))
-
-
-@pytest.mark.parametrize(
-    "config",
-    [
-        {"location": ["position"]},  # an unfiltered position axis would enumerate every position
-        {"location": ["position"], "filter": [{"not": {"position": 0}}]},  # exclusion still needs the full range
-        {"location": ["position"], "filter": [{"position": {"range": [-1, 1]}}]},  # mixed-sign range
-    ],
-)
-def test_symbolic_position_length_dependent_grid_raises(config):
-    with pytest.raises(ValueError, match="prompt length varies"):
-        parse_config(config, prompt_size=None)
-
-
-def test_symbolic_coordinates_keep_negative_positions():
-    result = parse_config({"coordinates": [{"layer": 1, "position": -2}]}, prompt_size=None)
-    assert result_rows(result) == expected_rows([{"layer": 1, "position": -2}])
-
-
-def test_symbolic_coordinates_keep_signs_inside_lists():
-    result = parse_config({"coordinates": [{"layer": 0, "position": [0, -1]}]}, prompt_size=None)
-    assert result_rows(result) == expected_rows([{"layer": 0, "position": [0, -1]}])
-
-
-def test_transforms_are_value_agnostic_over_symbolic_positions():
-    # Group collapses negative position values just like non-negative ones.
-    result = parse_config(
-        {"location": ["position"], "filter": [{"position": {"range": [-3, -1]}}], "group": {"position": [-2, -1]}},
-        prompt_size=None,
-    )
-    assert result_rows(result) == expected_rows([{"position": -3}, {"position": [-2, -1]}])
+        config.parse(small_model, PROMPT_SIZE)

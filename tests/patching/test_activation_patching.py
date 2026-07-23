@@ -2,11 +2,13 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 import torch
 import yaml
 from transformer_lens import HookedTransformer
 
-from intex.model.config import Filter, ModelLayerLocation, ModelLocation
+from intex.model.cache import CachedModel
+from intex.model.config import Filter, Group, Incremental, ModelLayerLocation, ModelLocation
 from intex.operation.config import ConfigFactory
 from intex.patching.config import (
     PatchingConfig,
@@ -422,3 +424,266 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
     assert any(col.startswith("source_") for col in index_df.columns)
     assert any(col.startswith("target_") for col in index_df.columns)
     assert any(col.startswith("index_") for col in index_df.columns)
+
+
+def _gaussian_noise_config() -> PatchingConfig:
+    """Scale the target's own residual by seeded noise, then write it back over itself."""
+    source = PatchingElementConfig(
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER],
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: _VALUE_SCALE_LAYER}]),
+        type=PatchingType.GAUSSIAN_NOISE,
+    )
+    target = PatchingElementConfig(
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER],
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: _VALUE_SCALE_LAYER}]),
+        type=PatchingType.REPLACE,
+    )
+    return PatchingConfig(
+        config_id="gaussian_noise",
+        metric=PatchingMetric.LOGIT_DIFF,
+        patch=[SinglePatchingConfig(source=source, target=target)],
+    )
+
+
+def _run(model: HookedTransformer, config: PatchingConfig) -> torch.Tensor:
+    collector = Patcher(model).apply(
+        PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
+    )
+    assert collector is not None
+    return collector.result
+
+
+def test_gaussian_noise_patching(model: HookedTransformer) -> None:
+    torch.manual_seed(42)
+
+    noised = _run(model, _gaussian_noise_config())
+
+    # The strategy draws from a seeded generator, so the run repeats exactly...
+    assert noised.shape == (1,)
+    assert torch.isfinite(noised).all()
+    assert torch.equal(_run(model, _gaussian_noise_config()), noised)
+    # ...and noising the activation is not the same as replacing it with the source's.
+    assert not torch.allclose(noised, _run(model, _resid_value_scale_config(1.0, _VALUE_SCALE_LAYER)))
+
+
+@pytest.mark.parametrize(
+    ("element", "message"),
+    [
+        ("source", "Unknown source strategy"),
+        ("target", "Unknown target strategy"),
+    ],
+)
+def test_a_patching_type_that_is_not_known_raises(model: HookedTransformer, element: str, message: str) -> None:
+    # A config built in code can name a type no strategy implements — and 'value_replace' is one only
+    # a source may carry, so a target is rejected the same way.
+    source, target = _last_layer_resid_element(), _last_layer_resid_element()
+    (source if element == "source" else target).type = "bogus" if element == "source" else "value_replace"
+    config = PatchingConfig(
+        config_id="unknown_strategy",
+        metric=PatchingMetric.LOGIT_DIFF,
+        patch=[SinglePatchingConfig(source=source, target=target)],
+    )
+
+    with pytest.raises(ValueError, match=message):
+        Patcher(model).apply(PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), verbose=False)
+
+
+def test_a_patching_metric_that_is_not_known_raises(model: HookedTransformer) -> None:
+    config = _last_layer_resid_patch_config()
+    config.metric = "accuracy"
+
+    with pytest.raises(ValueError, match="Unknown patching metric"):
+        Patcher(model).apply(PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), verbose=False)
+
+
+def test_a_prepared_input_moves_to_a_device(model: HookedTransformer) -> None:
+    patching_input = PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT).prepare(model)
+    # The baselines and probabilities are built on first read, so ask for them before moving.
+    for lazy in (patching_input.source_baseline, patching_input.target_baseline):
+        assert lazy is not None
+    for lazy in (patching_input.source_probabilities, patching_input.target_probabilities):
+        assert lazy is not None
+
+    moved = patching_input.to("cpu")
+
+    assert moved is patching_input
+    tensors = [
+        moved.source_tokens,
+        moved.target_tokens,
+        moved.source_logits,
+        moved.target_logits,
+        moved.source_baseline,
+        moved.target_baseline,
+        moved.source_probabilities,
+        moved.target_probabilities,
+    ]
+    assert all(tensor.device.type == "cpu" for tensor in tensors)
+    assert all(activation.device.type == "cpu" for activation in moved.source_cache.values())
+    assert all(activation.device.type == "cpu" for activation in moved.target_cache.values())
+
+
+def test_a_run_without_a_collector_still_writes_its_artifacts(model: HookedTransformer, tmp_path: Path) -> None:
+    torch.manual_seed(42)
+
+    # Not asking for the collector is the default, and how the example scripts run an operation.
+    collector = Patcher(model).apply(
+        PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT),
+        return_collector=True,
+        verbose=False,
+    )
+    assert collector is not None
+
+    save_dir = tmp_path / "patch_run"
+    returned = Patcher(model).apply(
+        PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT),
+        save_dir=str(save_dir),
+        verbose=False,
+    )
+
+    # Nothing comes back, but the run did all of its work and left it on disk.
+    assert returned is None
+    assert torch.equal(torch.load(save_dir / "result.pt"), collector.result)
+    assert (save_dir / "index-0.csv").exists()
+
+
+# --------------------------------------------------------------------------------------------------
+# Configuration — patching configs come from YAML, where a source and a target often alias one anchor
+# --------------------------------------------------------------------------------------------------
+ELEMENT_YAML = {"activation": "resid.post", "location": ["layer"], "filter": [{"layer": -1}], "type": "replace"}
+
+
+def _patch_yaml(**overrides) -> dict:
+    return {"metric": "logit_diff", "patch": [{"source": ELEMENT_YAML, "target": ELEMENT_YAML}], **overrides}
+
+
+def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model: HookedTransformer, config_from_yaml) -> None:
+    from_file = config_from_yaml(PatchingConfig, "last_layer_resid_patch", _patch_yaml())
+    element = _last_layer_resid_element()
+    in_code = PatchingConfig(
+        metric=PatchingMetric.LOGIT_DIFF, patch=[SinglePatchingConfig(source=element, target=element)]
+    )
+
+    assert from_file.metric is PatchingMetric.LOGIT_DIFF
+    assert from_file.patch[0].source.activation is ModelLayerLocation.RESIDUAL_POST
+    assert from_file.patch[0].source.location == [ModelLocation.LAYER]
+    assert from_file.patch[0].source.type is PatchingType.REPLACE
+
+    def run(config: PatchingConfig) -> torch.Tensor:
+        patching_input = PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT)
+        collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
+        assert collector is not None
+        return collector.result
+
+    assert torch.equal(run(from_file), run(in_code))
+
+
+def test_a_source_and_a_target_may_alias_the_same_yaml_anchor(model: HookedTransformer, tmp_path: Path) -> None:
+    # A YAML anchor gives the deserializer the very same mapping twice; it must not consume it.
+    config_yaml = tmp_path / "configs.yaml"
+    config_yaml.write_text(
+        "anchored:\n"
+        "  metric: logit_diff\n"
+        "  patch:\n"
+        "    - source: &element\n"
+        "        activation: resid.post\n"
+        "        location: [layer]\n"
+        "        filter: [{layer: -1}]\n"
+        "        type: replace\n"
+        "      target: *element\n"
+    )
+    config = ConfigFactory[PatchingConfig](str(config_yaml)).create("anchored")
+
+    assert config.patch[0].source == config.patch[0].target
+    collector = Patcher(model).apply(
+        PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
+    )
+    assert collector is not None
+    assert collector.result.shape == (1,)
+
+
+def test_the_omitted_keys_of_an_element_fall_back_to_their_defaults(model: HookedTransformer, config_from_yaml) -> None:
+    # A source that names nothing but its type produces zeros — the zero-ablation shape, from YAML.
+    raw = {
+        "metric": "logit_diff",
+        "patch": [{"source": {"type": "value_replace"}, "target": ELEMENT_YAML}],
+    }
+    config = config_from_yaml(PatchingConfig, "zero_ablation", raw)
+    source = config.patch[0].source
+
+    assert source.activation is None
+    assert source.location == []
+    assert (source.filter, source.group, source.incremental) == (Filter(), Group(), Incremental())
+    assert source.value == 0.0
+
+    collector = Patcher(model).apply(
+        PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
+    )
+    assert collector is not None
+    assert torch.allclose(collector.result.squeeze(), torch.tensor(-2.7828707695007324), atol=1e-2)
+
+
+def test_an_exclusion_term_is_deserialized_into_its_own_filter(model: HookedTransformer, config_from_yaml) -> None:
+    element = {**ELEMENT_YAML, "filter": [{"layer": {"range": [0, 2]}}, {"not": {"layer": 1}}]}
+    config = config_from_yaml(
+        PatchingConfig, "filtered", {"metric": "logit_diff", "patch": [{"source": element, "target": element}]}
+    )
+
+    assert config.patch[0].source.filter == Filter(
+        inclusion_terms=[{ModelLocation.LAYER: {"range": [0, 2]}}], exclusion_terms=[{ModelLocation.LAYER: 1}]
+    )
+
+    collector = Patcher(model).apply(
+        PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
+    )
+    assert collector is not None
+    assert collector.result.shape == (2,)  # layers 0 and 2 survive the exclusion
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        (_patch_yaml(typ="replace"), "Unknown keys for PatchingConfig.*typ"),
+        (
+            {"metric": "logit_diff", "patch": [{"source": {"activation": "resid.post"}, "target": ELEMENT_YAML}]},
+            "Missing required keys for PatchingElementConfig.*type",
+        ),
+        (
+            {"metric": "logit_diff", "patch": [{"source": "replace", "target": ELEMENT_YAML}]},
+            "Expected a mapping for PatchingElementConfig",
+        ),
+        ({"patch": []}, "Missing required keys for PatchingConfig.*metric"),
+        (_patch_yaml(metric="accuracy"), "accuracy"),
+    ],
+)
+def test_a_malformed_patching_config_is_rejected_when_it_is_loaded(config_from_yaml, raw, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        config_from_yaml(PatchingConfig, "broken", raw)
+
+
+def test_a_config_id_the_file_does_not_have_raises(tmp_path: Path) -> None:
+    config_yaml = tmp_path / "configs.yaml"
+    config_yaml.write_text(yaml.safe_dump({"my_patch": _patch_yaml()}))
+    factory = ConfigFactory[PatchingConfig](str(config_yaml))
+
+    assert factory.create("my_patch").config_id == "my_patch"
+    with pytest.raises(KeyError):
+        factory.create("missing")
+
+
+def test_a_run_through_a_cached_model_patches_the_same_way(model: HookedTransformer, tmp_path: Path) -> None:
+    # Patching tokenizes, reads weights and runs with hooks through the wrapper; only its two cached
+    # forward passes go through the cache, so the metric must come out exactly as it does unwrapped.
+    def patch(target) -> torch.Tensor:
+        patching_input = PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT)
+        collector = Patcher(target).apply(patching_input, return_collector=True, verbose=False)
+        assert collector is not None
+        return collector.result
+
+    direct = patch(model)
+    cached_model = CachedModel(model, str(tmp_path))
+
+    assert torch.equal(patch(cached_model), direct)
+    assert len(list(tmp_path.rglob("*.pt"))) == 2  # one per prompt
+    assert torch.equal(patch(cached_model), direct)  # now served from disk

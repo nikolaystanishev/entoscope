@@ -1,159 +1,297 @@
+"""``CachedModel.run_with_cache`` — what it returns, what it writes, and when it recomputes.
+
+A cache hit is proven without a spy: the model's weights are changed between two calls, and the call
+served from disk keeps returning the first call's tensors while the unwrapped model follows the new
+weights. Which requests share an entry is read off the cache directory — one file per distinct key.
+"""
+
+import pathlib
+
+import pytest
 import torch
 
-from intex.lens.config import LensConfig, LensType
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.model.cache import ActivationDiskCache, CachedModel, _normalize_names_filter
-from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from intex.model.cache import CachedModel
+
+from ..conftest import build_tiny_model
 
 PROMPT = "Paris is located in"
-FINGERPRINT = "fingerprint-a"
+OTHER_PROMPT = "Rome is located in"
+NAMES = ["blocks.0.hook_resid_post", "blocks.1.hook_resid_post"]
 
 
-def _key(cache: ActivationDiskCache, *, fingerprint=FINGERPRINT, model_args=None, names=None, extra=None) -> str:
-    return cache.key(
-        model_fingerprint=fingerprint,
-        model_args=model_args if model_args is not None else (torch.tensor([[1, 2, 3]]),),
-        names_filter=_normalize_names_filter(names),
-        extra=extra or {},
-    )
+@pytest.fixture
+def wrapped(tmp_path):
+    """A real tiny model behind the disk cache, plus the plain model to compare against."""
+    return CachedModel(build_tiny_model(), str(tmp_path))
 
 
-# --- Key derivation (no model needed) ---------------------------------------------------------
+def cache_files(cache_dir) -> list[pathlib.Path]:
+    return sorted(cache_dir.rglob("*.pt"))
 
 
-def test_key_is_deterministic(tmp_path):
-    cache = ActivationDiskCache(str(tmp_path))
-    assert _key(cache) == _key(cache)
+def tokens_of(model, prompt: str = PROMPT) -> torch.Tensor:
+    return model.to_tokens(prompt)
 
 
-def test_key_ignores_names_filter_order(tmp_path):
-    cache = ActivationDiskCache(str(tmp_path))
-    assert _key(cache, names=["b", "a"]) == _key(cache, names=["a", "b"])
+def bump_weights(model) -> None:
+    """Change what a forward pass computes, without changing the model's shape (its cache key)."""
+    with torch.no_grad():
+        model.blocks[0].mlp.W_out.mul_(3.0)
+        model.blocks[0].mlp.b_out.add_(1.0)
 
 
-def test_key_distinguishes_relevant_inputs(tmp_path):
-    cache = ActivationDiskCache(str(tmp_path))
-    base = _key(cache)
-    assert _key(cache, model_args=(torch.tensor([[1, 2, 4]]),)) != base  # different tokens
-    assert _key(cache, names=["a"]) != base  # different filter (base is "all")
-    assert _key(cache, names=["a"]) != _key(cache, names=["a", "b"])  # subset differs
-    assert _key(cache, fingerprint="fingerprint-b") != base  # different model
-    assert _key(cache, extra={"remove_batch_dim": True}) != base  # output-shaping kwarg
-    # Tensor-valued model-input kwargs (e.g. attention_mask) must not collide, even at sizes where
-    # ``repr`` would truncate the tensor to identical text.
-    mask_a = torch.ones(1, 40, dtype=torch.long)
-    mask_b = mask_a.clone()
-    mask_b[0, -1] = 0
-    assert _key(cache, extra={"attention_mask": mask_a}) != base
-    assert _key(cache, extra={"attention_mask": mask_a}) != _key(cache, extra={"attention_mask": mask_b})
-
-
-def test_normalize_names_filter():
-    assert _normalize_names_filter(None) == "*ALL*"
-    assert _normalize_names_filter("x") == ["x"]
-    assert _normalize_names_filter(["b", "a"]) == ["a", "b"]
-
-
-# --- Round-trip against the real model --------------------------------------------------------
-
-
-def _count_forward_passes(model, monkeypatch) -> dict:
-    calls = {"n": 0}
-    original = model.run_with_cache
-
-    def counting(*args, **kwargs):
-        calls["n"] += 1
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(model, "run_with_cache", counting)
-    return calls
-
-
-def test_second_call_is_served_from_disk(model, tmp_path, monkeypatch):
-    calls = _count_forward_passes(model, monkeypatch)
-    wrapped = CachedModel(model, str(tmp_path))
-    tokens = model.to_tokens(PROMPT)
-    names = ["blocks.0.hook_resid_post", "blocks.1.hook_resid_post"]
-
-    logits1, cache1 = wrapped.run_with_cache(tokens, names_filter=names)
-    assert calls["n"] == 1
-    assert list(tmp_path.rglob("*.pt"))  # a cache file was written
-
-    logits2, cache2 = wrapped.run_with_cache(tokens, names_filter=names)
-    assert calls["n"] == 1  # no recomputation on the hit
-
-    assert torch.equal(logits1, logits2)
-    assert set(cache1.keys()) == set(cache2.keys()) == set(names)
+def assert_same_cache(left, right, names=NAMES) -> None:
+    assert set(left.keys()) == set(right.keys())
     for name in names:
-        assert torch.equal(cache1[name], cache2[name])
+        assert torch.equal(left[name], right[name])
 
 
-def test_cached_result_matches_direct_run(model, tmp_path):
-    wrapped = CachedModel(model, str(tmp_path))
-    tokens = model.to_tokens("The capital of France is")
-    names = ["blocks.5.hook_resid_post"]
+# --------------------------------------------------------------------------------------------------
+# The call itself
+# --------------------------------------------------------------------------------------------------
+def test_the_first_call_returns_what_the_unwrapped_model_returns(wrapped, tmp_path):
+    tokens = tokens_of(wrapped)
 
-    direct_logits, direct_cache = model.run_with_cache(tokens, names_filter=names)
-    wrapped.run_with_cache(tokens, names_filter=names)  # populate the cache
-    cached_logits, cached_cache = wrapped.run_with_cache(tokens, names_filter=names)  # read from disk
+    logits, cache = wrapped.run_with_cache(tokens, names_filter=NAMES)
+    direct_logits, direct_cache = wrapped._model.run_with_cache(tokens, names_filter=NAMES)
 
-    assert torch.equal(direct_logits, cached_logits)
-    assert torch.equal(direct_cache[names[0]], cached_cache[names[0]])
-
-
-def test_unfiltered_run_is_cached(model, tmp_path, monkeypatch):
-    calls = _count_forward_passes(model, monkeypatch)
-    wrapped = CachedModel(model, str(tmp_path))
-    tokens = model.to_tokens(PROMPT)
-
-    logits1, cache1 = wrapped.run_with_cache(tokens)  # circuit-style, no names_filter
-    logits2, cache2 = wrapped.run_with_cache(tokens)
-    assert calls["n"] == 1
-    assert set(cache1.keys()) == set(cache2.keys())
-    assert torch.equal(logits1, logits2)
-
-
-def test_pass_through_without_cache_dir(model):
-    wrapped = CachedModel(model, cache_dir=None)
-    tokens = model.to_tokens("Hello world")
-    names = ["blocks.0.hook_resid_post"]
-
-    logits, cache = wrapped.run_with_cache(tokens, names_filter=names)
-    direct_logits, direct_cache = model.run_with_cache(tokens, names_filter=names)
     assert torch.equal(logits, direct_logits)
-    assert torch.equal(cache[names[0]], direct_cache[names[0]])
+    assert set(cache.keys()) == set(NAMES)
+    assert_same_cache(cache, direct_cache)
 
 
-def test_forwards_model_attributes(model):
+def test_the_first_call_writes_one_entry_under_the_models_own_directory(wrapped, tmp_path):
+    wrapped.run_with_cache(tokens_of(wrapped), names_filter=NAMES)
+
+    (entry,) = cache_files(tmp_path)
+    assert entry.parent.name == wrapped.cfg.model_name  # "custom" for a model built from a config
+    assert list(tmp_path.rglob("*.tmp*")) == []  # the write is atomic, nothing half-written is left
+
+
+def test_a_second_call_is_served_from_disk(wrapped, tmp_path):
+    tokens = tokens_of(wrapped)
+    logits, cache = wrapped.run_with_cache(tokens, names_filter=NAMES)
+
+    bump_weights(wrapped._model)
+    cached_logits, cached_cache = wrapped.run_with_cache(tokens, names_filter=NAMES)
+    recomputed_logits, _ = CachedModel(wrapped._model, cache_dir=None).run_with_cache(tokens, names_filter=NAMES)
+
+    # The stored activations answer the second call, and nothing new is written...
+    assert torch.equal(cached_logits, logits)
+    assert_same_cache(cached_cache, cache)
+    assert len(cache_files(tmp_path)) == 1
+    # ...while a call that recomputes them follows the changed weights.
+    assert not torch.equal(recomputed_logits, logits)
+
+
+# --------------------------------------------------------------------------------------------------
+# Which calls share an entry
+# --------------------------------------------------------------------------------------------------
+def test_the_order_of_the_names_filter_does_not_matter(wrapped, tmp_path):
+    tokens = tokens_of(wrapped)
+
+    _, first = wrapped.run_with_cache(tokens, names_filter=list(reversed(NAMES)))
+    _, second = wrapped.run_with_cache(tokens, names_filter=NAMES)
+
+    assert len(cache_files(tmp_path)) == 1
+    assert_same_cache(first, second)
+
+
+def test_a_single_name_is_the_same_request_as_a_one_element_filter(wrapped, tmp_path):
+    tokens = tokens_of(wrapped)
+
+    _, from_string = wrapped.run_with_cache(tokens, names_filter=NAMES[0])
+    _, from_list = wrapped.run_with_cache(tokens, names_filter=[NAMES[0]])
+
+    assert len(cache_files(tmp_path)) == 1
+    assert set(from_string.keys()) == set(from_list.keys()) == {NAMES[0]}
+
+
+def test_a_subset_of_the_names_is_its_own_entry(wrapped, tmp_path):
+    tokens = tokens_of(wrapped)
+
+    wrapped.run_with_cache(tokens, names_filter=NAMES[:1])
+    wrapped.run_with_cache(tokens, names_filter=NAMES)
+
+    assert len(cache_files(tmp_path)) == 2
+
+
+def test_an_unfiltered_call_caches_every_activation(wrapped, tmp_path):
+    tokens = tokens_of(wrapped)
+    _, direct_cache = wrapped._model.run_with_cache(tokens)
+
+    logits, cache = wrapped.run_with_cache(tokens)
+    assert set(cache.keys()) == set(direct_cache.keys())
+    assert len(cache_files(tmp_path)) == 1
+
+    bump_weights(wrapped._model)
+    cached_logits, cached_cache = wrapped.run_with_cache(tokens)
+    assert torch.equal(cached_logits, logits)
+    assert_same_cache(cached_cache, cache, names=sorted(cache.keys()))
+    assert len(cache_files(tmp_path)) == 1
+
+
+def test_a_prompt_the_model_tokenizes_itself_is_keyed_as_the_string_it_was_given(wrapped, tmp_path):
+    logits, cache = wrapped.run_with_cache(PROMPT, names_filter=NAMES)
+
+    bump_weights(wrapped._model)
+    cached_logits, cached_cache = wrapped.run_with_cache(PROMPT, names_filter=NAMES)
+    assert torch.equal(cached_logits, logits)
+    assert_same_cache(cached_cache, cache)
+    assert len(cache_files(tmp_path)) == 1
+
+
+def test_a_prompt_and_its_tokens_are_separate_entries(wrapped, tmp_path):
+    # The same forward pass either way, but the key holds the input as it was handed over.
+    from_prompt, _ = wrapped.run_with_cache(PROMPT, names_filter=NAMES)
+    from_tokens, _ = wrapped.run_with_cache(tokens_of(wrapped), names_filter=NAMES)
+
+    assert torch.equal(from_prompt, from_tokens)
+    assert len(cache_files(tmp_path)) == 2
+
+
+def test_an_input_numpy_cannot_hold_is_keyed_by_its_raw_bytes(tmp_path):
+    # A bfloat16 tensor has no NumPy equivalent, so the key reads its bytes through an integer view of
+    # the same width. (Only the two-byte side is reachable — no transformer_lens model runs in float8.)
+    model = build_tiny_model(dtype=torch.bfloat16)
+    wrapped = CachedModel(model, str(tmp_path))
+    residual = model.embed(tokens_of(model))
+    assert residual.dtype is torch.bfloat16
+
+    logits, cache = wrapped.run_with_cache(residual, start_at_layer=0, names_filter=NAMES)
+
+    bump_weights(model)
+    cached_logits, cached_cache = wrapped.run_with_cache(residual, start_at_layer=0, names_filter=NAMES)
+    assert torch.equal(cached_logits, logits)
+    assert_same_cache(cached_cache, cache)
+    assert len(cache_files(tmp_path)) == 1
+
+    # A residual differing in a single value is its own entry: the bytes have to be read, not summarised.
+    nudged = residual.clone()
+    nudged[0, -1] += 1
+    other_logits, _ = wrapped.run_with_cache(nudged, start_at_layer=0, names_filter=NAMES)
+    assert len(cache_files(tmp_path)) == 2
+    assert not torch.equal(other_logits, cached_logits)
+
+
+def test_different_tokens_are_different_entries(wrapped, tmp_path):
+    first, _ = wrapped.run_with_cache(tokens_of(wrapped, PROMPT), names_filter=NAMES)
+    second, _ = wrapped.run_with_cache(tokens_of(wrapped, OTHER_PROMPT), names_filter=NAMES)
+
+    assert len(cache_files(tmp_path)) == 2
+    assert not torch.equal(first, second)
+
+
+def test_two_models_are_kept_apart_by_name(tmp_path):
+    # Same shape, same prompt, same activations — only the model differs, and its name becomes the
+    # directory (with anything a path cannot carry replaced).
+    for name in ("org/tiny-a", "org/tiny-b"):
+        model = build_tiny_model(model_name=name)
+        CachedModel(model, str(tmp_path)).run_with_cache(tokens_of(model), names_filter=NAMES)
+
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["org_tiny-a", "org_tiny-b"]
+    assert len(cache_files(tmp_path)) == 2
+
+
+def test_removing_the_batch_dimension_is_its_own_entry(wrapped, tmp_path):
+    tokens = tokens_of(wrapped)
+    wrapped.run_with_cache(tokens, names_filter=NAMES)
+
+    _, cache = wrapped.run_with_cache(tokens, names_filter=NAMES, remove_batch_dim=True)
+    _, from_disk = wrapped.run_with_cache(tokens, names_filter=NAMES, remove_batch_dim=True)
+
+    assert len(cache_files(tmp_path)) == 2
+    for activations in (cache, from_disk):
+        assert activations.has_batch_dim is False
+        assert activations[NAMES[0]].shape == (tokens.shape[1], wrapped.cfg.d_model)
+    assert_same_cache(from_disk, cache)
+
+
+def test_a_call_that_asks_for_no_logits_round_trips_without_them(wrapped, tmp_path):
+    tokens = tokens_of(wrapped)
+    wrapped.run_with_cache(tokens, names_filter=NAMES)
+
+    logits, cache = wrapped.run_with_cache(tokens, names_filter=NAMES, return_type=None)
+    cached_logits, cached_cache = wrapped.run_with_cache(tokens, names_filter=NAMES, return_type=None)
+
+    assert len(cache_files(tmp_path)) == 2  # the logits are part of what an entry stores
+    assert logits is None and cached_logits is None
+    assert_same_cache(cached_cache, cache)
+
+
+def test_a_tensor_valued_model_argument_is_part_of_the_key(wrapped, tmp_path):
+    # An attention mask is large enough that ``repr`` would truncate it to the same text either way.
+    tokens = tokens_of(wrapped)
+    full = torch.ones_like(tokens)
+    without_last = full.clone()
+    without_last[0, -1] = 0
+
+    attended, _ = wrapped.run_with_cache(tokens, names_filter=NAMES, attention_mask=full)
+    masked, _ = wrapped.run_with_cache(tokens, names_filter=NAMES, attention_mask=without_last)
+
+    assert len(cache_files(tmp_path)) == 2
+    assert not torch.equal(attended, masked)
+
+
+# --------------------------------------------------------------------------------------------------
+# Requests that fall through uncached
+# --------------------------------------------------------------------------------------------------
+def test_a_callable_names_filter_is_never_cached(wrapped, tmp_path):
+    # A function cannot be keyed, so the call goes straight to the model.
+    tokens = tokens_of(wrapped)
+
+    _, cache = wrapped.run_with_cache(tokens, names_filter=lambda name: name.endswith("hook_resid_post"))
+
+    assert set(cache.keys()) == {f"blocks.{layer}.hook_resid_post" for layer in range(wrapped.cfg.n_layers)}
+    assert cache_files(tmp_path) == []
+
+
+def test_a_backward_cache_is_never_cached(wrapped, tmp_path):
+    # The gradients come from a backward pass this wrapper does not persist.
+    tokens = tokens_of(wrapped)
+
+    loss, cache = wrapped.run_with_cache(tokens, names_filter=NAMES, incl_bwd=True, return_type="loss")
+
+    assert loss.ndim == 0
+    assert set(cache.keys()) == set(NAMES) | {f"{name}_grad" for name in NAMES}
+    assert cache_files(tmp_path) == []
+
+
+# --------------------------------------------------------------------------------------------------
+# The wrapper is otherwise the model
+# --------------------------------------------------------------------------------------------------
+def test_without_a_cache_dir_every_call_recomputes(tmp_path):
+    model = build_tiny_model()
     wrapped = CachedModel(model, cache_dir=None)
+    tokens = tokens_of(model)
+
+    logits, cache = wrapped.run_with_cache(tokens, names_filter=NAMES)
+    direct_logits, direct_cache = model.run_with_cache(tokens, names_filter=NAMES)
+    assert torch.equal(logits, direct_logits)
+    assert_same_cache(cache, direct_cache)
+
+    bump_weights(model)
+    recomputed, _ = wrapped.run_with_cache(tokens, names_filter=NAMES)
+    assert not torch.equal(recomputed, logits)
+    assert cache_files(tmp_path) == []
+
+
+def test_every_other_attribute_is_the_models_own(model, tmp_path):
+    wrapped = CachedModel(model, str(tmp_path))
+
     assert wrapped.cfg is model.cfg
     assert wrapped.W_U is model.W_U
     assert callable(wrapped.run_with_hooks)
-    assert torch.equal(wrapped.to_tokens("Hello world"), model.to_tokens("Hello world"))
+    assert torch.equal(wrapped.to_tokens(PROMPT), model.to_tokens(PROMPT))
+
+    with pytest.raises(AttributeError):
+        _ = wrapped.no_such_attribute
 
 
-# --- Works transparently for a real operation -------------------------------------------------
+def test_a_wrapper_whose_init_never_ran_reports_the_missing_field(model):
+    # Without the guard the forwarding would look up the model to find the model: an endless recursion
+    # (a RecursionError, which is not what this expects) instead of a plain missing attribute.
+    bare = CachedModel.__new__(CachedModel)
 
-
-def _lens_config() -> LensConfig:
-    return LensConfig(
-        type=LensType.LOGIT_LENS,
-        source=ModelLocatorConfig(
-            activation=ModelLayerLocation.RESIDUAL_POST,
-            location=[ModelLocation.LAYER, ModelLocation.POSITION],
-        ),
-    )
-
-
-def test_lens_operation_reuses_cached_activations(model, tmp_path, monkeypatch):
-    calls = _count_forward_passes(model, monkeypatch)
-    wrapped = CachedModel(model, str(tmp_path))
-
-    Lens(wrapped).apply(LensInput(_lens_config(), PROMPT), return_collector=True, verbose=False)
-    assert calls["n"] == 1
-    assert list(tmp_path.rglob("*.pt"))
-
-    # A second run over the same prompt/model reads its activations from disk.
-    Lens(wrapped).apply(LensInput(_lens_config(), PROMPT), return_collector=True, verbose=False)
-    assert calls["n"] == 1
+    with pytest.raises(AttributeError, match="_model"):
+        _ = bare.cfg

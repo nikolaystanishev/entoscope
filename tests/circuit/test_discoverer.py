@@ -76,6 +76,30 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path):
     assert saved_config["threshold"] == 0.05
 
 
+def test_a_prepared_input_moves_to_a_device(model: HookedTransformer):
+    circuit_input = CircuitInput(_config(), PROMPTS).prepare(model)
+
+    moved = circuit_input.to("cpu")
+
+    assert moved is circuit_input
+    assert [tokens.device.type for tokens in moved.tokens] == ["cpu"] * len(PROMPTS)
+    assert [tokens.shape for tokens in moved.tokens] == [model.to_tokens(prompt).shape for prompt in PROMPTS]
+
+
+def test_a_run_without_a_collector_still_writes_its_artifacts(model: HookedTransformer, tmp_path: Path):
+    # Not asking for the collector is the default, and how the example scripts run an operation.
+    save_dir = tmp_path / "no_collector"
+    returned = CircuitDiscoverer(model, collector_class=CircuitCollector).apply(
+        CircuitInput(_config(), PROMPTS[:1]), save_dir=str(save_dir), verbose=False
+    )
+
+    # Nothing comes back, but the run did all of its work and left it on disk.
+    assert returned is None
+    assert (save_dir / "graph_0.graphml").exists()
+    assert (save_dir / "routes_0.graphml").exists()
+    assert json.loads((save_dir / "prompts.json").read_text())[0]["prompt"] == PROMPTS[0]
+
+
 def test_base_collector_skips_html(model: HookedTransformer, tmp_path: Path):
     # The base collector persists graph data only; visualization is opt-in via the subclass.
     save_dir = tmp_path / "no_viz"

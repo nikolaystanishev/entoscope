@@ -4,51 +4,51 @@ from intex.dataset.config import DatasetConfig
 from intex.dataset.dataset import AbstractDataset, Row
 from intex.dataset.factory import DatasetFactory
 
-from .conftest import ListDataset
+from .conftest import ROWS, JsonlDataset, dataset_config
 
 
-def test_register_returns_the_class(list_dataset_class):
-    assert list_dataset_class is ListDataset
+def test_a_registered_type_resolves_to_its_implementation(jsonl_dataset_class, prompts_file):
+    assert jsonl_dataset_class is JsonlDataset
+    assert DatasetFactory.get("jsonl") is JsonlDataset
+    assert DatasetFactory.registered() == ["jsonl"]
 
-
-def test_get_resolves_registered_type(list_dataset_class):
-    assert DatasetFactory.get("list") is ListDataset
-    assert DatasetFactory.registered() == ["list"]
-
-
-def test_create_passes_the_config_through(list_dataset_class):
-    config = DatasetConfig(type="list", rows=[{"prompt": "Paris is located in"}])
+    config = dataset_config(prompts_file())
     dataset = DatasetFactory.create(config)
-    assert isinstance(dataset, ListDataset)
+    assert isinstance(dataset, JsonlDataset)
     assert dataset.config is config
+    assert dataset.prepare().rows == ROWS
 
 
-def test_unknown_type_lists_registered_types(list_dataset_class):
-    with pytest.raises(ValueError, match=r"Unknown dataset type: csv\. Registered types: \['list'\]"):
+def test_an_unknown_type_lists_what_is_registered(jsonl_dataset_class):
+    with pytest.raises(ValueError, match=r"Unknown dataset type: csv\. Registered types: \['jsonl'\]"):
         DatasetFactory.get("csv")
 
     with pytest.raises(ValueError, match="Unknown dataset type: csv"):
         DatasetFactory.create(DatasetConfig(type="csv"))
 
 
-def test_duplicate_name_with_another_class_raises(list_dataset_class):
+def test_a_name_cannot_be_taken_over_by_another_class(jsonl_dataset_class):
     class OtherDataset(AbstractDataset):
         def load(self) -> list[Row]:
             return []
 
-    with pytest.raises(ValueError, match="Dataset type 'list' is already registered to ListDataset"):
-        DatasetFactory.register("list")(OtherDataset)
+    with pytest.raises(ValueError, match="Dataset type 'jsonl' is already registered to JsonlDataset"):
+        DatasetFactory.register("jsonl")(OtherDataset)
 
-    assert DatasetFactory.get("list") is ListDataset
-
-
-def test_registering_the_same_class_again_is_a_noop(list_dataset_class):
-    DatasetFactory.register("list")(ListDataset)
-    assert DatasetFactory.get("list") is ListDataset
-    assert DatasetFactory.registered() == ["list"]
+    assert DatasetFactory.get("jsonl") is JsonlDataset
 
 
-def test_the_same_class_can_be_registered_under_several_names(list_dataset_class):
-    DatasetFactory.register("list_copy")(ListDataset)
-    assert DatasetFactory.registered() == ["list", "list_copy"]
-    assert isinstance(DatasetFactory.create(DatasetConfig(type="list_copy")), ListDataset)
+def test_registering_the_same_class_again_changes_nothing(jsonl_dataset_class):
+    DatasetFactory.register("jsonl")(JsonlDataset)
+
+    assert DatasetFactory.get("jsonl") is JsonlDataset
+    assert DatasetFactory.registered() == ["jsonl"]
+
+
+def test_one_class_can_answer_to_several_names(jsonl_dataset_class, prompts_file):
+    DatasetFactory.register("lines")(JsonlDataset)
+
+    assert DatasetFactory.registered() == ["jsonl", "lines"]
+    dataset = DatasetFactory.create(DatasetConfig(type="lines", path=prompts_file()))
+    assert isinstance(dataset, JsonlDataset)
+    assert dataset.prepare().rows == ROWS
