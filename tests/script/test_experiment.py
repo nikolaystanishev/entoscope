@@ -101,7 +101,7 @@ def test_the_help_text_describes_every_field(tmp_path):
     assert "Example experiment script" in help_text  # the module-level DESCRIPTION
     assert "run tags" in help_text  # metadata help
     assert "--config-path" in help_text  # an underscore becomes a dash
-    assert "run name (default" not in help_text  # a required field has no default to show
+    assert "data config file path (default" not in help_text  # a required field has no default to show
     assert "(default: 10)" in help_text  # steps, which has no metadata help
     assert "(default: fast)" in help_text  # mode
     assert help_text.count("(default: False)") == 1  # BooleanOptionalAction must not double it

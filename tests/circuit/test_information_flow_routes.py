@@ -77,8 +77,8 @@ def test_the_routes_are_a_pruned_subgraph_that_reaches_the_prediction(model, cir
 
     assert circuit.routes.number_of_edges() > 0
     assert output_node in circuit.routes
-    full_pairs = set(circuit.graph.edges())
-    assert all((u, v) in full_pairs for u, v in circuit.routes.edges())
+    full_edges = set(circuit.graph.edges(keys=True))
+    assert all(edge in full_edges for edge in circuit.routes.edges(keys=True))
     inputs = [node for node, attributes in circuit.routes.nodes(data=True) if attributes["kind"] == "input"]
     assert any(nx.has_path(circuit.routes, source, output_node) for source in inputs)
 
@@ -195,9 +195,11 @@ def test_a_yaml_config_carries_its_explicit_values_into_the_run(model, config_fr
     config = config_from_yaml(CircuitConfig, "my_circuit", raw)
 
     assert config.resolved_path_threshold() == 0.2
-    assert discover(model, config=config)[0].graph.number_of_edges() == (
-        discover(model, config=circuit_config(threshold=0.1))[0].graph.number_of_edges()
-    )
+    loaded = discover(model, config=config)[0]
+    without_path_pruning = discover(model, config=circuit_config(threshold=0.1))[0]
+
+    assert loaded.graph.number_of_edges() == without_path_pruning.graph.number_of_edges()
+    assert loaded.routes.number_of_edges() < without_path_pruning.routes.number_of_edges()
 
 
 def test_a_whole_number_threshold_is_taken_as_it_is_written(model, config_from_yaml):
