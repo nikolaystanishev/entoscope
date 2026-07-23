@@ -108,6 +108,47 @@ graph-data-only runs (no HTML), pass the base collector:
 Configs can also be loaded from YAML via `intex.operation.config.ConfigFactory[CircuitConfig]`, and
 the operation can be run from an `@intex.script.experiment.experiment` script.
 
+## Datasets
+
+An extension point for declaring *where* prompts come from, following the same `Config → Factory`
+shape as the operations. A dataset yields plain `dict` rows; `intex` ships no concrete
+implementation — you register your own and the factory resolves it by the config's `type`:
+
+```python
+from intex.dataset.config import DatasetConfig
+from intex.dataset.dataset import AbstractDataset, Row
+from intex.dataset.factory import DatasetFactory
+from intex.operation.config import ConfigFactory
+
+
+@DatasetFactory.register("jsonl")
+class JsonlDataset(AbstractDataset):
+    def load(self) -> list[Row]:
+        with open(self.config.path) as f:  # 'path' is a dynamic config property
+            return [json.loads(line) for line in f][: self.config.get("limit")]
+
+
+config = ConfigFactory[DatasetConfig]("example_config.yaml").create("my_data")
+dataset = DatasetFactory.create(config).prepare()
+print(len(dataset), dataset[0])
+```
+
+```yaml
+my_data:
+  type: jsonl
+  path: data/prompts.jsonl
+  limit: 10
+```
+
+`DatasetConfig` declares only `type`; every other key in the entry is carried as a dynamic property,
+readable as `config.path` or `config.get("limit", 100)` — so a dataset defines its own vocabulary
+without `intex` knowing about it. Subclass `DatasetConfig` with real dataclass fields when you want
+those settings typed and validated instead; unknown keys still land in `properties`.
+
+`load` is called once, lazily, by `prepare()`; `len`, iteration and indexing read the cached rows.
+Operations do not consume datasets yet — `LensInput`, `ProbeInput`, `CircuitInput` and
+`PatchingInput` still take prompts directly.
+
 ## Attribution & licensing
 
 The Information Flow Routes method reuses contribution-graph math from the
