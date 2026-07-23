@@ -24,6 +24,38 @@ SOURCE_PROMPT = "The capital of France is"
 TARGET_PROMPT = "The capital of Spain is"
 
 
+def _run(model: HookedTransformer, config: PatchingConfig) -> torch.Tensor:
+    collector = Patcher(model).apply(
+        PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
+    )
+    assert collector is not None
+    return collector.result
+
+
+def _generations(model: HookedTransformer) -> tuple[int, int]:
+    """The tokens the two prompts predict — the pair every logit-diff metric compares."""
+    with torch.no_grad():
+        return int(model(SOURCE_PROMPT)[0, -1].argmax()), int(model(TARGET_PROMPT)[0, -1].argmax())
+
+
+def _source_activation(model: HookedTransformer, name: str) -> torch.Tensor:
+    with torch.no_grad():
+        _, cache = model.run_with_cache(model.to_tokens(SOURCE_PROMPT), names_filter=[name])
+    return cache[name]
+
+
+def _expected_logit_diff(model: HookedTransformer, fwd_hooks: list) -> torch.Tensor:
+    """The metric a patched run must produce, from running the same patch by hand.
+
+    The hooks say what the patch writes and where; the logit diff is then read straight off the
+    patched run, so nothing about the expected value is frozen into the test.
+    """
+    source_token, target_token = _generations(model)
+    with torch.no_grad():
+        patched = model.run_with_hooks(model.to_tokens(TARGET_PROMPT), fwd_hooks=fwd_hooks)
+    return patched[0, -1, source_token] - patched[0, -1, target_token]
+
+
 def _last_layer_resid_element() -> PatchingElementConfig:
     return PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
@@ -77,21 +109,17 @@ def _resid_value_scale_config(scale: float, layer: int) -> PatchingConfig:
     )
     return PatchingConfig(
         config_id="resid_value_scale",
-        metric=PatchingMetric.KL_DIFF,
+        metric=PatchingMetric.LOGIT_DIFF,
         patch=[SinglePatchingConfig(source=source, target=target)],
     )
 
 
-def _mlp_mhsa_pattern_patch_config(layer: int, head: int) -> PatchingConfig:
-    """Patch three components of one layer at once, each replaced from the source run:
+def _mlp_mhsa_pattern_elements(layer: int, head: int) -> list[PatchingElementConfig]:
+    """Three components of one layer, each replaced from the source run:
 
     - the MLP post-activation neurons (``mlp.post``),
     - the multi-head self-attention queries (``attn.q``), and
     - a single attention head's pattern (``attn.pattern`` filtered to ``head``).
-
-    The three patches live in the same config's ``patch`` list, so the patcher applies all of their hooks
-    together on a single forward pass; the resulting (single-element) metric reflects their combined
-    effect rather than any one in isolation.
     """
     mlp = PatchingElementConfig(
         activation=ModelLayerLocation.MLP_POST,
@@ -111,14 +139,15 @@ def _mlp_mhsa_pattern_patch_config(layer: int, head: int) -> PatchingConfig:
         filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer, ModelLocation.HEAD: head}]),
         type=PatchingType.REPLACE,
     )
+    return [mlp, mhsa, pattern]
+
+
+def _patch_config(*elements: PatchingElementConfig, config_id: str = "patch") -> PatchingConfig:
+    """Patches sharing one config are applied together, on a single forward pass."""
     return PatchingConfig(
-        config_id="mlp_mhsa_pattern_patch",
+        config_id=config_id,
         metric=PatchingMetric.LOGIT_DIFF,
-        patch=[
-            SinglePatchingConfig(source=mlp, target=mlp),
-            SinglePatchingConfig(source=mhsa, target=mhsa),
-            SinglePatchingConfig(source=pattern, target=pattern),
-        ],
+        patch=[SinglePatchingConfig(source=element, target=element) for element in elements],
     )
 
 
@@ -168,8 +197,10 @@ def test_zero_ablation_patching(model: HookedTransformer) -> None:
     result = collector.result
     assert result.shape == (1,)
 
-    # atol absorbs cross-platform float32 drift in the matmuls (arm64/x86) while staying tight.
-    assert torch.allclose(result.squeeze(), torch.tensor(-2.7828707695007324), atol=1e-2)
+    # The same ablation done by hand: the last layer's residual is zeroed on the target run.
+    name = f"blocks.{model.cfg.n_layers - 1}.hook_resid_post"
+    expected = _expected_logit_diff(model, [(name, lambda activation, hook: torch.zeros_like(activation))])
+    assert torch.allclose(result.squeeze(), expected, atol=1e-5)
 
 
 # Intermediate layer whose residual stream is scaled; see ``_resid_value_scale_config`` for why it is
@@ -195,15 +226,18 @@ def _run_value_scale(model: HookedTransformer, scale: float) -> torch.Tensor:
 def test_value_scale_patching(model: HookedTransformer) -> None:
     torch.manual_seed(42)
 
-    # Scaling the source residual by 2x before writing it into the target changes the logit diff,
-    # and is distinct from the unscaled (1x) patch below -- proving the scale actually takes effect.
     scaled = _run_value_scale(model, scale=2.0)
     unscaled = _run_value_scale(model, scale=1.0)
 
-    # atol absorbs cross-platform float32 drift in the matmuls (~1e-3 between arm64/x86); it stays far
-    # tighter than the ~1.07 gap that distinguishes the scaled run from the unscaled one below.
-    assert torch.allclose(scaled, torch.tensor(-24.359235763549805), atol=1e-2)
-    assert torch.allclose(unscaled, torch.tensor(-25.428979873657227), atol=1e-2)
+    # Each run is checked against the same scaling done by hand: the source's residual, multiplied,
+    # written over the target's at that layer.
+    name = f"blocks.{_VALUE_SCALE_LAYER}.hook_resid_post"
+    source_residual = _source_activation(model, name)
+    for result, scale in ((scaled, 2.0), (unscaled, 1.0)):
+        expected = _expected_logit_diff(model, [(name, lambda activation, hook, s=scale: s * source_residual)])
+        assert torch.allclose(result, expected, atol=1e-5)
+
+    # Scaling by 2x is not the same as writing the residual through unchanged, so the scale takes effect.
     assert not torch.allclose(scaled, unscaled)
 
 
@@ -212,22 +246,43 @@ _MULTI_PATCH_LAYER = 5
 _MULTI_PATCH_HEAD = 7
 
 
+def _multi_patch_hooks(model: HookedTransformer) -> list:
+    """The three replacements done by hand, from the source run's own activations."""
+    layer, head = _MULTI_PATCH_LAYER, _MULTI_PATCH_HEAD
+    post, queries, pattern = (
+        f"blocks.{layer}.mlp.hook_post",
+        f"blocks.{layer}.attn.hook_q",
+        f"blocks.{layer}.attn.hook_pattern",
+    )
+    # Read from the source run up front: a forward pass inside a hook would run the hooks again.
+    source_post, source_queries, source_pattern = (_source_activation(model, name) for name in (post, queries, pattern))
+
+    def patch_one_head(activation: torch.Tensor, hook) -> torch.Tensor:
+        patched = activation.clone()
+        patched[:, head] = source_pattern[:, head]
+        return patched
+
+    return [
+        (post, lambda activation, hook: source_post),
+        (queries, lambda activation, hook: source_queries),
+        (pattern, patch_one_head),
+    ]
+
+
 def test_multi_config_patching_mlp_mhsa_and_pattern(model: HookedTransformer) -> None:
     torch.manual_seed(42)
 
     # Replacing full activations (and a head's pattern) from source requires matching sequence lengths.
     assert model.to_tokens(SOURCE_PROMPT).shape == model.to_tokens(TARGET_PROMPT).shape
 
-    patching_input = PatchingInput(
-        _mlp_mhsa_pattern_patch_config(_MULTI_PATCH_LAYER, _MULTI_PATCH_HEAD), SOURCE_PROMPT, TARGET_PROMPT
-    )
+    elements = _mlp_mhsa_pattern_elements(_MULTI_PATCH_LAYER, _MULTI_PATCH_HEAD)
+    patching_input = PatchingInput(_patch_config(*elements), SOURCE_PROMPT, TARGET_PROMPT)
 
     collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
 
     # The config carries three patches; each becomes its own index, targeting -- in order -- the MLP
     # post-activation, the MHSA queries, and the attention pattern.
-    indices = patching_input.index
-    assert [idx.target_config.activation for idx in indices] == [
+    assert [idx.target_config.activation for idx in patching_input.index] == [
         ModelLayerLocation.MLP_POST,
         ModelLayerLocation.ATTENTION_Q,
         ModelLayerLocation.ATTENTION_PATTERN,
@@ -239,12 +294,41 @@ def test_multi_config_patching_mlp_mhsa_and_pattern(model: HookedTransformer) ->
     result = collector.result
     assert result.shape == (1,)
 
-    # The exact logit diff produced by the three patches acting in combination. It differs from the
-    # logit diff of any single component patched on its own (mlp.post: -0.0165, attn.q: -0.1038,
-    # attn.pattern: -0.1061), confirming all three patches take effect simultaneously. The atol absorbs
-    # cross-platform float32 drift in the matmuls (~1e-3 arm64/x86) while staying well inside the
-    # ~0.008 gap to the nearest single-component value.
-    assert torch.allclose(result.squeeze(), torch.tensor(-0.008522987365722656), atol=2e-3)
+    # The three replacements done by hand, on one forward pass, give the same logit diff...
+    assert torch.allclose(result.squeeze(), _expected_logit_diff(model, _multi_patch_hooks(model)), atol=1e-5)
+
+    # ...and none of the three on its own does, so all of them are taking effect at once.
+    for element in elements:
+        alone = _run(model, _patch_config(element, config_id="single_patch"))
+        assert not torch.allclose(result.squeeze(), alone.squeeze(), atol=1e-3)
+
+
+def test_the_kl_metric_scores_the_patched_distribution(model: HookedTransformer) -> None:
+    # Position 0 is the prompts' shared prefix, so writing the source's activation there is a no-op:
+    # the patched run is the target run, which makes the expected divergence computable from two
+    # plain forward passes. Note what the metric compares — the source's distribution at every
+    # position against the target's at every position, then against the patched *last* position.
+    element = PatchingElementConfig(
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        coordinates=[{ModelLocation.LAYER: -1, ModelLocation.POSITION: 0}],
+        type=PatchingType.REPLACE,
+    )
+    config = PatchingConfig(
+        config_id="kl_no_op",
+        metric=PatchingMetric.KL_DIFF,
+        patch=[SinglePatchingConfig(source=element, target=element)],
+    )
+
+    result = _run(model, config)
+
+    with torch.no_grad():
+        source_probabilities = model(SOURCE_PROMPT).softmax(dim=-1)
+        target_logits = model(TARGET_PROMPT)
+    divergence = torch.nn.functional.kl_div
+    expected = divergence(
+        source_probabilities.log(), target_logits.softmax(dim=-1), reduction="batchmean"
+    ) - divergence(source_probabilities.log(), target_logits[0, -1].softmax(dim=-1), reduction="batchmean")
+    assert torch.allclose(result.squeeze(), expected, atol=1e-4)
 
 
 def _explicit_element(
@@ -447,14 +531,6 @@ def _gaussian_noise_config() -> PatchingConfig:
     )
 
 
-def _run(model: HookedTransformer, config: PatchingConfig) -> torch.Tensor:
-    collector = Patcher(model).apply(
-        PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
-    )
-    assert collector is not None
-    return collector.result
-
-
 def test_gaussian_noise_patching(model: HookedTransformer) -> None:
     torch.manual_seed(42)
 
@@ -617,11 +693,8 @@ def test_the_omitted_keys_of_an_element_fall_back_to_their_defaults(model: Hooke
     assert (source.filter, source.group, source.incremental) == (Filter(), Group(), Incremental())
     assert source.value == 0.0
 
-    collector = Patcher(model).apply(
-        PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
-    )
-    assert collector is not None
-    assert torch.allclose(collector.result.squeeze(), torch.tensor(-2.7828707695007324), atol=1e-2)
+    # Those defaults are the zero ablation built in code, so the two runs agree.
+    assert torch.equal(_run(model, config), _run(model, _last_layer_resid_zero_ablation_config()))
 
 
 def test_an_exclusion_term_is_deserialized_into_its_own_filter(model: HookedTransformer, config_from_yaml) -> None:
