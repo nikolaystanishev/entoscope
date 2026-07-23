@@ -196,7 +196,7 @@ def test_a_yaml_config_carries_its_explicit_values_into_the_run(model, config_fr
 
     assert config.resolved_path_threshold() == 0.2
     loaded = discover(model, config=config)[0]
-    without_path_pruning = discover(model, config=circuit_config(threshold=0.1))[0]
+    without_path_pruning = discover(model, config=circuit_config(threshold=0.1, prediction_positions=[-1, 0]))[0]
 
     assert loaded.graph.number_of_edges() == without_path_pruning.graph.number_of_edges()
     assert loaded.routes.number_of_edges() < without_path_pruning.routes.number_of_edges()
