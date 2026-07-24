@@ -19,11 +19,13 @@ def coordinates_config(
     lens_type: LensType = LensType.LOGIT_LENS,
     top_k: int = 1,
     projection: ProjectionSpace | None = None,
+    scale: float = 1.0,
 ) -> LensConfig:
     return LensConfig(
         type=lens_type,
         top_k=top_k,
         projection=projection,
+        scale=scale,
         source=ModelLocatorConfig(coordinates=list(coordinates)),
     )
 

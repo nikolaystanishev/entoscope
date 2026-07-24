@@ -60,6 +60,11 @@ tie them — including GPT-2, once `transformer_lens` has folded LayerNorm in an
 unembedding. The collector's `probability_*` columns are a softmax over the projected weight
 vector: a ranking score over the vocabulary, not a probability the model ever produces.
 
+`scale` multiplies the weight vector before projecting it (default `1.0`). A negative scale such as
+`-1.0` inverts the direction, surfacing the tokens a weight writes *against* rather than *toward*;
+the magnitude acts as a temperature on the `probability_*` ranking. It applies only to the
+parameter lens.
+
 Configs can also be loaded from YAML via `intex.operation.config.ConfigFactory[LensConfig]` (see
 `example_config.yaml`), and the operation can be run from an `@intex.script.experiment.experiment`
 script (see `example_lens_script.py`).
