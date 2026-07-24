@@ -44,9 +44,7 @@ def _parameter_config(top_k: int = 1, projection: ProjectionSpace | None = None,
     )
 
 
-def _weight_row(
-    model, coordinate: dict, projection: ProjectionSpace | None = None, scale: float = 1.0
-) -> pd.Series:
+def _weight_row(model, coordinate: dict, projection: ProjectionSpace | None = None, scale: float = 1.0) -> pd.Series:
     return single_row(
         model, coordinates_config(coordinate, lens_type=LensType.PARAMETER_LENS, projection=projection, scale=scale)
     )
