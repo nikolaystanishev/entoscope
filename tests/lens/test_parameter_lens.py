@@ -30,11 +30,12 @@ PARAMETER_LENS_YAML = {
 }
 
 
-def _parameter_config(top_k: int = 1, projection: ProjectionSpace | None = None) -> LensConfig:
+def _parameter_config(top_k: int = 1, projection: ProjectionSpace | None = None, scale: float = 1.0) -> LensConfig:
     return LensConfig(
         type=LensType.PARAMETER_LENS,
         top_k=top_k,
         projection=projection,
+        scale=scale,
         source=ModelLocatorConfig(
             activation=ModelLayerLocation.MLP_POST,
             location=[ModelLocation.LAYER, ModelLocation.NEURON],
@@ -43,8 +44,10 @@ def _parameter_config(top_k: int = 1, projection: ProjectionSpace | None = None)
     )
 
 
-def _weight_row(model, coordinate: dict, projection: ProjectionSpace | None = None) -> pd.Series:
-    return single_row(model, coordinates_config(coordinate, lens_type=LensType.PARAMETER_LENS, projection=projection))
+def _weight_row(model, coordinate: dict, projection: ProjectionSpace | None = None, scale: float = 1.0) -> pd.Series:
+    return single_row(
+        model, coordinates_config(coordinate, lens_type=LensType.PARAMETER_LENS, projection=projection, scale=scale)
+    )
 
 
 def _projected(model, weight: torch.Tensor, projection: ProjectionSpace | None = None) -> torch.Tensor:
@@ -114,6 +117,28 @@ def test_the_projection_space_switches_from_the_unembedding_to_the_embedding(mod
     # transformer_lens centers the unembedding and folds LayerNorm in, so the two spaces score the
     # vocabulary differently even though GPT-2 ties its embedding and unembedding.
     assert embedding["probability_0"] != unembedding["probability_0"]
+
+
+def test_a_negative_scale_flips_the_direction_the_weight_projects(model):
+    weight = model.blocks[LAYER].mlp.W_out[NEURON]
+    coordinate = {"activation": "mlp.post", "layer": LAYER, "neuron": NEURON}
+
+    row = _weight_row(model, coordinate, scale=-1.0)
+
+    # A negative scale inverts the direction, so the top token is the one the weight writes against.
+    assert_row_reads(model, row, _projected(model, -weight))
+    assert row["token_0"] != _weight_row(model, coordinate)["token_0"]
+
+
+def test_a_positive_scale_sharpens_probabilities_without_changing_the_top_token(model):
+    coordinate = {"activation": "mlp.post", "layer": LAYER, "neuron": NEURON}
+
+    unscaled = _weight_row(model, coordinate)
+    scaled = _weight_row(model, coordinate, scale=2.0)
+
+    # Scaling before the softmax acts as a temperature: same argmax, sharper distribution.
+    assert scaled["token_0"] == unscaled["token_0"]
+    assert scaled["probability_0"] > unscaled["probability_0"]
 
 
 # --------------------------------------------------------------------------------------------------
@@ -248,6 +273,13 @@ def test_a_projection_on_another_lens_type_raises(config_from_yaml):
 
     with pytest.raises(ValueError, match="'projection' is a parameter lens setting"):
         config_from_yaml(LensConfig, "projected", raw)
+
+
+def test_a_scale_on_another_lens_type_raises(config_from_yaml):
+    raw = {"type": "logit_lens", "scale": -1.0, "source": {"activation": "resid.post"}}
+
+    with pytest.raises(ValueError, match="'scale' is a parameter lens setting"):
+        config_from_yaml(LensConfig, "scaled", raw)
 
 
 def test_an_unknown_projection_space_raises(config_from_yaml):

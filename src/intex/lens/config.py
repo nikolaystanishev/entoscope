@@ -25,12 +25,15 @@ class LensConfig(AbstractConfig):
     source: ModelLocatorConfig
     translators: str | None = None
     projection: ProjectionSpace | None = None
+    scale: float = 1.0
 
     def __post_init__(self):
         if self.translators is not None and self.type is not LensType.TUNED_LENS:
             raise ValueError(f"'translators' is a tuned lens setting; it cannot be used with '{self.type.value}'")
         if self.projection is not None and self.type is not LensType.PARAMETER_LENS:
             raise ValueError(f"'projection' is a parameter lens setting; it cannot be used with '{self.type.value}'")
+        if self.scale != 1.0 and self.type is not LensType.PARAMETER_LENS:
+            raise ValueError(f"'scale' is a parameter lens setting; it cannot be used with '{self.type.value}'")
         if self.type is LensType.PARAMETER_LENS and (
             ModelLocation.POSITION in self.source.location
             or any(ModelLocation.POSITION in coordinate for coordinate in self.source.coordinates or [])

@@ -34,7 +34,7 @@ class AbstractParameterLensMethod(AbstractLensMethod):
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, " d_vocab"]:
         with torch.no_grad():
-            return weight @ self._projection()
+            return (self.config.scale * weight) @ self._projection()
 
     def _projection(self) -> Float[torch.Tensor, "d_model d_vocab"]:
         if (self.config.projection or ProjectionSpace.UNEMBEDDING) is ProjectionSpace.EMBEDDING:
