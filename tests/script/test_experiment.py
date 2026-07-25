@@ -384,6 +384,14 @@ class Config:
     steps: int = 1
 
 
+def test_the_wrapper_executes_without_config():
+    @experiment
+    def main():
+        return "pass"
+
+    assert main() == "pass"
+
+
 def test_the_wrapper_parses_the_argv_it_is_given():
     @experiment
     def main(config: Config):
@@ -442,7 +450,6 @@ def test_the_description_falls_back_to_the_docstring(capsys):
     ("source", "message"),
     [
         ("def main(config):\n    return config\n", "annotate its first parameter"),
-        ("def main():\n    return None\n", "annotate its first parameter"),
         ("def main(config: int):\n    return config\n", "not a dataclass"),
         ("def main(*, config: Config):\n    return config\n", "must accept a positional argument"),
         ("def main(config: Config, steps):\n    return config\n", "additional required parameters"),
