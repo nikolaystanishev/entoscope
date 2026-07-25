@@ -139,5 +139,7 @@ class ProbeInput(OperationInput):
             self._labels = self._labels.to(device)
         if self._features is not None:
             self._features = {output: features.to(device) for output, features in self._features.items()}
+        if self._token_tensors is not None:
+            self._token_tensors = [tokens.to(device) for tokens in self._token_tensors]
 
         return self
