@@ -16,6 +16,7 @@ from intex.probe.config import PoolingType, ProbeConfig, ProbeMetric
 from intex.probe.input import ProbeInput
 from intex.probe.prober import Prober
 
+from ..conftest import forbid_model_runs
 from .conftest import NEGATIVE, POSITIVE, assert_trained_alike, probe_config, probe_of, refit, run_probe
 
 NEURON = 373
@@ -251,3 +252,38 @@ def test_both_classes_are_required(model):
     for positive, negative in [(POSITIVE, []), ([], NEGATIVE)]:
         with pytest.raises(ValueError, match="positive and negative prompts"):
             Prober(model).apply(ProbeInput(probe_config(), positive, negative), verbose=False)
+
+
+# --------------------------------------------------------------------------------------------------
+# The plan a run would execute
+# --------------------------------------------------------------------------------------------------
+def test_a_plan_counts_one_probe_per_location_and_one_pass_per_example(model, monkeypatch, tmp_path):
+    save_dir = tmp_path / "planned"
+    probe_input = ProbeInput(probe_config(), POSITIVE, NEGATIVE)
+
+    forbid_model_runs(monkeypatch, model)
+    plan = Prober(model).plan(probe_input, save_dir=str(save_dir), verbose=False)
+
+    assert not save_dir.exists()
+    assert plan.steps == model.cfg.n_layers
+    # Features are collected a prompt at a time, so every example is its own cached pass.
+    assert plan.forward_passes == len(POSITIVE) + len(NEGATIVE)
+    assert [(label, prompt) for label, prompt, _ in plan.prompts] == [
+        *(("positive", prompt) for prompt in POSITIVE),
+        *(("negative", prompt) for prompt in NEGATIVE),
+    ]
+    assert plan.activations == sorted(f"blocks.{layer}.hook_resid_post" for layer in range(model.cfg.n_layers))
+
+
+def test_a_plan_describes_the_run_that_follows_it(model, tmp_path):
+    save_dir = tmp_path / "probe_run"
+    probe_input = ProbeInput(probe_config(), POSITIVE, NEGATIVE)
+
+    plan = Prober(model).plan(probe_input, save_dir=str(save_dir), verbose=False)
+    collector = Prober(model).apply(probe_input, save_dir=str(save_dir), return_collector=True, verbose=False)
+    assert collector is not None
+
+    assert len(collector.result) == plan.steps
+    assert len(collector.probes) == plan.steps
+    assert sorted(path.name for path in save_dir.iterdir()) == sorted(plan.outputs)
+    pd.testing.assert_frame_equal(plan.index[0], collector.operation_input.index.to_df())

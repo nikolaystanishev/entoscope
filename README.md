@@ -74,13 +74,13 @@ An index element needs a single layer — each weight lives in one block — whi
 location out sums all of them, exactly as grouped neurons and heads work in the logit lens.
 `position` is not a valid location:
 
-| location | weight | reading |
-| --- | --- | --- |
-| `mlp.pre` | column of `W_in` (`W_gate` on a gated MLP) | the key vector the neuron reads with |
-| `mlp.pre_linear` | column of `W_in` (gated MLPs only) | the key vector of the linear branch |
-| `mlp.post` | row of `W_out` | the value vector the neuron writes |
-| `attn.q` / `attn.k` / `attn.v` | column of `W_Q` / `W_K` / `W_V` | what the subhead reads |
-| `attn.z` | row of `W_O` | what the subhead writes |
+| location                       | weight                                     | reading                              |
+|--------------------------------|--------------------------------------------|--------------------------------------|
+| `mlp.pre`                      | column of `W_in` (`W_gate` on a gated MLP) | the key vector the neuron reads with |
+| `mlp.pre_linear`               | column of `W_in` (gated MLPs only)         | the key vector of the linear branch  |
+| `mlp.post`                     | row of `W_out`                             | the value vector the neuron writes   |
+| `attn.q` / `attn.k` / `attn.v` | column of `W_Q` / `W_K` / `W_V`            | what the subhead reads               |
+| `attn.z`                       | row of `W_O`                               | what the subhead writes              |
 
 `projection` picks the vocabulary space: `unembedding` (the default) multiplies by `W_U`,
 `embedding` by the embedding matrix `E`, as in the paper. The two differ whenever a model does not
@@ -141,6 +141,70 @@ graph-data-only runs (no HTML), pass the base collector:
 
 Configs can also be loaded from YAML via `intex.operation.config.ConfigFactory[CircuitConfig]`, and
 the operation can be run from an `@intex.script.experiment.experiment` script.
+
+## Dry run
+
+Every operator can describe a run before making it. `plan` resolves the input's index — the same
+expansion `apply` iterates — and reports the work, the activations it would read and the files it
+would write, without a single forward pass and without touching `save_dir`:
+
+```python
+lens_input = LensInput(config, "The capital of France is")
+
+plan = Lens(model).plan(lens_input, save_dir="runs/logit_lens")
+```
+
+```text
+Lens plan — logit_lens (config: my_lens)
+  prompt: "The capital of France is" (6 tokens)
+  reads: blocks.0.hook_resid_post, blocks.1.hook_resid_post, blocks.10.hook_resid_post, ...
+  work: 72 elements, 1 forward pass
+  writes: runs/logit_lens/{result.csv, index.csv, config.json}
+  index (72 rows):
+     source_layer  source_position source_activation  index_layer  index_position
+                0                0        resid.post            0               0
+                0                1        resid.post            0               1
+              ...              ...               ...          ...             ...
+```
+
+What each operator reports:
+
+| operator            | steps                                  | forward passes                                              |
+|---------------------|----------------------------------------|-------------------------------------------------------------|
+| `Lens`              | one element per index row              | 1 — none at all for the parameter lens, which reads weights |
+| `Prober`            | one probe per index row                | one per example prompt                                      |
+| `Patcher`           | one patched run per source/target pair | one per batch, plus the two cached runs                     |
+| `CircuitDiscoverer` | one graph per prompt                   | one per prompt                                              |
+
+The plan is printed as it is built; pass `verbose=False` to keep it quiet and only take the object
+back. That object, an `OperationPlan`, is a dataclass, so the same numbers are readable in code:
+`steps`, `forward_passes`, `batches`, `activations`, `outputs`, and `index` — one DataFrame per
+index, holding exactly what `index.csv` would. `plan.describe(max_rows=...)` re-renders it with
+more or less of the index than the printout shows.
+
+Passing the *same* input object to `apply` afterwards costs nothing extra: the resolved index is
+reused, and only the activations are still fetched.
+
+In an experiment script, put the switch on your own config and `--dry-run` comes for free from the
+parser `@experiment` builds (see `example_lens_script.py`):
+
+```python
+@dataclass
+class Config:
+    model_name: str
+    dry_run: bool = False
+
+
+@experiment
+def main(config: Config):
+    model = TransformerBridge.boot_transformers(config.model_name)
+    lens_input = LensInput(config_of_the_run, "The capital of France is")
+
+    if config.dry_run:
+        Lens(model).plan(lens_input, "runs/logit_lens")
+    else:
+        Lens(model).apply(lens_input, save_dir="runs/logit_lens")
+```
 
 ## Datasets
 

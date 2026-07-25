@@ -5,6 +5,7 @@ from intex.circuit.input import CircuitInput
 from intex.circuit.method.factory import CircuitMethodFactory
 from intex.model import Model
 from intex.operation.operator import Operator
+from intex.operation.plan import OperationPlan
 
 
 class CircuitDiscoverer(Operator):
@@ -37,3 +38,27 @@ class CircuitDiscoverer(Operator):
         if return_collector:
             return collector
         return None
+
+    def plan(self, circuit_input: CircuitInput, save_dir: str | None = None, verbose: bool = True) -> OperationPlan:
+        circuit_input.prepare_index(self.model)
+
+        plan = OperationPlan(
+            operation="CircuitDiscoverer",
+            config=circuit_input.config,
+            steps=len(circuit_input.prompts),
+            steps_label="prompt",
+            # The method rebuilds the whole cache for each prompt, so there is no index to narrow
+            # and no names to filter by — the graph is built over every activation.
+            forward_passes=len(circuit_input.prompts),
+            prompts=[
+                (f"prompt {i}", prompt, tokens.shape[1])
+                for i, (prompt, tokens) in enumerate(zip(circuit_input.prompts, circuit_input.tokens, strict=True))
+            ],
+            reads_full_cache=True,
+            save_dir=save_dir,
+            outputs=self.collector_class(circuit_input, self.model, save_dir).output_files(),
+        )
+
+        if verbose:
+            print(plan)
+        return plan

@@ -46,3 +46,6 @@ class ProbeCollector(AbstractCollector[ProbeInput]):
         self.operation_input.index.to_csv(os.path.join(save_dir, "index.csv"))
         with open(os.path.join(save_dir, "probes.pkl"), "wb") as f:
             pickle.dump(self.probes, f)
+
+    def output_files(self) -> list[str]:
+        return ["result.csv", "index.csv", "probes.pkl", *super().output_files()]

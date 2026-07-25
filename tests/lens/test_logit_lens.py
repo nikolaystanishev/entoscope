@@ -17,6 +17,7 @@ from intex.model.cache import CachedModel
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.operation.config import ConfigFactory
 
+from ..conftest import forbid_model_runs
 from .conftest import (
     HEAD,
     NEURON,
@@ -506,3 +507,74 @@ def test_key_and_value_projections_are_allowed_without_grouping(small_model):
 def test_a_lens_config_without_a_prompt_raises():
     with pytest.raises(ValueError, match="'logit_lens' reads activations, so it needs a prompt"):
         LensInput(declarative_config(**LAYER_POSITION_GRID))
+
+
+# --------------------------------------------------------------------------------------------------
+# The plan a run would execute
+# --------------------------------------------------------------------------------------------------
+def test_a_plan_resolves_the_grid_without_running_the_model(model, monkeypatch, tmp_path):
+    save_dir = tmp_path / "planned"
+    lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT)
+    n_positions = model.to_tokens(PROMPT).shape[1]
+
+    forbid_model_runs(monkeypatch, model)
+    plan = Lens(model).plan(lens_input, save_dir=str(save_dir), verbose=False)
+
+    assert not save_dir.exists()
+    assert plan.steps == model.cfg.n_layers * n_positions
+    assert plan.forward_passes == 1
+    assert plan.prompts == [("prompt", PROMPT, n_positions)]
+    # The names the run passes as its ``names_filter``, in the same sorted order.
+    assert plan.activations == sorted(f"blocks.{layer}.hook_resid_post" for layer in range(model.cfg.n_layers))
+
+
+def test_a_plan_describes_the_run_that_follows_it(model, config_from_yaml, tmp_path):
+    config = config_from_yaml(LensConfig, "my_lens", LENS_YAML["my_lens"])
+    lens_input = LensInput(config, PROMPT)
+    save_dir = tmp_path / "lens_run"
+
+    plan = Lens(model).plan(lens_input, save_dir=str(save_dir), verbose=False)
+    # The same input object: planning resolves its index, the run still has to fetch activations.
+    collector = Lens(model).apply(lens_input, save_dir=str(save_dir), return_collector=True, verbose=False)
+    assert collector is not None
+
+    assert len(collector.result) == plan.steps
+    assert sorted(path.name for path in save_dir.iterdir()) == sorted(plan.outputs)
+    pd.testing.assert_frame_equal(plan.index[0], collector.operation_input.index.to_df())
+
+    index_df = pd.read_csv(save_dir / "index.csv")
+    assert len(index_df) == len(plan.index[0])
+    assert list(index_df.columns) == list(plan.index[0].columns)
+
+
+def test_a_plan_prints_its_summary_and_its_index(model, config_from_yaml):
+    config = config_from_yaml(LensConfig, "my_lens", LENS_YAML["my_lens"])
+
+    described = str(Lens(model).plan(LensInput(config, PROMPT), verbose=False))
+
+    assert described.splitlines()[0] == "Lens plan — logit_lens (config: my_lens)"
+    assert f"{model.cfg.n_layers * model.to_tokens(PROMPT).shape[1]} elements" in described
+    assert "1 forward pass" in described
+    assert "writes: nothing (no save_dir)" in described
+    # Locations read as they do in index.csv, not as the enum members the DataFrame holds.
+    assert "resid.post" in described and "RESIDUAL_POST" not in described
+
+
+def test_a_plan_prints_itself_unless_it_is_silenced(model, capsys):
+    # Printing is the point of a dry run, so it is on by default; the plan comes back either way.
+    lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT)
+
+    plan = Lens(model).plan(lens_input)
+
+    assert capsys.readouterr().out == f"{plan}\n"
+    assert Lens(model).plan(lens_input, verbose=False) is not None
+    assert capsys.readouterr().out == ""
+
+
+def test_a_long_index_is_truncated_when_it_is_printed(model):
+    config = declarative_config(**LAYER_POSITION_GRID)
+
+    described = Lens(model).plan(LensInput(config, PROMPT), verbose=False).describe(max_rows=4)
+
+    assert len(described.splitlines()) < model.cfg.n_layers * model.to_tokens(PROMPT).shape[1]
+    assert ".." in described

@@ -49,3 +49,6 @@ class LensCollector(AbstractCollector[LensInput]):
     def _save_result(self, save_dir: str):
         self.result.to_csv(os.path.join(save_dir, "result.csv"), index=False)
         self.operation_input.index.to_csv(os.path.join(save_dir, "index.csv"))
+
+    def output_files(self) -> list[str]:
+        return ["result.csv", "index.csv", *super().output_files()]

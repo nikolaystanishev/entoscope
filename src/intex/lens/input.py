@@ -28,7 +28,7 @@ class LensInput(OperationInput):
         if self.config.type is not LensType.PARAMETER_LENS and self.prompt is None:
             raise ValueError(f"A '{self.config.type.value}' reads activations, so it needs a prompt")
 
-    def prepare(self, model: Model) -> "LensInput":
+    def prepare_index(self, model: Model) -> "LensInput":
         if self._index is not None:
             return self
 
@@ -37,15 +37,21 @@ class LensInput(OperationInput):
             return self
 
         self._tokens = model.to_tokens(self.prompt)
-
         self._index = Index[ModelLocatorConfig](
             self.config.source, self.config.source.parse(model, self.tokens.shape[1])
         )
 
-        with torch.no_grad():
-            self._logits, self._cache = model.run_with_cache(
-                self._tokens, names_filter=sorted(self._index.source_activation_names())
-            )
+        return self
+
+    def prepare(self, model: Model) -> "LensInput":
+        self.prepare_index(model)
+
+        # Guarded on the cache, not the index: a ``plan`` may have resolved the index already.
+        if self.prompt is not None and self._cache is None:
+            with torch.no_grad():
+                self._logits, self._cache = model.run_with_cache(
+                    self._tokens, names_filter=sorted(self.index.source_activation_names())
+                )
 
         return self
 

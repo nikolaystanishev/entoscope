@@ -20,6 +20,8 @@ from intex.patching.config import (
 from intex.patching.input import PatchingInput
 from intex.patching.patcher import Patcher
 
+from ..conftest import forbid_model_runs
+
 SOURCE_PROMPT = "The capital of France is"
 TARGET_PROMPT = "The capital of Spain is"
 
@@ -763,3 +765,56 @@ def test_a_run_through_a_cached_model_patches_the_same_way(model: HookedTransfor
     assert torch.equal(patch(cached_model), direct)
     assert len(list(tmp_path.rglob("*.pt"))) == 2  # one per prompt
     assert torch.equal(patch(cached_model), direct)  # now served from disk
+
+
+# --------------------------------------------------------------------------------------------------
+# The plan a run would execute
+# --------------------------------------------------------------------------------------------------
+def _every_layer_patch_config() -> PatchingConfig:
+    """Replace the residual stream of every layer in turn — one patched run per layer."""
+    element = PatchingElementConfig(
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER],
+        type=PatchingType.REPLACE,
+    )
+    return _patch_config(element, config_id="every_layer_resid_patch")
+
+
+def test_a_plan_counts_the_patch_runs_and_their_batches(model: HookedTransformer, monkeypatch, tmp_path: Path) -> None:
+    save_dir = tmp_path / "planned"
+    patching_input = PatchingInput(_every_layer_patch_config(), SOURCE_PROMPT, TARGET_PROMPT)
+
+    forbid_model_runs(monkeypatch, model)
+    plan = Patcher(model, batch_size=2).plan(patching_input, save_dir=str(save_dir), verbose=False)
+
+    assert not save_dir.exists()
+    assert plan.steps == model.cfg.n_layers
+    assert plan.batches == (model.cfg.n_layers + 1) // 2
+    # One patched run per batch, on top of the two cached runs the input prepares.
+    assert plan.forward_passes == plan.batches + 2
+    assert [(label, prompt) for label, prompt, _ in plan.prompts] == [
+        ("source", SOURCE_PROMPT),
+        ("target", TARGET_PROMPT),
+    ]
+    assert f"{plan.steps} patch runs in {plan.batches} batches" in str(plan)
+
+
+def test_a_plan_describes_the_run_that_follows_it(model: HookedTransformer, tmp_path: Path) -> None:
+    save_dir = tmp_path / "patch_run"
+    elements = _mlp_mhsa_pattern_elements(_MULTI_PATCH_LAYER, _MULTI_PATCH_HEAD)
+    patching_input = PatchingInput(_patch_config(*elements), SOURCE_PROMPT, TARGET_PROMPT)
+
+    plan = Patcher(model).plan(patching_input, save_dir=str(save_dir), verbose=False)
+    # The same input object: planning resolves its indices, the run still caches both prompts.
+    collector = Patcher(model).apply(patching_input, save_dir=str(save_dir), return_collector=True, verbose=False)
+    assert collector is not None
+
+    assert sorted(path.name for path in save_dir.iterdir()) == sorted(plan.outputs)
+    # One index per patch, each with its own file.
+    assert len(plan.index) == len(elements)
+    assert [name for name in plan.outputs if name.startswith("index-")] == [
+        f"index-{i}.csv" for i in range(len(elements))
+    ]
+    for planned, idx in zip(plan.index, patching_input.index, strict=True):
+        pd.testing.assert_frame_equal(planned, idx.to_df())
+    assert plan.steps == len(collector.result)

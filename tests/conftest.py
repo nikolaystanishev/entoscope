@@ -145,6 +145,20 @@ parallel_model = _backend_fixture(
 )
 
 
+def forbid_model_runs(monkeypatch, model) -> None:
+    """Make every forward pass through ``model`` fail — what an operation's plan must never need.
+
+    Patched on the instance, so the session-scoped model is restored when the test's monkeypatch
+    unwinds. Tokenization and ``cfg`` stay untouched: resolving an index is allowed to read those.
+    """
+
+    def fail(*args, **kwargs):
+        raise AssertionError("the model was run")
+
+    for name in ("run_with_cache", "run_with_hooks", "forward"):
+        monkeypatch.setattr(model, name, fail, raising=False)
+
+
 @pytest.fixture
 def config_from_yaml(tmp_path):
     """Source a config the way a run does: written to a YAML file and loaded through ConfigFactory."""
