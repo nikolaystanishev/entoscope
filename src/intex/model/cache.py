@@ -41,6 +41,9 @@ _NON_DIGEST_KWARGS = frozenset({"names_filter", "remove_batch_dim", "incl_bwd", 
 
 _ALL_ACTIVATIONS = "*ALL*"
 
+# Elements read from the head of every parameter when fingerprinting the weights; see ``_weight_digest``.
+_WEIGHT_SAMPLE = 64
+
 # torch dtypes ``Tensor.numpy()`` cannot materialize; their raw bytes are reinterpreted instead.
 _NUMPY_UNSUPPORTED_DTYPES = frozenset(
     dtype
@@ -76,6 +79,23 @@ def _encode_input(model_input: Any) -> bytes:
     if isinstance(model_input, str):
         return b"S|" + model_input.encode("utf-8")
     return b"R|" + repr(model_input).encode("utf-8")
+
+
+def _weight_digest(model: Any) -> str:
+    """A digest of the weights a model holds, not of the architecture its ``cfg`` describes.
+
+    Two models can read back the same ``cfg`` and the same name and still compute different things —
+    a fine-tune, a merged adapter, a supplied ``hf_model``, a checkpoint at another revision — and
+    without this they would share cache entries. Hashing every parameter in full would cost more than
+    the forward pass the cache saves, so each one contributes its name, its layout and the first
+    ``_WEIGHT_SAMPLE`` of its values: bounded by the parameter count rather than the parameter size,
+    and deterministic, so an entry written by one process is still found by the next.
+    """
+    digest = hashlib.sha256()
+    for name, parameter in sorted(model.named_parameters(), key=lambda item: item[0]):
+        digest.update(f"{name}|{tuple(parameter.shape)}|{parameter.dtype}|".encode())
+        digest.update(_encode_input(parameter.detach().flatten()[:_WEIGHT_SAMPLE]))
+    return digest.hexdigest()
 
 
 def _sanitize(name: str) -> str:
@@ -146,11 +166,16 @@ class CachedModel:
     def __init__(self, model: Model, cache_dir: str | None = None):
         self._model = model
         self._cache = ActivationDiskCache(cache_dir) if cache_dir else None
+        # Taken once, from the model as it is wrapped: the weights are read for it, and a wrapper
+        # that re-read them on every call would pay for that on every cache hit. Editing weights in
+        # place afterwards therefore keeps the entries they were stored under — wrap again for a
+        # fresh namespace.
+        self._model_fingerprint = self._fingerprint() if self._cache else ""
 
     def __getattr__(self, name: str) -> Any:
         # Only reached for attributes not found on the wrapper itself. Guard the private fields so a
         # partially-initialized or copied instance raises AttributeError instead of recursing.
-        if name in {"_model", "_cache"}:
+        if name in {"_model", "_cache", "_model_fingerprint"}:
             raise AttributeError(name)
         return getattr(self._model, name)
 
@@ -170,6 +195,7 @@ class CachedModel:
             cfg.d_vocab,
             str(cfg.dtype),
             cfg.act_fn,
+            _weight_digest(self._model),
         )
         return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
 
@@ -188,7 +214,7 @@ class CachedModel:
         extra["remove_batch_dim"] = remove_batch_dim
 
         digest = self._cache.key(
-            model_fingerprint=self._fingerprint(),
+            model_fingerprint=self._model_fingerprint,
             model_args=model_args,
             names_filter=names_normalized,
             extra=extra,
@@ -205,7 +231,7 @@ class CachedModel:
             {
                 "format_version": FORMAT_VERSION,
                 "model_name": model_name,
-                "model_fingerprint": self._fingerprint(),
+                "model_fingerprint": self._model_fingerprint,
                 "names_filter": names_normalized,
                 "remove_batch_dim": remove_batch_dim,
                 "logits": None if logits is None else logits.detach().cpu(),

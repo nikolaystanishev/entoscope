@@ -193,6 +193,19 @@ def test_two_models_are_kept_apart_by_name(tmp_path):
     assert len(cache_files(tmp_path)) == 2
 
 
+def test_two_models_are_kept_apart_by_their_weights(tmp_path):
+    # A fine-tune reads back the config it was derived from, so the name and every shape match and
+    # only the weights tell the two apart. The wrapper takes their fingerprint as it is built, which
+    # is why the change here is made before the wrapping and not, as above, after it.
+    original, finetuned = build_tiny_model(), build_tiny_model()
+    bump_weights(finetuned)
+
+    for model in (original, finetuned):
+        CachedModel(model, str(tmp_path)).run_with_cache(tokens_of(model), names_filter=NAMES)
+
+    assert len(cache_files(tmp_path)) == 2
+
+
 def test_removing_the_batch_dimension_is_its_own_entry(wrapped, tmp_path):
     tokens = tokens_of(wrapped)
     wrapped.run_with_cache(tokens, names_filter=NAMES)
