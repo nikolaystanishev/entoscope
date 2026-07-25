@@ -59,6 +59,15 @@ class CircuitCollector(AbstractCollector[CircuitInput]):
             )
         write_json(os.path.join(save_dir, "prompts.json"), summary)
 
+    def output_files(self) -> list[str]:
+        graphs = [
+            f"{name}_{i}.{extension}"
+            for i in range(len(self.operation_input.prompts))
+            for name in ("graph", "routes")
+            for extension in ("graphml", "json")
+        ]
+        return [*graphs, "prompts.json", *super().output_files()]
+
 
 class CircuitVisualizationCollector(CircuitCollector):
     """A ``CircuitCollector`` that also writes an interactive Plotly ``circuit_{i}.html`` per prompt.
@@ -71,3 +80,7 @@ class CircuitVisualizationCollector(CircuitCollector):
         super()._save_result(save_dir)
         for i, circuit in enumerate(self.result):
             render_circuit_html(circuit, self.model.cfg.n_layers, os.path.join(save_dir, f"circuit_{i}.html"))
+
+    def output_files(self) -> list[str]:
+        pages = [f"circuit_{i}.html" for i in range(len(self.operation_input.prompts))]
+        return [*pages, *super().output_files()]

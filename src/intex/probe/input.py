@@ -38,30 +38,37 @@ class ProbeInput(OperationInput):
     _labels: Int[torch.Tensor, " examples"] | None = field(init=False, default=None)
     _features: dict[tuple[int, ...], Float[torch.Tensor, "examples features"]] | None = field(init=False, default=None)
     _index: Index[ModelLocatorConfig] | None = field(init=False, default=None)
+    _token_tensors: list[Int[torch.Tensor, "batch pos"]] | None = field(init=False, default=None)
 
-    def prepare(self, model: Model) -> "ProbeInput":
+    def prepare_index(self, model: Model) -> "ProbeInput":
         if self._index is not None:
             return self
 
         if not self.positive_prompts or not self.negative_prompts:
             raise ValueError("Both positive and negative prompts are required to train a probe")
 
-        token_tensors = [model.to_tokens(prompt) for prompt in self.positive_prompts + self.negative_prompts]
-        lengths = {tokens.shape[1] for tokens in token_tensors}
+        self._token_tensors = [model.to_tokens(prompt) for prompt in self.positive_prompts + self.negative_prompts]
+        lengths = {tokens.shape[1] for tokens in self._token_tensors}
 
         n_positions = next(iter(lengths)) if len(lengths) == 1 else None
         source = self.config.source.parse(model, n_positions)
         self._validate_positions(source.df, min(lengths))
-        index = Index[ModelLocatorConfig](self.config.source, source)
+        self._index = Index[ModelLocatorConfig](self.config.source, source)
 
-        self._features = self._collect_features(model, token_tensors, index)
-        self._labels = torch.cat(
-            [
-                torch.ones(len(self.positive_prompts), dtype=torch.long),
-                torch.zeros(len(self.negative_prompts), dtype=torch.long),
-            ]
-        )
-        self._index = index
+        return self
+
+    def prepare(self, model: Model) -> "ProbeInput":
+        self.prepare_index(model)
+
+        # Guarded on the features, not the index: a ``plan`` may have resolved the index already.
+        if self._features is None:
+            self._features = self._collect_features(model, self.token_tensors, self.index)
+            self._labels = torch.cat(
+                [
+                    torch.ones(len(self.positive_prompts), dtype=torch.long),
+                    torch.zeros(len(self.negative_prompts), dtype=torch.long),
+                ]
+            )
 
         return self
 
@@ -121,6 +128,11 @@ class ProbeInput(OperationInput):
     def index(self) -> Index[ModelLocatorConfig]:
         assert self._index is not None
         return self._index
+
+    @property
+    def token_tensors(self) -> list[Int[torch.Tensor, "batch pos"]]:
+        assert self._token_tensors is not None
+        return self._token_tensors
 
     def to(self, device: str | torch.device = "cpu") -> "ProbeInput":
         if self._labels is not None:

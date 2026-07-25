@@ -12,6 +12,8 @@ from intex.circuit.input import CircuitInput
 from intex.circuit.method.circuit import PromptCircuit
 from intex.operation.config import ConfigFactory
 
+from ..conftest import forbid_model_runs
+
 PROMPTS = ["The capital of France is", "The Eiffel Tower is in"]
 
 
@@ -98,6 +100,45 @@ def test_a_run_without_a_collector_still_writes_its_artifacts(model: HookedTrans
     assert (save_dir / "graph_0.graphml").exists()
     assert (save_dir / "routes_0.graphml").exists()
     assert json.loads((save_dir / "prompts.json").read_text())[0]["prompt"] == PROMPTS[0]
+
+
+def test_a_plan_counts_one_graph_per_prompt_without_building_them(model: HookedTransformer, monkeypatch, tmp_path):
+    save_dir = tmp_path / "planned"
+    circuit_input = CircuitInput(_config(), PROMPTS)
+
+    forbid_model_runs(monkeypatch, model)
+    plan = CircuitDiscoverer(model).plan(circuit_input, save_dir=str(save_dir), verbose=False)
+
+    assert not save_dir.exists()
+    assert plan.steps == len(PROMPTS)
+    # The method rebuilds the whole cache per prompt, so nothing narrows what it reads.
+    assert plan.forward_passes == len(PROMPTS)
+    assert plan.reads_full_cache
+    assert [prompt for _, prompt, _ in plan.prompts] == PROMPTS
+    assert "reads: full activation cache" in str(plan)
+
+
+def test_a_plan_describes_the_run_that_follows_it(model: HookedTransformer, tmp_path: Path):
+    save_dir = tmp_path / "circuit_run"
+    circuit_input = CircuitInput(_config(), PROMPTS[:1])
+
+    plan = CircuitDiscoverer(model).plan(circuit_input, save_dir=str(save_dir), verbose=False)
+    CircuitDiscoverer(model).apply(circuit_input, save_dir=str(save_dir), verbose=False)
+
+    assert sorted(path.name for path in save_dir.iterdir()) == sorted(plan.outputs)
+    assert "circuit_0.html" in plan.outputs
+
+
+def test_a_plan_for_the_base_collector_promises_no_html(model: HookedTransformer, tmp_path: Path):
+    save_dir = tmp_path / "no_viz_plan"
+    circuit_input = CircuitInput(_config(), PROMPTS[:1])
+    discoverer = CircuitDiscoverer(model, collector_class=CircuitCollector)
+
+    plan = discoverer.plan(circuit_input, save_dir=str(save_dir), verbose=False)
+    discoverer.apply(circuit_input, save_dir=str(save_dir), verbose=False)
+
+    assert "circuit_0.html" not in plan.outputs
+    assert sorted(path.name for path in save_dir.iterdir()) == sorted(plan.outputs)
 
 
 def test_base_collector_skips_html(model: HookedTransformer, tmp_path: Path):

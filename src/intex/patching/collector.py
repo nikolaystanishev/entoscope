@@ -31,3 +31,7 @@ class DefaultCollector(AbstractCollector[PatchingInput]):
         torch.save(self._result, os.path.join(save_dir, "result.pt"))
         for i, idx in enumerate(self.operation_input.index):
             idx.to_csv(os.path.join(save_dir, f"index-{i}.csv"))
+
+    def output_files(self) -> list[str]:
+        indices = [f"index-{i}.csv" for i in range(len(self.operation_input.index))]
+        return ["result.pt", *indices, *super().output_files()]

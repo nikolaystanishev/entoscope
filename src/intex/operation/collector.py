@@ -43,6 +43,15 @@ class AbstractCollector(abc.ABC, Generic[InputT]):
         """Persist the collected result and its index file(s) into ``save_dir``."""
         raise NotImplementedError
 
+    def output_files(self) -> list[str]:
+        """The file names ``save`` writes into ``save_dir`` — what a plan reports as the run's output.
+
+        Subclasses extend this to mirror their own ``_save_result``. Deliberately not abstract:
+        ``collector_class`` is an extension point, so a collector that does not declare its files
+        keeps working and is reported as writing the shared ``config.json`` alone.
+        """
+        return ["config.json"]
+
     def save(self) -> None:
         if self.save_dir is None:
             return

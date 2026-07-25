@@ -22,13 +22,16 @@ class CircuitInput(OperationInput):
 
     _tokens: list[Int[torch.Tensor, "batch pos"]] | None = field(init=False, default=None)
 
-    def prepare(self, model: Model) -> "CircuitInput":
+    def prepare_index(self, model: Model) -> "CircuitInput":
         if self._tokens is None:
             if not self.prompts:
                 raise ValueError("At least one prompt is required for circuit discovery")
             self._tokens = [model.to_tokens(prompt) for prompt in self.prompts]
 
         return self
+
+    def prepare(self, model: Model) -> "CircuitInput":
+        return self.prepare_index(model)
 
     @property
     def tokens(self) -> list[Int[torch.Tensor, "batch pos"]]:

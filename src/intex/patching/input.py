@@ -33,27 +33,34 @@ class PatchingInput(OperationInput):
     _source_probabilities: torch.Tensor | None = field(init=False, default=None)
     _target_probabilities: torch.Tensor | None = field(init=False, default=None)
 
-    def prepare(self, model: Model) -> "PatchingInput":
-        if self._index is None:
-            self._source_tokens = model.to_tokens(self.source_prompt)
-            self._target_tokens = model.to_tokens(self.target_prompt)
+    def prepare_index(self, model: Model) -> "PatchingInput":
+        if self._index is not None:
+            return self
 
-            index = [
-                Index[PatchingElementConfig](
-                    patching_config.source,
-                    patching_config.source.parse(model, self.source_tokens.shape[1]),
-                    patching_config.target,
-                    patching_config.target.parse(model, self.target_tokens.shape[1]),
-                )
-                for patching_config in self.config.patch
-            ]
-            index_lengths = [len(idx) for idx in index]
-            assert len(index_lengths) == 0 or all(
-                length == max(index_lengths) or length == 1 for length in index_lengths
+        self._source_tokens = model.to_tokens(self.source_prompt)
+        self._target_tokens = model.to_tokens(self.target_prompt)
+
+        index = [
+            Index[PatchingElementConfig](
+                patching_config.source,
+                patching_config.source.parse(model, self.source_tokens.shape[1]),
+                patching_config.target,
+                patching_config.target.parse(model, self.target_tokens.shape[1]),
             )
-            self._index = index
+            for patching_config in self.config.patch
+        ]
+        index_lengths = [len(idx) for idx in index]
+        assert len(index_lengths) == 0 or all(length == max(index_lengths) or length == 1 for length in index_lengths)
+        self._index = index
 
-            names = sorted(set().union(*(idx.source_activation_names() for idx in index))) if index else []
+        return self
+
+    def prepare(self, model: Model) -> "PatchingInput":
+        self.prepare_index(model)
+
+        # Guarded on the caches, not the index: a ``plan`` may have resolved the index already.
+        if self._source_cache is None:
+            names = self.activation_names()
             with torch.no_grad():
                 self._source_logits, self._source_cache = model.run_with_cache(self._source_tokens, names_filter=names)
                 self._target_logits, self._target_cache = model.run_with_cache(self._target_tokens, names_filter=names)
@@ -62,6 +69,9 @@ class PatchingInput(OperationInput):
             self._target_generation = int(self._target_logits[0, -1].argmax())
 
         return self
+
+    def activation_names(self) -> list[str]:
+        return sorted(set().union(*(idx.source_activation_names() for idx in self.index))) if self.index else []
 
     @property
     def source_tokens(self) -> Int[torch.Tensor, "batch pos"]:

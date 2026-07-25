@@ -11,6 +11,7 @@ from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 
+from ..conftest import forbid_model_runs
 from .conftest import (
     HEAD,
     LAYER,
@@ -311,3 +312,35 @@ def test_artifacts_are_saved_to_disk(model, config_from_yaml, tmp_path):
     assert saved_config["type"] == "parameter_lens"
     assert saved_config["config_id"] == "my_parameter_lens"
     assert saved_config["top_k"] == 2
+
+
+# --------------------------------------------------------------------------------------------------
+# The plan a run would execute
+# --------------------------------------------------------------------------------------------------
+def test_a_plan_reads_no_activations_and_runs_nothing(model, monkeypatch, tmp_path):
+    # A run over weights takes no prompt, so there is nothing to cache and no pass to make.
+    save_dir = tmp_path / "planned"
+    lens_input = LensInput(_parameter_config())
+
+    forbid_model_runs(monkeypatch, model)
+    plan = Lens(model).plan(lens_input, save_dir=str(save_dir), verbose=False)
+
+    assert not save_dir.exists()
+    assert plan.forward_passes == 0
+    assert plan.activations == []
+    assert plan.prompts == []
+    assert plan.steps == model.cfg.n_layers
+    assert "reads:" not in str(plan)
+
+
+def test_a_plan_describes_the_run_that_follows_it(model, tmp_path):
+    save_dir = tmp_path / "parameter_lens_run"
+    lens_input = LensInput(_parameter_config())
+
+    plan = Lens(model).plan(lens_input, save_dir=str(save_dir), verbose=False)
+    collector = Lens(model).apply(lens_input, save_dir=str(save_dir), return_collector=True, verbose=False)
+    assert collector is not None
+
+    assert len(collector.result) == plan.steps
+    assert sorted(path.name for path in save_dir.iterdir()) == sorted(plan.outputs)
+    pd.testing.assert_frame_equal(plan.index[0], collector.operation_input.index.to_df())

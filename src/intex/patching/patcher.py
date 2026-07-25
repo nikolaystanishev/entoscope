@@ -4,6 +4,7 @@ from tqdm import tqdm
 from intex.model import Model
 from intex.operation.collector import AbstractCollector
 from intex.operation.operator import Operator
+from intex.operation.plan import OperationPlan
 from intex.patching.collector import DefaultCollector
 from intex.patching.input import PatchingInput
 from intex.patching.metric import AbstractMetric
@@ -35,6 +36,34 @@ class Patcher(Operator):
         if return_collector:
             return collector
         return None
+
+    def plan(self, patching_input: PatchingInput, save_dir: str | None = None, verbose: bool = True) -> OperationPlan:
+        patching_input.prepare_index(self.model)
+
+        runs = len(list(zip_fill(*patching_input.index))) if patching_input.index else 0
+        batches = len(list(batch_generator(list(range(runs)), self.batch_size)))
+
+        plan = OperationPlan(
+            operation="Patcher",
+            config=patching_input.config,
+            steps=runs,
+            steps_label="patch run",
+            # One patched run per batch, on top of the two cached runs the input prepares.
+            forward_passes=batches + 2,
+            batches=batches,
+            index=[idx.to_df() for idx in patching_input.index],
+            prompts=[
+                ("source", patching_input.source_prompt, patching_input.source_tokens.shape[1]),
+                ("target", patching_input.target_prompt, patching_input.target_tokens.shape[1]),
+            ],
+            activations=patching_input.activation_names(),
+            save_dir=save_dir,
+            outputs=self.collector_class(patching_input, save_dir).output_files(),
+        )
+
+        if verbose:
+            print(plan)
+        return plan
 
     def _patch(self, patching_input: PatchingInput, save_dir: str | None, verbose: bool = True) -> AbstractCollector:
         patching_input.prepare(self.model)
