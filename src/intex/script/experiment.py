@@ -7,10 +7,12 @@ from collections.abc import Callable, Sequence
 from intex.script.argument import parse_config
 
 
-def _config_class(func: Callable) -> type:
+def _config_class(func: Callable) -> type | None:
     params = list(inspect.signature(func).parameters.values())
     hints = typing.get_type_hints(func)
-    if not params or params[0].name not in hints:
+    if not params:
+        return None
+    if params[0].name not in hints:
         raise TypeError(f"{func.__name__} must annotate its first parameter with a config dataclass")
     if params[0].kind not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
         raise TypeError(f"{func.__name__} config parameter must accept a positional argument")
@@ -49,7 +51,9 @@ def experiment(func: Callable | None = None, *, description: str | None = None) 
         def wrapper(config=None, argv: Sequence[str] | None = None):
             if config is None:
                 config = parse_config(config_cls, argv, desc)
-            return fn(config)
+            if config is not None:
+                return fn(config)
+            return fn()
 
         if fn.__module__ == "__main__":
             wrapper()

@@ -417,8 +417,8 @@ def test_the_description_argument_wins(capsys):
 
 def test_the_description_falls_back_to_the_modules(capsys):
     @experiment
-    def main(config: Config):
-        return config
+    def main():
+        return None
 
     with pytest.raises(SystemExit):
         main(argv=["--help"])
@@ -442,7 +442,6 @@ def test_the_description_falls_back_to_the_docstring(capsys):
     ("source", "message"),
     [
         ("def main(config):\n    return config\n", "annotate its first parameter"),
-        ("def main():\n    return None\n", "annotate its first parameter"),
         ("def main(config: int):\n    return config\n", "not a dataclass"),
         ("def main(*, config: Config):\n    return config\n", "must accept a positional argument"),
         ("def main(config: Config, steps):\n    return config\n", "additional required parameters"),
