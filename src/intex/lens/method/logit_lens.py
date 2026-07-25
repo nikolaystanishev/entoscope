@@ -1,3 +1,4 @@
+import math
 from collections.abc import Sequence
 
 import torch
@@ -8,8 +9,18 @@ from intex.lens.method.lens import AbstractLensMethod
 from intex.model import Model
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.model.index import IndexElement
+from intex.model.weight import mlp_weight
 
 _KEY_VALUE_ACTIVATIONS = (ModelLayerLocation.ATTENTION_K, ModelLayerLocation.ATTENTION_V)
+
+
+def _attention_scale(model: Model) -> float:
+    # ``TransformerBridgeConfig`` leaves ``attn_scale`` at the -1.0 sentinel that
+    # ``HookedTransformerConfig`` resolves for itself in ``__post_init__``.
+    if not model.cfg.use_attn_scale:
+        return 1.0
+    scale = model.cfg.attn_scale
+    return scale if scale and scale > 0 else math.sqrt(model.cfg.d_head)
 
 
 def _layer(index: IndexElement[ModelLocatorConfig]) -> int:
@@ -88,7 +99,7 @@ class MLPLogitLens(LogitLens):
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_model"]:
         layer = _layer(index)
-        w_out = self.model.blocks[layer].mlp.W_out  # [d_mlp, d_model]
+        w_out = mlp_weight(self.model, layer, "W_out")  # [d_mlp, d_model]
 
         neuron = index.get(ModelLocation.NEURON)
         if neuron is None:
@@ -119,4 +130,4 @@ class AttentionQKLogitLens(LogitLens):
             attention = self.model.blocks[layer].attn
             weight = attention.W_K if index.activation() is ModelLayerLocation.ATTENTION_Q else attention.W_Q
             embedding = _head_lift(activation, weight.transpose(-1, -2), index)
-            return embedding @ self.model.W_E.T / self.model.cfg.attn_scale
+            return embedding @ self.model.W_E.T / _attention_scale(self.model)

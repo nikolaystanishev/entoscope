@@ -64,6 +64,19 @@ def single_row(model, config: LensConfig, prompt: str | None = PROMPT) -> pd.Ser
     return result.iloc[0]
 
 
+def mlp_matrix(model, layer: int, attribute: str) -> torch.Tensor:
+    """A block's MLP weight in HookedTransformer's orientation, read without the reader under test.
+
+    ``intex.model.weight.mlp_weight`` is what a lens reads, so an expectation taken from it would
+    only restate the run. This reads the parameter the backend stores and settles the orientation by
+    its shape — ``W_in``/``W_gate`` [d_model, d_mlp], ``W_out`` [d_mlp, d_model] — which no fixture
+    here leaves ambiguous, none of them having ``d_model == d_mlp``.
+    """
+    weight = getattr(model.blocks[layer].mlp, attribute)
+    rows = model.cfg.d_mlp if attribute == "W_out" else model.cfg.d_model
+    return weight if weight.shape[0] == rows else weight.T
+
+
 def unembed(model, residual: torch.Tensor) -> torch.Tensor:
     """The model's own read-out of a residual-stream vector."""
     with torch.no_grad():

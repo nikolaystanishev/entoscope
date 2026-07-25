@@ -6,6 +6,34 @@ the same shape — `Config → Input → Operator → Collector` — and can be 
 experiment script. Current operations: Logit Lens, Tuned Lens, Parameter Lens, Probing, Activation
 Patching, and Circuit Discovery.
 
+## Models
+
+Operations take a `TransformerBridge`, the wrapper `transformer_lens` loads HuggingFace models
+through, and read it as-is — so activations and weights are HuggingFace's own, and a run means the
+same thing as the same computation done against the HuggingFace model directly:
+
+```python
+from transformer_lens.model_bridge import TransformerBridge
+
+model = TransformerBridge.boot_transformers("gpt2")
+model.eval()
+```
+
+Calling `model.enable_compatibility_mode()` switches the model into `transformer_lens`'s convention
+instead, folding LayerNorm into the following weights and centering the ones that write to the
+residual stream. Both are supported; the choice changes what the intermediate numbers mean, not
+whether a run works. Two consequences worth knowing:
+
+- Under HuggingFace's numerics a model that ties its embedding and unembedding — GPT-2 does — has
+  `W_E.T == W_U`, so the parameter lens's two `projection` spaces coincide. Folding separates them.
+- `eval()` on a bridge does not reach the HuggingFace model it wraps. `boot_transformers` returns
+  one already in eval mode, but a model you construct yourself and pass as `hf_model=` needs its
+  own `eval()` or dropout stays on.
+
+`HookedTransformer` is still accepted wherever a bridge is — `Model` is the union of the two, plus
+the `CachedModel` wrapper — and the test suite runs against both. It is the only option on
+platforms whose `transformer_lens` predates the bridge.
+
 ## Parameter Lens
 
 Reads the model's **weights** in vocabulary space, following
@@ -15,14 +43,14 @@ about it depends on an input, so a run takes no prompt at all — it is the same
 the same `LensInput`, with `prompt=None`.
 
 ```python
-from transformer_lens import HookedTransformer
+from transformer_lens.model_bridge import TransformerBridge
 
 from intex.lens.config import LensConfig, LensType
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 
-model = HookedTransformer.from_pretrained("gpt2")
+model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
 
 config = LensConfig(
@@ -56,8 +84,9 @@ location out sums all of them, exactly as grouped neurons and heads work in the 
 
 `projection` picks the vocabulary space: `unembedding` (the default) multiplies by `W_U`,
 `embedding` by the embedding matrix `E`, as in the paper. The two differ whenever a model does not
-tie them — including GPT-2, once `transformer_lens` has folded LayerNorm in and centered the
-unembedding. The collector's `probability_*` columns are a softmax over the projected weight
+tie them — GPT-2 does tie them, so on HuggingFace's weights the two spaces agree exactly and only
+come apart once `enable_compatibility_mode` has folded LayerNorm in and centered the unembedding.
+The collector's `probability_*` columns are a softmax over the projected weight
 vector: a ranking score over the vocabulary, not a probability the model ever produces.
 
 `scale` multiplies the weight vector before projecting it (default `1.0`). A negative scale such as
@@ -76,13 +105,13 @@ Discovers the circuit a model uses on a set of prompts. It supports multiple met
 routes that lead to the model's prediction.
 
 ```python
-from transformer_lens import HookedTransformer
+from transformer_lens.model_bridge import TransformerBridge
 
 from intex.circuit.config import CircuitConfig, CircuitMethodType
 from intex.circuit.discoverer import CircuitDiscoverer
 from intex.circuit.input import CircuitInput
 
-model = HookedTransformer.from_pretrained("gpt2")
+model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
 
 config = CircuitConfig(type=CircuitMethodType.INFORMATION_FLOW_ROUTES, threshold=0.04)

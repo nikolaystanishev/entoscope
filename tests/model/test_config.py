@@ -74,7 +74,9 @@ def values_of(index_df: pd.DataFrame, location: ModelLocation) -> list:
         ("small_model", ModelLayerLocation.RESIDUAL_POST, ModelLocation.POSITION, lambda cfg: PROMPT_SIZE),
     ],
 )
-def test_a_location_enumerates_the_model_dimension_it_names(request, model_fixture, activation, location, axis_size):
+def test_a_location_enumerates_the_model_dimension_it_names(
+    request, backend, model_fixture, activation, location, axis_size
+):
     model = request.getfixturevalue(model_fixture)
 
     index_df = parse(model, activation=activation, location=[location])

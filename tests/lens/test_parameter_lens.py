@@ -19,6 +19,7 @@ from .conftest import (
     assert_row_reads,
     coordinates_config,
     lens_rows,
+    mlp_matrix,
     run_lens,
     single_row,
 )
@@ -82,13 +83,13 @@ def test_a_parameter_lens_config_with_a_prompt_raises():
 def test_an_mlp_value_vector_is_the_row_of_w_out(model):
     row = _weight_row(model, {"activation": "mlp.post", "layer": LAYER, "neuron": NEURON})
 
-    assert_row_reads(model, row, _projected(model, model.blocks[LAYER].mlp.W_out[NEURON]))
+    assert_row_reads(model, row, _projected(model, mlp_matrix(model, LAYER, "W_out")[NEURON]))
 
 
 def test_an_mlp_key_vector_is_the_column_of_w_in(model):
     row = _weight_row(model, {"activation": "mlp.pre", "layer": LAYER, "neuron": NEURON})
 
-    assert_row_reads(model, row, _projected(model, model.blocks[LAYER].mlp.W_in[:, NEURON]))
+    assert_row_reads(model, row, _projected(model, mlp_matrix(model, LAYER, "W_in")[:, NEURON]))
 
 
 @pytest.mark.parametrize(("activation_name", "weight_name"), [("attn.q", "W_Q"), ("attn.k", "W_K"), ("attn.v", "W_V")])
@@ -106,7 +107,7 @@ def test_an_attention_write_vector_is_the_row_of_w_o(model):
 
 
 def test_the_projection_space_switches_from_the_unembedding_to_the_embedding(model):
-    weight = model.blocks[LAYER].mlp.W_out[NEURON]
+    weight = mlp_matrix(model, LAYER, "W_out")[NEURON]
     coordinate = {"activation": "mlp.post", "layer": LAYER, "neuron": NEURON}
 
     embedding = _weight_row(model, coordinate, projection=ProjectionSpace.EMBEDDING)
@@ -114,13 +115,15 @@ def test_the_projection_space_switches_from_the_unembedding_to_the_embedding(mod
 
     assert_row_reads(model, embedding, _projected(model, weight, ProjectionSpace.EMBEDDING))
     assert_row_reads(model, unembedding, _projected(model, weight))
-    # transformer_lens centers the unembedding and folds LayerNorm in, so the two spaces score the
-    # vocabulary differently even though GPT-2 ties its embedding and unembedding.
-    assert embedding["probability_0"] != unembedding["probability_0"]
+    # The two spaces score the vocabulary alike exactly when the model ties its embedding and its
+    # unembedding — which GPT-2 does, until transformer_lens folds LayerNorm in and centers the
+    # unembedding and the two come apart.
+    tied = torch.equal(model.W_E.T, model.W_U)
+    assert bool(embedding["probability_0"] == unembedding["probability_0"]) == tied
 
 
 def test_a_negative_scale_flips_the_direction_the_weight_projects(model):
-    weight = model.blocks[LAYER].mlp.W_out[NEURON]
+    weight = mlp_matrix(model, LAYER, "W_out")[NEURON]
     coordinate = {"activation": "mlp.post", "layer": LAYER, "neuron": NEURON}
 
     row = _weight_row(model, coordinate, scale=-1.0)
@@ -148,7 +151,7 @@ def test_grouped_neurons_sum_their_value_vectors_into_one_row(model):
     neurons = [NEURON, NEURON + 1]
     row = _weight_row(model, {"activation": "mlp.post", "layer": LAYER, "neuron": neurons})
 
-    w_out = model.blocks[LAYER].mlp.W_out
+    w_out = mlp_matrix(model, LAYER, "W_out")
     assert_row_reads(model, row, _projected(model, w_out[NEURON] + w_out[NEURON + 1]))
 
 
@@ -156,14 +159,14 @@ def test_grouped_neurons_sum_their_key_vectors_into_one_row(model):
     neurons = [NEURON, NEURON + 1]
     row = _weight_row(model, {"activation": "mlp.pre", "layer": LAYER, "neuron": neurons})
 
-    w_in = model.blocks[LAYER].mlp.W_in
+    w_in = mlp_matrix(model, LAYER, "W_in")
     assert_row_reads(model, row, _projected(model, w_in[:, NEURON] + w_in[:, NEURON + 1]))
 
 
 def test_a_row_without_a_neuron_sums_every_neuron(model):
     row = _weight_row(model, {"activation": "mlp.post", "layer": LAYER})
 
-    assert_row_reads(model, row, _projected(model, model.blocks[LAYER].mlp.W_out.sum(0)))
+    assert_row_reads(model, row, _projected(model, mlp_matrix(model, LAYER, "W_out").sum(0)))
 
 
 def test_grouped_heads_and_neurons_sum_their_read_vectors(model):
@@ -194,7 +197,7 @@ def test_top_k_tokens_come_from_the_projected_weight(model):
     result = lens_rows(model, _parameter_config(top_k=3))
 
     row = result[result.source_layer == LAYER].iloc[0]
-    assert_row_reads(model, row, _projected(model, model.blocks[LAYER].mlp.W_out[NEURON]), top_k=3)
+    assert_row_reads(model, row, _projected(model, mlp_matrix(model, LAYER, "W_out")[NEURON]), top_k=3)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -203,13 +206,13 @@ def test_top_k_tokens_come_from_the_projected_weight(model):
 def test_a_gated_mlp_reads_its_key_vector_from_the_gate(gated_model):
     row = _weight_row(gated_model, {"activation": "mlp.pre", "layer": 0, "neuron": 1})
 
-    assert_row_reads(gated_model, row, _projected(gated_model, gated_model.blocks[0].mlp.W_gate[:, 1]))
+    assert_row_reads(gated_model, row, _projected(gated_model, mlp_matrix(gated_model, 0, "W_gate")[:, 1]))
 
 
 def test_a_gated_mlps_linear_branch_reads_w_in(gated_model):
     row = _weight_row(gated_model, {"activation": "mlp.pre_linear", "layer": 0, "neuron": 1})
 
-    assert_row_reads(gated_model, row, _projected(gated_model, gated_model.blocks[0].mlp.W_in[:, 1]))
+    assert_row_reads(gated_model, row, _projected(gated_model, mlp_matrix(gated_model, 0, "W_in")[:, 1]))
 
 
 def test_the_linear_branch_of_a_model_without_a_gate_raises(small_model):

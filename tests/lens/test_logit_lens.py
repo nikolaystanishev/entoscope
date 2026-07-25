@@ -12,6 +12,7 @@ import yaml
 from intex.lens.config import LensConfig, LensType
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
+from intex.lens.method.logit_lens import _attention_scale
 from intex.model.cache import CachedModel
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.operation.config import ConfigFactory
@@ -24,6 +25,7 @@ from .conftest import (
     coordinates_config,
     declarative_config,
     lens_rows,
+    mlp_matrix,
     run_lens,
     single_row,
     unembed,
@@ -139,7 +141,10 @@ def test_the_run_only_caches_the_activations_its_index_names(model):
 
     expected = {f"blocks.{layer}.hook_resid_post" for layer in range(model.cfg.n_layers)}
     assert lens_input.index.source_activation_names() == expected
-    assert set(lens_input.cache.keys()) == expected
+    # A bridge fires the block's own output hook under a second name for the same activation, so the
+    # cache holds those aliases as well — and nothing beyond them.
+    aliases = {f"blocks.{layer}.hook_out" for layer in range(model.cfg.n_layers)}
+    assert expected <= set(lens_input.cache.keys()) <= expected | aliases
 
     _, full_cache = model.run_with_cache(lens_input.tokens)
     assert set(lens_input.cache.keys()) < set(full_cache.keys())
@@ -156,7 +161,7 @@ def test_a_single_neuron_is_lifted_by_its_row_of_w_out(model, activations):
     )
 
     activation = cache[f"blocks.{layer}.mlp.hook_post"][:, -1, NEURON]
-    assert_row_reads(model, row, unembed(model, activation.unsqueeze(-1) * model.blocks[layer].mlp.W_out[NEURON]))
+    assert_row_reads(model, row, unembed(model, activation.unsqueeze(-1) * mlp_matrix(model, layer, "W_out")[NEURON]))
 
 
 def test_a_list_of_neurons_sums_their_contributions(model, activations):
@@ -167,7 +172,7 @@ def test_a_list_of_neurons_sums_their_contributions(model, activations):
         model, coordinates_config({"activation": "mlp.post", "layer": -1, "position": -1, "neuron": neurons})
     )
 
-    w_out = model.blocks[layer].mlp.W_out
+    w_out = mlp_matrix(model, layer, "W_out")
     activation = cache[f"blocks.{layer}.mlp.hook_post"][:, -1]
     contribution = sum(activation[:, neuron].unsqueeze(-1) * w_out[neuron] for neuron in neurons)
     assert_row_reads(model, row, unembed(model, contribution))
@@ -206,7 +211,9 @@ def test_a_neuron_grid_projects_every_row_through_its_own_layer(model, activatio
     for _, row in result.iterrows():
         layer, neuron = row["source_layer"], row["source_neuron"]
         activation = cache[f"blocks.{layer}.mlp.hook_post"][:, -1, neuron]
-        assert_row_reads(model, row, unembed(model, activation.unsqueeze(-1) * model.blocks[layer].mlp.W_out[neuron]))
+        assert_row_reads(
+            model, row, unembed(model, activation.unsqueeze(-1) * mlp_matrix(model, layer, "W_out")[neuron])
+        )
 
 
 # --------------------------------------------------------------------------------------------------
@@ -277,7 +284,7 @@ def test_queries_and_keys_are_read_against_the_embedding(model, activations, act
     activation = cache[f"blocks.{layer}.attn.{hook}"][:, -1, HEAD]
     with torch.no_grad():
         weight = getattr(model.blocks[layer].attn, weight_name)[HEAD]
-        expected = activation @ weight.T @ model.W_E.T / model.cfg.attn_scale
+        expected = activation @ weight.T @ model.W_E.T / _attention_scale(model)
     assert_row_reads(model, row, expected)
 
 

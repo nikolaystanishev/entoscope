@@ -1,15 +1,16 @@
 """Local-storage caching of model activations.
 
-``CachedModel`` is a transparent wrapper around a ``transformer_lens.HookedTransformer`` that
-memorizes ``run_with_cache`` to disk. Operations receive it in place of the raw model and never
-know the difference: every attribute other than ``run_with_cache`` is forwarded to the wrapped
-model, so tokenization, ``run_with_hooks`` (patching), weight access and ``cfg`` behave exactly
-as before, while repeated forward passes for the same ``(model, tokens, names_filter)`` are read
-back from ``cache_dir`` instead of recomputed.
+``CachedModel`` is a transparent wrapper around a ``transformer_lens`` model — a
+``TransformerBridge`` or a ``HookedTransformer`` — that memorizes ``run_with_cache`` to disk.
+Operations receive it in place of the raw model and never know the difference: every attribute
+other than ``run_with_cache`` is forwarded to the wrapped model, so tokenization,
+``run_with_hooks`` (patching), weight access and ``cfg`` behave exactly as before, while repeated
+forward passes for the same ``(model, tokens, names_filter)`` are read back from ``cache_dir``
+instead of recomputed.
 
 Usage::
 
-    model = HookedTransformer.from_pretrained(config.model_name)
+    model = TransformerBridge.boot_transformers(config.model_name)
     model = CachedModel(model, cache_dir="./.activation_cache")  # cache_dir=None => pass-through
     Lens(model).apply(LensInput(LensConfig(...), "Paris is located in"))
 """
@@ -20,12 +21,15 @@ import hashlib
 import os
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
-from transformer_lens import ActivationCache, HookedTransformer
+from transformer_lens import ActivationCache
 
 from intex.util.data import create_if_not_exists
+
+if TYPE_CHECKING:  # ``intex.model.base`` imports this module, so the alias is type-only.
+    from intex.model.base import Model
 
 FORMAT_VERSION = 1
 
@@ -36,6 +40,9 @@ FORMAT_VERSION = 1
 _NON_DIGEST_KWARGS = frozenset({"names_filter", "remove_batch_dim", "incl_bwd", "device"})
 
 _ALL_ACTIVATIONS = "*ALL*"
+
+# Elements read from the head of every parameter when fingerprinting the weights; see ``_weight_digest``.
+_WEIGHT_SAMPLE = 64
 
 # torch dtypes ``Tensor.numpy()`` cannot materialize; their raw bytes are reinterpreted instead.
 _NUMPY_UNSUPPORTED_DTYPES = frozenset(
@@ -72,6 +79,23 @@ def _encode_input(model_input: Any) -> bytes:
     if isinstance(model_input, str):
         return b"S|" + model_input.encode("utf-8")
     return b"R|" + repr(model_input).encode("utf-8")
+
+
+def _weight_digest(model: Any) -> str:
+    """A digest of the weights a model holds, not of the architecture its ``cfg`` describes.
+
+    Two models can read back the same ``cfg`` and the same name and still compute different things —
+    a fine-tune, a merged adapter, a supplied ``hf_model``, a checkpoint at another revision — and
+    without this they would share cache entries. Hashing every parameter in full would cost more than
+    the forward pass the cache saves, so each one contributes its name, its layout and the first
+    ``_WEIGHT_SAMPLE`` of its values: bounded by the parameter count rather than the parameter size,
+    and deterministic, so an entry written by one process is still found by the next.
+    """
+    digest = hashlib.sha256()
+    for name, parameter in sorted(model.named_parameters(), key=lambda item: item[0]):
+        digest.update(f"{name}|{tuple(parameter.shape)}|{parameter.dtype}|".encode())
+        digest.update(_encode_input(parameter.detach().flatten()[:_WEIGHT_SAMPLE]))
+    return digest.hexdigest()
 
 
 def _sanitize(name: str) -> str:
@@ -133,26 +157,34 @@ class ActivationDiskCache:
 
 
 class CachedModel:
-    """Transparent read-through disk cache around a ``HookedTransformer``.
+    """Transparent read-through disk cache around a ``transformer_lens`` model.
 
     Overrides only ``run_with_cache``; every other attribute is forwarded to the wrapped model via
     ``__getattr__``. When ``cache_dir`` is ``None`` the wrapper is a pure pass-through.
     """
 
-    def __init__(self, model: HookedTransformer, cache_dir: str | None = None):
+    def __init__(self, model: Model, cache_dir: str | None = None):
         self._model = model
         self._cache = ActivationDiskCache(cache_dir) if cache_dir else None
+        # Taken once, from the model as it is wrapped: the weights are read for it, and a wrapper
+        # that re-read them on every call would pay for that on every cache hit. Editing weights in
+        # place afterwards therefore keeps the entries they were stored under — wrap again for a
+        # fresh namespace.
+        self._model_fingerprint = self._fingerprint() if self._cache else ""
 
     def __getattr__(self, name: str) -> Any:
         # Only reached for attributes not found on the wrapper itself. Guard the private fields so a
         # partially-initialized or copied instance raises AttributeError instead of recursing.
-        if name in {"_model", "_cache"}:
+        if name in {"_model", "_cache", "_model_fingerprint"}:
             raise AttributeError(name)
         return getattr(self._model, name)
 
     def _fingerprint(self) -> str:
         cfg = self._model.cfg
         parts = (
+            # A bridge and a HookedTransformer of the same name read the same cfg but not
+            # necessarily the same weights, so they must not share cache entries.
+            type(self._model).__name__,
             cfg.model_name,
             cfg.n_layers,
             cfg.n_heads,
@@ -163,6 +195,7 @@ class CachedModel:
             cfg.d_vocab,
             str(cfg.dtype),
             cfg.act_fn,
+            _weight_digest(self._model),
         )
         return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
 
@@ -181,7 +214,7 @@ class CachedModel:
         extra["remove_batch_dim"] = remove_batch_dim
 
         digest = self._cache.key(
-            model_fingerprint=self._fingerprint(),
+            model_fingerprint=self._model_fingerprint,
             model_args=model_args,
             names_filter=names_normalized,
             extra=extra,
@@ -198,7 +231,7 @@ class CachedModel:
             {
                 "format_version": FORMAT_VERSION,
                 "model_name": model_name,
-                "model_fingerprint": self._fingerprint(),
+                "model_fingerprint": self._model_fingerprint,
                 "names_filter": names_normalized,
                 "remove_batch_dim": remove_batch_dim,
                 "logits": None if logits is None else logits.detach().cpu(),

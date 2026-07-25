@@ -9,12 +9,12 @@ import pytest
 import torch
 from tuned_lens.nn.lenses import TunedLens as PretrainedTunedLens
 from tuned_lens.nn.lenses import TunedLensConfig
-from tuned_lens.nn.unembed import Unembed
 
 from intex.lens.config import LensConfig, LensType
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from intex.model.unembed import build_unembed
 
 from ..conftest import build_tiny_model
 from .conftest import (
@@ -39,7 +39,7 @@ def _write_translators(model, directory, *, scale: float = 0.0, bias: float = 0.
         "num_hidden_layers": model.cfg.n_layers,
         **config_overrides,
     }
-    lens = PretrainedTunedLens(Unembed(model), TunedLensConfig(**settings))
+    lens = PretrainedTunedLens(build_unembed(model), TunedLensConfig(**settings))
     with torch.no_grad():
         for i, translator in enumerate(lens.layer_translators):
             translator.weight.copy_(i * scale * torch.eye(settings["d_model"]))
