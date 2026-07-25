@@ -10,6 +10,7 @@ from transformer_lens import HookedTransformer
 from intex.model.cache import CachedModel
 from intex.model.config import Filter, Group, Incremental, ModelLayerLocation, ModelLocation
 from intex.operation.config import ConfigFactory
+from intex.patching.collector import PatchingCollector
 from intex.patching.config import (
     PatchingConfig,
     PatchingElementConfig,
@@ -26,12 +27,17 @@ SOURCE_PROMPT = "The capital of France is"
 TARGET_PROMPT = "The capital of Spain is"
 
 
+def _metric(collector: PatchingCollector) -> torch.Tensor:
+    """The result frame's metric column, in index order — one value per patched run."""
+    return torch.tensor(collector.result[collector.operation_input.config.metric.value].to_numpy(), dtype=torch.float32)
+
+
 def _run(model: HookedTransformer, config: PatchingConfig) -> torch.Tensor:
     collector = Patcher(model).apply(
         PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
     )
     assert collector is not None
-    return collector.result
+    return _metric(collector)
 
 
 def _generations(model: HookedTransformer) -> tuple[int, int]:
@@ -163,9 +169,9 @@ def test_activation_patching_from_source_into_target(model: HookedTransformer) -
 
     collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
 
-    # One patch (the single last layer) -> a one-element result tensor.
+    # One patch (the single last layer) -> a one-row result.
     assert collector is not None
-    result = collector.result
+    result = _metric(collector)
     assert result.shape == (1,)
 
     assert torch.allclose(result.squeeze(), torch.tensor(1.0))
@@ -197,9 +203,9 @@ def test_zero_ablation_patching(model: HookedTransformer) -> None:
 
     collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
 
-    # One patch (the single last layer) -> a one-element result tensor.
+    # One patch (the single last layer) -> a one-row result.
     assert collector is not None
-    result = collector.result
+    result = _metric(collector)
     assert result.shape == (1,)
 
     # The same ablation done by hand: the last layer's residual is zeroed on the target run.
@@ -221,9 +227,9 @@ def _run_value_scale(model: HookedTransformer, scale: float) -> torch.Tensor:
 
     collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
 
-    # One patch (a single layer) -> a one-element result tensor.
+    # One patch (a single layer) -> a one-row result.
     assert collector is not None
-    result = collector.result
+    result = _metric(collector)
     assert result.shape == (1,)
     return result.squeeze()
 
@@ -294,9 +300,9 @@ def test_multi_config_patching_mlp_mhsa_and_pattern(model: HookedTransformer) ->
     ]
 
     # All three patches are applied together on a single forward pass and the collector keys the result
-    # off the first patch's (single) output coordinate -> a one-element tensor.
+    # off the first patch's (single) output coordinate -> a one-row result.
     assert collector is not None
-    result = collector.result
+    result = _metric(collector)
     assert result.shape == (1,)
 
     # The three replacements done by hand, on one forward pass, give the same logit diff...
@@ -377,7 +383,7 @@ def _run_explicit(
     )
     collector = Patcher(model).apply(patching_input, save_dir=save_dir, return_collector=True, verbose=False)
     assert collector is not None
-    return collector.result
+    return _metric(collector)
 
 
 def test_explicit_coordinates_matches_declarative_patch(model: HookedTransformer) -> None:
@@ -487,17 +493,22 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
     assert collector is not None
 
     # The three artifacts the collector is expected to persist.
-    result_path = save_dir / "result.pt"
+    result_path = save_dir / "result.csv"
     index_path = save_dir / "index-0.csv"
     config_path = save_dir / "config.json"
     assert result_path.exists()
     assert index_path.exists()
     assert config_path.exists()
+    assert not (save_dir / "result.pt").exists()
 
-    # result.pt round-trips to exactly the in-memory result tensor.
-    saved_result = torch.load(result_path)
-    assert saved_result.shape == collector.result.shape == (1,)
-    assert torch.equal(saved_result, collector.result)
+    # result.csv round-trips the in-memory frame: the source/target/index columns of the patched
+    # element, plus one column per metric, named after it.
+    result_df = pd.read_csv(result_path)
+    assert len(result_df) == len(collector.result) == 1
+    assert result_df["logit_diff"].to_list() == pytest.approx(collector.result["logit_diff"].to_list())
+    assert any(col.startswith("source_") for col in result_df.columns)
+    assert any(col.startswith("target_") for col in result_df.columns)
+    assert any(col.startswith("index_") for col in result_df.columns)
 
     # config.json mirrors the patching config that produced the run.
     saved_config = json.loads(config_path.read_text())
@@ -509,7 +520,7 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
 
     # index-0.csv carries one row per result entry, with the source/target/index columns.
     index_df = pd.read_csv(index_path)
-    assert len(index_df) == collector.result.numel()
+    assert len(index_df) == len(collector.result)
     assert any(col.startswith("source_") for col in index_df.columns)
     assert any(col.startswith("target_") for col in index_df.columns)
     assert any(col.startswith("index_") for col in index_df.columns)
@@ -625,7 +636,7 @@ def test_a_run_without_a_collector_still_writes_its_artifacts(model: HookedTrans
 
     # Nothing comes back, but the run did all of its work and left it on disk.
     assert returned is None
-    assert torch.equal(torch.load(save_dir / "result.pt"), collector.result)
+    pd.testing.assert_frame_equal(pd.read_csv(save_dir / "result.csv"), collector.result)
     assert (save_dir / "index-0.csv").exists()
 
 
@@ -655,7 +666,7 @@ def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model: HookedTran
         patching_input = PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT)
         collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
         assert collector is not None
-        return collector.result
+        return _metric(collector)
 
     assert torch.equal(run(from_file), run(in_code))
 
@@ -681,7 +692,7 @@ def test_a_source_and_a_target_may_alias_the_same_yaml_anchor(model: HookedTrans
         PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
     )
     assert collector is not None
-    assert collector.result.shape == (1,)
+    assert len(collector.result) == 1
 
 
 def test_the_omitted_keys_of_an_element_fall_back_to_their_defaults(model: HookedTransformer, config_from_yaml) -> None:
@@ -716,7 +727,7 @@ def test_an_exclusion_term_is_deserialized_into_its_own_filter(model: HookedTran
         PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
     )
     assert collector is not None
-    assert collector.result.shape == (2,)  # layers 0 and 2 survive the exclusion
+    assert len(collector.result) == 2  # layers 0 and 2 survive the exclusion
 
 
 @pytest.mark.parametrize(
@@ -757,7 +768,7 @@ def test_a_run_through_a_cached_model_patches_the_same_way(model: HookedTransfor
         patching_input = PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT)
         collector = Patcher(target).apply(patching_input, return_collector=True, verbose=False)
         assert collector is not None
-        return collector.result
+        return _metric(collector)
 
     direct = patch(model)
     cached_model = CachedModel(model, str(tmp_path))

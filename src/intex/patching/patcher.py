@@ -5,7 +5,7 @@ from intex.model import Model
 from intex.operation.collector import AbstractCollector
 from intex.operation.operator import Operator
 from intex.operation.plan import OperationPlan
-from intex.patching.collector import DefaultCollector
+from intex.patching.collector import PatchingCollector
 from intex.patching.input import PatchingInput
 from intex.patching.metric import AbstractMetric
 from intex.patching.processor import HookedPatchProcessor
@@ -16,7 +16,7 @@ class Patcher(Operator):
     def __init__(
         self,
         model: Model,
-        collector_class: type[AbstractCollector] = DefaultCollector,
+        collector_class: type[AbstractCollector] = PatchingCollector,
         batch_size: int = 1,
     ):
         self.model = model
