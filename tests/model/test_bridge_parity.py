@@ -27,6 +27,13 @@ pytestmark = pytest.mark.skipif(TransformerBridge is None, reason="transformer_l
 
 PROMPT = "The capital of France is"
 
+# What "the same numbers" can mean for a forward pass. The two backends run the same arithmetic on
+# the same weights, but not through the same kernels — the matmuls are issued differently, and a
+# folded ``ln_final`` is HuggingFace's LayerNorm on one side and ``LayerNormPre`` on the other — so
+# the last places of a float32 value are the build's to decide, and CI has seen two runners disagree
+# with three on a single logit. A parity break worth catching is orders of magnitude wider.
+TO_FLOAT32 = {"rtol": 1e-4, "atol": 1e-3}
+
 
 @pytest.fixture(scope="module")
 def compatible_bridge():
@@ -69,9 +76,9 @@ def test_a_forward_pass_produces_the_same_logits_and_activations(compatible_brid
         bridge_logits, bridge_cache = compatible_bridge.run_with_cache(tokens, names_filter=names)
         hooked_logits, hooked_cache = hooked.run_with_cache(tokens, names_filter=names)
 
-    assert torch.equal(bridge_logits, hooked_logits)
+    assert torch.allclose(bridge_logits, hooked_logits, **TO_FLOAT32)
     for name in names:
-        assert torch.equal(bridge_cache[name], hooked_cache[name])
+        assert torch.allclose(bridge_cache[name], hooked_cache[name], **TO_FLOAT32)
 
 
 @pytest.mark.parametrize(
