@@ -10,6 +10,7 @@ from intex.lens.method.lens import AbstractLensMethod
 from intex.lens.method.logit_lens import _attention_layer, _layer
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.model.index import IndexElement
+from intex.model.weight import mlp_weight
 
 _ATTENTION_READ_WEIGHT = {
     ModelLayerLocation.ATTENTION_Q: "W_Q",
@@ -64,9 +65,8 @@ class MLPKeyParameterLens(AbstractParameterLensMethod):
             )
         layer, neuron = _layer(index), _selection(index, ModelLocation.NEURON)
 
-        mlp = self.model.blocks[layer].mlp
-        weight = mlp.W_gate if gated and index.activation() is ModelLayerLocation.MLP_PRE else mlp.W_in
-        return weight[:, neuron].sum(-1)
+        model_attribute = "W_gate" if gated and index.activation() is ModelLayerLocation.MLP_PRE else "W_in"
+        return mlp_weight(self.model, layer, model_attribute)[:, neuron].sum(-1)
 
 
 class MLPValueParameterLens(AbstractParameterLensMethod):
@@ -76,7 +76,7 @@ class MLPValueParameterLens(AbstractParameterLensMethod):
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, " d_model"]:
         layer, neuron = _layer(index), _selection(index, ModelLocation.NEURON)
-        return self.model.blocks[layer].mlp.W_out[neuron].sum(0)
+        return mlp_weight(self.model, layer, "W_out")[neuron].sum(0)
 
 
 class AttentionReadParameterLens(AbstractParameterLensMethod):

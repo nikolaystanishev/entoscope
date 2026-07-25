@@ -280,7 +280,7 @@ def test_every_other_attribute_is_the_models_own(model, tmp_path):
     wrapped = CachedModel(model, str(tmp_path))
 
     assert wrapped.cfg is model.cfg
-    assert wrapped.W_U is model.W_U
+    assert torch.equal(wrapped.W_U, model.W_U)
     assert callable(wrapped.run_with_hooks)
     assert torch.equal(wrapped.to_tokens(PROMPT), model.to_tokens(PROMPT))
 

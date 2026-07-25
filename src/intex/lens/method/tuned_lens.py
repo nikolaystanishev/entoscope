@@ -3,13 +3,13 @@ from functools import lru_cache
 import torch
 from jaxtyping import Float
 from tuned_lens.nn import TunedLens as PretrainedTunedLens
-from tuned_lens.nn.unembed import Unembed
 
 from intex.lens.config import LensConfig
 from intex.lens.method.logit_lens import AttentionLogitLens, LogitLens, MLPLogitLens, _layer
 from intex.model import Model
 from intex.model.config import ModelLayerLocation, ModelLocatorConfig
 from intex.model.index import IndexElement
+from intex.model.unembed import build_unembed
 
 # Residual states the translator maps as a whole; every other activation is a component written
 # into one of them, and a component's share of the translated state carries none of the bias.
@@ -37,8 +37,7 @@ def load_translators(model: Model, resource: str) -> torch.nn.ModuleList:
     Cached because ``Lens`` builds a method per index element; the model is part of the key only to
     build the unembedding the checkpoint is checked against.
     """
-    # ``Unembed`` dispatches on the model type, so the disk-caching wrapper has to be unwrapped.
-    lens = PretrainedTunedLens.from_unembed_and_pretrained(Unembed(getattr(model, "_model", model)), resource)
+    lens = PretrainedTunedLens.from_unembed_and_pretrained(build_unembed(model), resource)
     if lens.config.d_model != model.cfg.d_model or lens.config.num_hidden_layers != model.cfg.n_layers:
         raise ValueError(
             f"The tuned lens '{resource}' was trained for a model with {lens.config.num_hidden_layers} layers of "

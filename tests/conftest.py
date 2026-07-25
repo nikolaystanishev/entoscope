@@ -1,18 +1,34 @@
 from functools import lru_cache
 
 import pytest
+import torch
 import yaml
 from transformer_lens import HookedTransformer, HookedTransformerConfig
-from transformers import AutoTokenizer
+from transformers import (
+    AutoTokenizer,
+    GPT2Config,
+    GPT2LMHeadModel,
+    GPTNeoXConfig,
+    GPTNeoXForCausalLM,
+    LlamaConfig,
+    LlamaForCausalLM,
+)
 
 from intex.operation.config import AbstractConfig, ConfigFactory
 
+try:
+    from transformer_lens.model_bridge import TransformerBridge
+except ImportError:  # transformer-lens 2.x (Intel macOS fallback)
+    TransformerBridge = None
 
-@pytest.fixture(scope="session")
-def model() -> HookedTransformer:
-    model = HookedTransformer.from_pretrained("gpt2")
-    model.eval()
-    return model
+# Every model fixture runs its tests once per backend. The bridge is what intex is built around;
+# HookedTransformer stays supported for the platforms that cannot install a transformer-lens with it.
+BACKENDS = ["hooked"] if TransformerBridge is None else ["bridge", "hooked"]
+
+# Shared by both backends' tiny models, so an index means the same thing whichever one is under test.
+# ``d_model`` is ``n_heads * d_head`` because a HuggingFace config derives the head size from the
+# two rather than carrying it, and a bridge reads its ``cfg`` back from there.
+TINY = {"n_layers": 3, "d_model": 16, "n_ctx": 16, "d_head": 4, "n_heads": 4, "d_mlp": 6, "d_vocab": 50257}
 
 
 @lru_cache(maxsize=1)
@@ -28,41 +44,105 @@ def build_tiny_model(**overrides) -> HookedTransformer:
     reach architectures GPT-2 does not have (grouped-query attention, a gated MLP, parallel
     attention/MLP). The tokenizer is GPT-2's, so prompts tokenize the same way.
     """
-    settings = {
-        "n_layers": 3,
-        "d_model": 8,
-        "n_ctx": 16,
-        "d_head": 4,
-        "n_heads": 4,
-        "d_mlp": 6,
-        "d_vocab": 50257,
-        "act_fn": "gelu",
-        "seed": 0,
-        **overrides,
-    }
+    settings = {**TINY, "act_fn": "gelu", "seed": 0, **overrides}
     model = HookedTransformer(HookedTransformerConfig(**settings), tokenizer=_tokenizer())
     model.eval()
     return model
 
 
-@pytest.fixture(scope="session")
-def small_model() -> HookedTransformer:
-    return build_tiny_model()
+def build_tiny_bridge(hf_model):
+    """The bridge counterpart of ``build_tiny_model``.
+
+    A bridge wraps a HuggingFace model instead of a ``HookedTransformerConfig``, so the architecture
+    variants come from choosing the HF class rather than from setting a flag. The wrapped model is
+    evaluated separately: a bridge holds it outside ``_modules``, so ``eval()`` does not reach it and
+    a freshly constructed HuggingFace model would keep dropout on.
+    """
+    hf_model.eval()
+    model = TransformerBridge.boot_transformers("tiny", hf_model=hf_model, tokenizer=_tokenizer(), device="cpu")
+    model.eval()
+    return model
 
 
-@pytest.fixture(scope="session")
-def gqa_model() -> HookedTransformer:
-    return build_tiny_model(n_key_value_heads=2)
+def _tiny_hf(factory, config_class, **settings):
+    torch.manual_seed(0)
+    return factory(
+        config_class(
+            num_hidden_layers=TINY["n_layers"],
+            hidden_size=TINY["d_model"],
+            num_attention_heads=TINY["n_heads"],
+            intermediate_size=TINY["d_mlp"],
+            vocab_size=TINY["d_vocab"],
+            max_position_embeddings=TINY["n_ctx"],
+            **settings,
+        )
+    )
 
 
-@pytest.fixture(scope="session")
-def gated_model() -> HookedTransformer:
-    return build_tiny_model(gated_mlp=True, act_fn="silu")
+def _tiny_gpt2():
+    torch.manual_seed(0)
+    return GPT2LMHeadModel(
+        GPT2Config(
+            n_layer=TINY["n_layers"],
+            n_embd=TINY["d_model"],
+            n_head=TINY["n_heads"],
+            n_inner=TINY["d_mlp"],
+            n_positions=TINY["n_ctx"],
+            vocab_size=TINY["d_vocab"],
+        )
+    )
 
 
-@pytest.fixture(scope="session")
-def parallel_model() -> HookedTransformer:
-    return build_tiny_model(parallel_attn_mlp=True)
+def _gpt2_bridge():
+    model = TransformerBridge.boot_transformers("gpt2", device="cpu")
+    model.eval()
+    return model
+
+
+def _gpt2_hooked():
+    model = HookedTransformer.from_pretrained("gpt2")
+    model.eval()
+    return model
+
+
+@pytest.fixture(scope="session", params=BACKENDS)
+def backend(request) -> str:
+    """Which transformer_lens wrapper the model fixtures build.
+
+    Every model fixture derives from this one, so a test that takes more than one of them gets
+    them all on the same backend. A test reaching a fixture through ``request.getfixturevalue``
+    has to name this fixture too, since that is what carries the parameter.
+    """
+    return request.param
+
+
+def _backend_fixture(bridge, hooked):
+    @pytest.fixture(scope="session")
+    def fixture(backend):
+        return bridge() if backend == "bridge" else hooked()
+
+    return fixture
+
+
+model = _backend_fixture(_gpt2_bridge, _gpt2_hooked)
+
+small_model = _backend_fixture(lambda: build_tiny_bridge(_tiny_gpt2()), build_tiny_model)
+
+# Llama is gated as well as grouped-query; the tests using this fixture only read head counts.
+gqa_model = _backend_fixture(
+    lambda: build_tiny_bridge(_tiny_hf(LlamaForCausalLM, LlamaConfig, num_key_value_heads=2)),
+    lambda: build_tiny_model(n_key_value_heads=2),
+)
+
+gated_model = _backend_fixture(
+    lambda: build_tiny_bridge(_tiny_hf(LlamaForCausalLM, LlamaConfig, num_key_value_heads=TINY["n_heads"])),
+    lambda: build_tiny_model(gated_mlp=True, act_fn="silu"),
+)
+
+parallel_model = _backend_fixture(
+    lambda: build_tiny_bridge(_tiny_hf(GPTNeoXForCausalLM, GPTNeoXConfig, use_parallel_residual=True)),
+    lambda: build_tiny_model(parallel_attn_mlp=True),
+)
 
 
 @pytest.fixture

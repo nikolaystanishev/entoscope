@@ -1,15 +1,16 @@
 """Local-storage caching of model activations.
 
-``CachedModel`` is a transparent wrapper around a ``transformer_lens.HookedTransformer`` that
-memorizes ``run_with_cache`` to disk. Operations receive it in place of the raw model and never
-know the difference: every attribute other than ``run_with_cache`` is forwarded to the wrapped
-model, so tokenization, ``run_with_hooks`` (patching), weight access and ``cfg`` behave exactly
-as before, while repeated forward passes for the same ``(model, tokens, names_filter)`` are read
-back from ``cache_dir`` instead of recomputed.
+``CachedModel`` is a transparent wrapper around a ``transformer_lens`` model — a
+``TransformerBridge`` or a ``HookedTransformer`` — that memorizes ``run_with_cache`` to disk.
+Operations receive it in place of the raw model and never know the difference: every attribute
+other than ``run_with_cache`` is forwarded to the wrapped model, so tokenization,
+``run_with_hooks`` (patching), weight access and ``cfg`` behave exactly as before, while repeated
+forward passes for the same ``(model, tokens, names_filter)`` are read back from ``cache_dir``
+instead of recomputed.
 
 Usage::
 
-    model = HookedTransformer.from_pretrained(config.model_name)
+    model = TransformerBridge.boot_transformers(config.model_name)
     model = CachedModel(model, cache_dir="./.activation_cache")  # cache_dir=None => pass-through
     Lens(model).apply(LensInput(LensConfig(...), "Paris is located in"))
 """
@@ -20,12 +21,15 @@ import hashlib
 import os
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
-from transformer_lens import ActivationCache, HookedTransformer
+from transformer_lens import ActivationCache
 
 from intex.util.data import create_if_not_exists
+
+if TYPE_CHECKING:  # ``intex.model.base`` imports this module, so the alias is type-only.
+    from intex.model.base import Model
 
 FORMAT_VERSION = 1
 
@@ -133,13 +137,13 @@ class ActivationDiskCache:
 
 
 class CachedModel:
-    """Transparent read-through disk cache around a ``HookedTransformer``.
+    """Transparent read-through disk cache around a ``transformer_lens`` model.
 
     Overrides only ``run_with_cache``; every other attribute is forwarded to the wrapped model via
     ``__getattr__``. When ``cache_dir`` is ``None`` the wrapper is a pure pass-through.
     """
 
-    def __init__(self, model: HookedTransformer, cache_dir: str | None = None):
+    def __init__(self, model: Model, cache_dir: str | None = None):
         self._model = model
         self._cache = ActivationDiskCache(cache_dir) if cache_dir else None
 
@@ -153,6 +157,9 @@ class CachedModel:
     def _fingerprint(self) -> str:
         cfg = self._model.cfg
         parts = (
+            # A bridge and a HookedTransformer of the same name read the same cfg but not
+            # necessarily the same weights, so they must not share cache entries.
+            type(self._model).__name__,
             cfg.model_name,
             cfg.n_layers,
             cfg.n_heads,
