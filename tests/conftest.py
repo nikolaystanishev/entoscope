@@ -1,4 +1,7 @@
+import json
+from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
 import pytest
 import torch
@@ -157,6 +160,51 @@ def forbid_model_runs(monkeypatch, model) -> None:
 
     for name in ("run_with_cache", "run_with_hooks", "forward"):
         monkeypatch.setattr(model, name, fail, raising=False)
+
+
+@dataclass(frozen=True)
+class RenderedFigure:
+    """The plotly figure a run left in ``result.html``, read back the way the browser receives it.
+
+    Asserting on the page's own JSON rather than on substrings of the file is what lets a test say
+    which axis something landed on, and whether the run was drawn as a heatmap or a bar.
+    """
+
+    traces: list[dict]
+    layout: dict
+
+    @property
+    def trace(self) -> dict:
+        assert len(self.traces) == 1
+        return self.traces[0]
+
+    @property
+    def kind(self) -> str:
+        return self.trace["type"]
+
+    @property
+    def title(self) -> str:
+        return self.layout["title"]["text"]
+
+    def ticks(self, axis: str) -> list[str]:
+        return self.layout.get(axis, {}).get("ticktext", [])
+
+    def axis_title(self, axis: str) -> str:
+        return self.layout.get(axis, {}).get("title", {}).get("text", "")
+
+
+def rendered_figure(save_dir) -> RenderedFigure:
+    """The figure a run wrote into ``save_dir/result.html``.
+
+    ``Plotly.newPlot(`` appears inside the bundled plotly.js too (in an error message), so the call
+    itself is the last occurrence; the trailing config object marks where the layout argument ends.
+    """
+    html = (Path(save_dir) / "result.html").read_text(encoding="utf-8")
+    start = html.rindex("Plotly.newPlot(") + len("Plotly.newPlot(")
+    arguments = html[start : html.index('{"responsive": true}', start)].rstrip().rstrip(",")
+
+    traces, layout = json.loads(f"[{arguments[arguments.index(',') + 1 :]}]")
+    return RenderedFigure(traces, layout)
 
 
 @pytest.fixture

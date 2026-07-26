@@ -9,6 +9,7 @@ import pytest
 import torch
 import yaml
 
+from intex.lens.collector import LensCollector
 from intex.lens.config import LensConfig, LensType
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
@@ -17,7 +18,7 @@ from intex.model.cache import CachedModel
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.operation.config import ConfigFactory
 
-from ..conftest import forbid_model_runs
+from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure
 from .conftest import (
     HEAD,
     NEURON,
@@ -578,3 +579,95 @@ def test_a_long_index_is_truncated_when_it_is_printed(model):
 
     assert len(described.splitlines()) < model.cfg.n_layers * model.to_tokens(PROMPT).shape[1]
     assert ".." in described
+
+
+# --------------------------------------------------------------------------------------------------
+# Visualization
+# --------------------------------------------------------------------------------------------------
+def _draw(model, config: LensConfig, save_dir, prompt: str | None = PROMPT) -> RenderedFigure:
+    Lens(model).apply(LensInput(config, prompt), save_dir=str(save_dir), verbose=False)
+    return rendered_figure(save_dir)
+
+
+def test_a_lens_run_writes_an_interactive_result_page(model, tmp_path):
+    save_dir = tmp_path / "lens_run"
+    config = declarative_config(**LAYER_POSITION_GRID, top_k=3)
+    expected = lens_rows(model, config)
+
+    figure = _draw(model, config, save_dir)
+
+    assert "Plotly.newPlot" in (save_dir / "result.html").read_text(encoding="utf-8")
+    assert figure.title.startswith("Lens — logit_lens")
+    assert figure.kind == "heatmap"
+    # Probabilities are absolute, so the scale is pinned and two runs stay comparable at a glance.
+    assert (figure.trace["zmin"], figure.trace["zmax"]) == (0.0, 1.0)
+    assert figure.trace["colorbar"]["title"]["text"] == "probability"
+    # The top-1 token is printed into its own cell, so it reaches the page as more than hover text.
+    assert figure.trace["text"][0][0] == expected["str_token_0"].iloc[0]
+
+
+def test_the_position_axis_is_labelled_with_the_prompts_tokens(model, tmp_path):
+    figure = _draw(model, declarative_config(**LAYER_POSITION_GRID), tmp_path / "lens_run")
+
+    assert (figure.axis_title("xaxis"), figure.axis_title("yaxis")) == ("position", "layer")
+    assert figure.ticks("xaxis")[1] == '1: "The"'
+    assert figure.ticks("yaxis") == [str(layer) for layer in range(model.cfg.n_layers)]
+
+
+def test_a_head_axis_goes_across_with_the_layers_down(small_model, tmp_path):
+    # The position is pinned to one value, so it carries no comparison and leaves the axes entirely.
+    config = declarative_config(
+        activation=ModelLayerLocation.ATTENTION_Z,
+        location=[ModelLocation.LAYER, ModelLocation.HEAD, ModelLocation.POSITION],
+        filter=Filter(inclusion_terms=[{ModelLocation.POSITION: -1}]),
+    )
+
+    figure = _draw(small_model, config, tmp_path / "heads")
+
+    assert figure.kind == "heatmap"
+    assert (figure.axis_title("xaxis"), figure.axis_title("yaxis")) == ("head", "layer")
+    assert len(figure.trace["z"]) == small_model.cfg.n_layers
+    assert len(figure.trace["z"][0]) == small_model.cfg.n_heads
+
+
+def test_a_third_axis_folds_into_the_y_ticks(small_model, tmp_path):
+    # Nothing is aggregated away: every (layer, head) pair keeps its own row of positions.
+    config = declarative_config(
+        activation=ModelLayerLocation.ATTENTION_Z,
+        location=[ModelLocation.LAYER, ModelLocation.HEAD, ModelLocation.POSITION],
+    )
+
+    figure = _draw(small_model, config, tmp_path / "folded")
+
+    assert figure.axis_title("xaxis") == "position"
+    assert figure.axis_title("yaxis") == "layer · head"
+    assert figure.ticks("yaxis")[0] == "layer 0 · head 0"
+    assert len(figure.trace["z"]) == small_model.cfg.n_layers * small_model.cfg.n_heads
+
+
+def test_the_base_collector_skips_the_html(model, tmp_path):
+    # The base collector persists the CSVs only; visualization is opt-in via the subclass.
+    save_dir = tmp_path / "no_viz"
+    collector = Lens(model, collector_class=LensCollector).apply(
+        LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT),
+        save_dir=str(save_dir),
+        return_collector=True,
+        verbose=False,
+    )
+
+    assert collector is not None
+    assert type(collector) is LensCollector
+    assert (save_dir / "result.csv").exists()
+    assert not (save_dir / "result.html").exists()
+
+
+def test_a_plan_for_the_base_collector_promises_no_html(model, tmp_path):
+    save_dir = tmp_path / "no_viz_plan"
+    lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT)
+    lens = Lens(model, collector_class=LensCollector)
+
+    plan = lens.plan(lens_input, save_dir=str(save_dir), verbose=False)
+    lens.apply(lens_input, save_dir=str(save_dir), verbose=False)
+
+    assert "result.html" not in plan.outputs
+    assert sorted(path.name for path in save_dir.iterdir()) == sorted(plan.outputs)

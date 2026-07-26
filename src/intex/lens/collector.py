@@ -5,6 +5,7 @@ import pandas as pd
 import torch
 
 from intex.lens.input import LensInput
+from intex.lens.visualization import LensFigure
 from intex.model import Model
 from intex.operation.collector import AbstractCollector
 from intex.util.collections import dataframe_to_list
@@ -52,3 +53,29 @@ class LensCollector(AbstractCollector[LensInput]):
 
     def output_files(self) -> list[str]:
         return ["result.csv", "index.csv", *super().output_files()]
+
+
+class LensVisualizationCollector(LensCollector):
+    """A ``LensCollector`` that also writes an interactive Plotly ``result.html``.
+
+    Kept separate from the base collector so the base (and anything that only needs the CSV) does
+    not pull in plotly, and so visualization is opt-in by collector choice rather than a config flag.
+    """
+
+    def _save_result(self, save_dir: str):
+        super()._save_result(save_dir)
+        self._render_html(self.result, self.operation_input, self._str_tokens(), os.path.join(save_dir, "result.html"))
+
+    @staticmethod
+    def _render_html(result: pd.DataFrame, lens_input: LensInput, tokens: dict[str, list[str]], path: str) -> None:
+        LensFigure(result, lens_input, tokens).render(path)
+
+    def output_files(self) -> list[str]:
+        return ["result.html", *super().output_files()]
+
+    def _str_tokens(self) -> dict[str, list[str]]:
+        # The parameter lens reads the weights, so it has no prompt and no tokens to label an axis with.
+        if self.operation_input.prompt is None:
+            return {}
+        tokens = self.model.to_str_tokens(self.operation_input.tokens[0])
+        return {"source_position": [escape_token(token) for token in tokens]}

@@ -10,7 +10,7 @@ from intex.lens.method.lens import AbstractLensMethod
 from intex.lens.method.logit_lens import _attention_layer, _layer
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.model.index import IndexElement
-from intex.model.weight import mlp_weight
+from intex.model.weight import attention_out_weight, mlp_weight
 
 _ATTENTION_READ_WEIGHT = {
     ModelLayerLocation.ATTENTION_Q: "W_Q",
@@ -101,4 +101,4 @@ class AttentionWriteParameterLens(AbstractParameterLensMethod):
         layer = _attention_layer(self.model, index)
         head, neuron = _selection(index, ModelLocation.HEAD), _selection(index, ModelLocation.NEURON)
 
-        return self.model.blocks[layer].attn.W_O[head][:, neuron].sum((0, 1))
+        return attention_out_weight(self.model, layer)[head][:, neuron].sum((0, 1))

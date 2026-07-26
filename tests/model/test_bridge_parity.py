@@ -14,7 +14,7 @@ from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.lens.method.logit_lens import _attention_scale
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from intex.model.weight import mlp_weight
+from intex.model.weight import attention_out_weight, mlp_weight
 
 from ..conftest import _gpt2_hooked
 
@@ -56,7 +56,8 @@ def test_the_weights_a_lens_reads_are_the_same(compatible_bridge, hooked):
     for layer in range(hooked.cfg.n_layers):
         assert torch.equal(mlp_weight(compatible_bridge, layer, "W_in"), mlp_weight(hooked, layer, "W_in"))
         assert torch.equal(mlp_weight(compatible_bridge, layer, "W_out"), mlp_weight(hooked, layer, "W_out"))
-        for name in ("W_Q", "W_K", "W_V", "W_O"):
+        assert torch.equal(attention_out_weight(compatible_bridge, layer), attention_out_weight(hooked, layer))
+        for name in ("W_Q", "W_K", "W_V"):
             bridge_attention = getattr(compatible_bridge.blocks[layer].attn, name)
             assert torch.equal(bridge_attention, getattr(hooked.blocks[layer].attn, name))
 

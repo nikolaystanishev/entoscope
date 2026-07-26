@@ -9,7 +9,7 @@ from intex.lens.method.lens import AbstractLensMethod
 from intex.model import Model
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.model.index import IndexElement
-from intex.model.weight import mlp_weight
+from intex.model.weight import attention_out_weight, mlp_weight
 
 _KEY_VALUE_ACTIVATIONS = (ModelLayerLocation.ATTENTION_K, ModelLayerLocation.ATTENTION_V)
 
@@ -116,7 +116,7 @@ class AttentionLogitLens(LogitLens):
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_model"]:
         layer = _attention_layer(self.model, index)
-        return _head_lift(activation, self.model.blocks[layer].attn.W_O, index)
+        return _head_lift(activation, attention_out_weight(self.model, layer), index)
 
 
 class AttentionQKLogitLens(LogitLens):

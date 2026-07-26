@@ -2,10 +2,9 @@ import torch
 from tqdm import tqdm
 
 from intex.model import Model
-from intex.operation.collector import AbstractCollector
 from intex.operation.operator import Operator
 from intex.operation.plan import OperationPlan
-from intex.patching.collector import PatchingCollector
+from intex.patching.collector import PatchingCollector, PatchingVisualizationCollector
 from intex.patching.input import PatchingInput
 from intex.patching.metric import AbstractMetric
 from intex.patching.processor import HookedPatchProcessor
@@ -16,7 +15,7 @@ class Patcher(Operator):
     def __init__(
         self,
         model: Model,
-        collector_class: type[AbstractCollector] = PatchingCollector,
+        collector_class: type[PatchingCollector] = PatchingVisualizationCollector,
         batch_size: int = 1,
     ):
         self.model = model
@@ -29,7 +28,7 @@ class Patcher(Operator):
         save_dir: str | None = None,
         return_collector: bool = False,
         verbose: bool = True,
-    ) -> AbstractCollector | None:
+    ) -> PatchingCollector | None:
         collector = self._patch(patching_input, save_dir, verbose)
         collector.save()
 
@@ -58,16 +57,16 @@ class Patcher(Operator):
             ],
             activations=patching_input.activation_names(),
             save_dir=save_dir,
-            outputs=self.collector_class(patching_input, save_dir).output_files(),
+            outputs=self.collector_class(patching_input, self.model, save_dir).output_files(),
         )
 
         if verbose:
             print(plan)
         return plan
 
-    def _patch(self, patching_input: PatchingInput, save_dir: str | None, verbose: bool = True) -> AbstractCollector:
+    def _patch(self, patching_input: PatchingInput, save_dir: str | None, verbose: bool = True) -> PatchingCollector:
         patching_input.prepare(self.model)
-        collector = self.collector_class(patching_input, save_dir)
+        collector = self.collector_class(patching_input, self.model, save_dir)
         patching_index = patching_input.index
         collector.prepare()
         patching_index = list(zip_fill(*patching_index))

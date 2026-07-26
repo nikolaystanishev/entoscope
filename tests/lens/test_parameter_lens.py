@@ -11,7 +11,7 @@ from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 
-from ..conftest import forbid_model_runs
+from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure
 from .conftest import (
     HEAD,
     LAYER,
@@ -344,3 +344,60 @@ def test_a_plan_describes_the_run_that_follows_it(model, tmp_path):
     assert len(collector.result) == plan.steps
     assert sorted(path.name for path in save_dir.iterdir()) == sorted(plan.outputs)
     pd.testing.assert_frame_equal(plan.index[0], collector.operation_input.index.to_df())
+
+
+# --------------------------------------------------------------------------------------------------
+# Visualization
+# --------------------------------------------------------------------------------------------------
+def _draw(model, config: LensConfig, save_dir) -> RenderedFigure:
+    Lens(model).apply(LensInput(config), save_dir=str(save_dir), verbose=False)
+    return rendered_figure(save_dir)
+
+
+def test_a_parameter_lens_page_needs_no_prompt(model, tmp_path):
+    # One neuron read across every layer varies over the layer alone, so it is drawn as a bar — and
+    # with no prompt there are no tokens to name the axis with, so the layers label themselves.
+    save_dir = tmp_path / "parameter_lens_run"
+    expected = lens_rows(model, _parameter_config(top_k=3))
+
+    figure = _draw(model, _parameter_config(top_k=3), save_dir)
+
+    assert figure.title.startswith("Lens — parameter_lens")
+    assert "weights (no prompt)" in figure.title
+    assert figure.kind == "bar"
+    assert figure.ticks("xaxis") == [str(layer) for layer in range(model.cfg.n_layers)]
+    assert figure.trace["text"][0] == expected["str_token_0"].iloc[0]
+
+
+def test_a_neuron_axis_goes_across_with_the_layers_down(small_model, tmp_path):
+    config = LensConfig(
+        type=LensType.PARAMETER_LENS,
+        source=ModelLocatorConfig(
+            activation=ModelLayerLocation.MLP_POST, location=[ModelLocation.LAYER, ModelLocation.NEURON]
+        ),
+    )
+
+    figure = _draw(small_model, config, tmp_path / "neurons")
+
+    assert figure.kind == "heatmap"
+    assert (figure.axis_title("xaxis"), figure.axis_title("yaxis")) == ("neuron", "layer")
+    assert figure.ticks("xaxis") == [str(neuron) for neuron in range(small_model.cfg.d_mlp)]
+
+
+def test_an_empty_index_still_writes_a_page(model, tmp_path):
+    # Including and excluding the same layer leaves nothing to run, and a result with no rows has no
+    # value column either — the page says so rather than failing to render.
+    config = LensConfig(
+        type=LensType.PARAMETER_LENS,
+        source=ModelLocatorConfig(
+            activation=ModelLayerLocation.MLP_POST,
+            location=[ModelLocation.LAYER],
+            filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0}], exclusion_terms=[{ModelLocation.LAYER: 0}]),
+        ),
+    )
+    save_dir = tmp_path / "empty"
+
+    _draw(model, config, save_dir)
+
+    assert len(pd.read_csv(save_dir / "result.csv")) == 0
+    assert "No rows in the index" in (save_dir / "result.html").read_text(encoding="utf-8")
