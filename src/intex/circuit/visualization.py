@@ -9,6 +9,8 @@ pruned routes-to-prediction (headline) and the full contribution graph.
 
 from __future__ import annotations
 
+from html import escape
+
 import networkx as nx
 import plotly.graph_objects as go
 
@@ -70,9 +72,10 @@ class CircuitFigure(Figure):
         return f"Circuit — {self.circuit.prompt}"
 
     def figures(self) -> list[go.Figure]:
+        prompt = escape(self.circuit.prompt)
         return [
-            self._graph_figure(self.circuit.routes, f"Information Flow Routes — {self.circuit.prompt!r}"),
-            self._graph_figure(self.circuit.graph, f"Full contribution graph — {self.circuit.prompt!r}"),
+            self._graph_figure(self.circuit.routes, f'Information Flow Routes — "{prompt}"'),
+            self._graph_figure(self.circuit.graph, f'Full contribution graph — "{prompt}"'),
         ]
 
     def _graph_figure(self, graph: nx.MultiDiGraph, title: str) -> go.Figure:
@@ -164,7 +167,7 @@ class CircuitFigure(Figure):
             node_y.append(y)
             node_color.append(_KIND_COLOR.get(attrs["kind"], "#111827"))
             node_hover.append(
-                f"{node}<br>{attrs['kind']} · L{attrs['layer']} · pos {attrs['position']}<br>'{attrs['token']}'"
+                f"{node}<br>{attrs['kind']} · L{attrs['layer']} · pos {attrs['position']}<br>'{escape(attrs['token'])}'"
             )
         fig.add_trace(
             go.Scatter(
