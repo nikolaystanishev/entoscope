@@ -69,6 +69,9 @@ collector = Lens(model).apply(
 print(collector.result)  # one row per (layer, neuron), with its top-k tokens
 ```
 
+Alongside `result.csv` the run writes an interactive `result.html` — see
+[Result visualization](#result-visualization).
+
 An index element needs a single layer — each weight lives in one block — while a list of neurons
 (or heads) sums those weight vectors into one direction before projecting it, and leaving the
 location out sums all of them, exactly as grouped neurons and heads work in the logit lens.
@@ -137,10 +140,43 @@ For each prompt `i`, the collector writes into `save_dir`:
 
 By default `CircuitDiscoverer` uses `CircuitVisualizationCollector`, which writes the HTML above. For
 graph-data-only runs (no HTML), pass the base collector:
-`CircuitDiscoverer(model, collector_class=CircuitCollector)`.
+`CircuitDiscoverer(model, collector_class=CircuitCollector)` — see
+[Result visualization](#result-visualization), which every operation shares.
 
 Configs can also be loaded from YAML via `intex.operation.config.ConfigFactory[CircuitConfig]`, and
 the operation can be run from an `@intex.script.experiment.experiment` script.
+
+## Result visualization
+
+Every operation writes a self-contained interactive Plotly page into `save_dir` next to its data —
+`result.html` for a lens or patching run, `circuit_{i}.html` per prompt for circuit discovery. The
+page needs no network and no local server: open the file.
+
+A lens or patching page draws the run's own index. **Position goes on the x axis and layer on the y
+axis** when both are present — the canonical activation-patching layout — otherwise the axes follow
+`layer, head, neuron, position`, with the last of these the run varies over going across. An axis the
+run does not vary over is dropped, further axes fold into composite y ticks (`layer 5 · head 3`), and
+a one-dimensional index — including one built from explicit `coordinates` — becomes a bar chart.
+Position ticks carry the prompt's tokens (`4: " Spain"`); for patching that is the *target* prompt,
+since the patched run is the target run.
+
+What each encodes:
+
+- **Patching** — the metric on a diverging scale centred on the value an ineffective patch would
+  produce (the unpatched target's own logit diff, or zero for the normalized and KL metrics), so warm
+  cells are the locations that moved the model toward the source. Hover carries the metric, the full
+  source and target coordinates, and what any other patch element did.
+- **Lens** — the top-1 probability on a sequential scale fixed to `[0, 1]`, with the top-1 token
+  printed in the cell and the whole top-k in hover.
+
+Visualization is chosen by the collector rather than by a config flag, so a run that only needs the
+CSV opts out by naming the base collector — and only then does the operation avoid importing plotly:
+
+```python
+Patcher(model, collector_class=PatchingCollector)
+Lens(model, collector_class=LensCollector)
+CircuitDiscoverer(model, collector_class=CircuitCollector)
+```
 
 ## Dry run
 
@@ -159,12 +195,12 @@ Lens plan — logit_lens (config: my_lens)
   prompt: "The capital of France is" (6 tokens)
   reads: blocks.0.hook_resid_post, blocks.1.hook_resid_post, blocks.10.hook_resid_post, ...
   work: 72 elements, 1 forward pass
-  writes: runs/logit_lens/{result.csv, index.csv, config.json}
+  writes: runs/logit_lens/{result.html, result.csv, index.csv, config.json}
   index (72 rows):
-     source_layer  source_position source_activation  index_layer  index_position
-                0                0        resid.post            0               0
-                0                1        resid.post            0               1
-              ...              ...               ...          ...             ...
+     source_layer  source_position source_activation
+                0                0        resid.post
+                0                1        resid.post
+              ...              ...               ...
 ```
 
 What each operator reports:

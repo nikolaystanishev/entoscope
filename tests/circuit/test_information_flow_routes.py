@@ -4,12 +4,14 @@ from collections import Counter
 
 import networkx as nx
 import pytest
+import torch
 
 from intex.circuit.collector import CircuitCollector
 from intex.circuit.config import CircuitConfig, CircuitMethodType
 from intex.circuit.discoverer import CircuitDiscoverer
 from intex.circuit.input import CircuitInput
 from intex.circuit.method.circuit import PromptCircuit
+from intex.circuit.method.information_flow_routes import decomposed_attn
 from intex.model.cache import CachedModel
 
 PROMPT = "The capital of France is"
@@ -170,6 +172,25 @@ def test_a_circuit_method_that_is_not_known_raises(model):
 
     with pytest.raises(ValueError, match="Unknown circuit method type"):
         discover(model, config=config)
+
+
+def test_grouped_query_attention_gets_an_edge_per_query_head(gqa_model):
+    # Fewer value heads than query heads, and an architecture that carries no attention bias at all:
+    # the cached values are shared by a group of heads, and each of those heads is still its own edge.
+    with torch.no_grad():
+        _, cache = gqa_model.run_with_cache(gqa_model.to_tokens(PROMPT))
+
+    for layer in range(gqa_model.cfg.n_layers):
+        b_O = gqa_model.blocks[layer].attn.b_O
+        written = cache[f"blocks.{layer}.hook_attn_out"][0]
+        expected = written if b_O is None else written - b_O
+
+        assert torch.allclose(decomposed_attn(gqa_model, cache, layer).sum(dim=(1, 2)), expected, atol=1e-4)
+
+    circuit = discover(gqa_model, config=circuit_config(threshold=0.0))[0]
+
+    heads = {d["head"] for _, _, d in circuit.graph.edges(data=True) if d["kind"] == "attention"}
+    assert heads == set(range(gqa_model.cfg.n_heads))
 
 
 def test_parallel_attention_and_mlp_is_rejected(parallel_model):

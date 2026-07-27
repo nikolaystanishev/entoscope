@@ -29,10 +29,11 @@ from transformer_lens import ActivationCache
 
 from intex.circuit.method.circuit import AbstractCircuitMethod, PromptCircuit
 from intex.circuit.vendor import contributions
-from intex.lens.collector import escape_token
 from intex.model import Model
 from intex.model.config import ModelLayerLocation
 from intex.model.index import TRANSFORMER_ACT_NAME
+from intex.model.token import str_token_labels
+from intex.model.weight import attention_out_weight
 
 # Sentinel head id for edges that are not attention (residual skips and the MLP block).
 NON_ATTENTION_HEAD = -1
@@ -143,13 +144,10 @@ def decomposed_attn(
     residual stream unnormalized). Summing over ``key_pos`` and ``head`` recovers ``attn_out`` minus
     the ``b_O`` bias. Handles grouped-query attention by repeating the value heads across their group.
     """
+    # ``hook_v`` already carries ``b_V`` on both backends, so the bias is not added again here.
     hook_v = cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.ATTENTION_V], layer][batch_i]  # [key_pos, head_kv, d_head]
-    b_v = model.blocks[layer].attn.b_V  # [head, d_head]
+    v = hook_v.repeat_interleave(model.cfg.n_heads // hook_v.shape[-2], dim=-2)  # [key_pos, head, d_head]
 
-    num_head_groups = b_v.shape[-2] // hook_v.shape[-2]
-    hook_v = hook_v.repeat_interleave(num_head_groups, dim=-2)  # [key_pos, head, d_head]
-
-    v = hook_v + b_v
     pattern = cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.ATTENTION_PATTERN], layer][batch_i].to(
         v.dtype
     )  # [head, query_pos, key_pos]
@@ -161,7 +159,7 @@ def decomposed_attn(
     )
     return einops.einsum(
         z,
-        model.W_O[layer],  # [head, d_head, d_model]
+        attention_out_weight(model, layer),  # [head, d_head, d_model]
         "query_pos key_pos head d_head, head d_head d_model -> query_pos key_pos head d_model",
     )
 
@@ -273,18 +271,13 @@ def prune_routes_to_predictions(
     return nx.MultiDiGraph(search.edge_subgraph(edges).reverse(copy=True))
 
 
-def str_tokens_for(model: Model, tokens: Int[torch.Tensor, "batch pos"]) -> list[str]:
-    """Human-readable, CSV/XML-safe token strings for one prompt (batch item 0)."""
-    return [escape_token(token) for token in model.to_str_tokens(tokens[0])]
-
-
 class InformationFlowRoutes(AbstractCircuitMethod):
     @torch.no_grad()
     def build(self, prompt: str, tokens: Int[torch.Tensor, "batch pos"]) -> PromptCircuit:
         _, cache = self.model.run_with_cache(tokens)
 
         n_tokens = tokens.shape[1]
-        str_tokens = str_tokens_for(self.model, tokens)
+        str_tokens = str_token_labels(self.model, tokens)
 
         graph = build_information_flow_graph(self.model, cache, n_tokens, str_tokens, self.config.threshold)
         routes = prune_routes_to_predictions(

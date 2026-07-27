@@ -10,6 +10,7 @@ from transformer_lens import HookedTransformer
 from intex.model.cache import CachedModel
 from intex.model.config import Filter, Group, Incremental, ModelLayerLocation, ModelLocation
 from intex.operation.config import ConfigFactory
+from intex.patching.collector import PatchingCollector
 from intex.patching.config import (
     PatchingConfig,
     PatchingElementConfig,
@@ -20,10 +21,15 @@ from intex.patching.config import (
 from intex.patching.input import PatchingInput
 from intex.patching.patcher import Patcher
 
-from ..conftest import forbid_model_runs
+from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure
 
 SOURCE_PROMPT = "The capital of France is"
 TARGET_PROMPT = "The capital of Spain is"
+
+
+def _metric(collector: PatchingCollector) -> torch.Tensor:
+    """The result frame's metric column, in index order — one value per patched run."""
+    return torch.tensor(collector.result[collector.operation_input.config.metric.value].to_numpy(), dtype=torch.float32)
 
 
 def _run(model: HookedTransformer, config: PatchingConfig) -> torch.Tensor:
@@ -31,7 +37,7 @@ def _run(model: HookedTransformer, config: PatchingConfig) -> torch.Tensor:
         PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
     )
     assert collector is not None
-    return collector.result
+    return _metric(collector)
 
 
 def _generations(model: HookedTransformer) -> tuple[int, int]:
@@ -163,9 +169,9 @@ def test_activation_patching_from_source_into_target(model: HookedTransformer) -
 
     collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
 
-    # One patch (the single last layer) -> a one-element result tensor.
+    # One patch (the single last layer) -> a one-row result.
     assert collector is not None
-    result = collector.result
+    result = _metric(collector)
     assert result.shape == (1,)
 
     assert torch.allclose(result.squeeze(), torch.tensor(1.0))
@@ -197,9 +203,9 @@ def test_zero_ablation_patching(model: HookedTransformer) -> None:
 
     collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
 
-    # One patch (the single last layer) -> a one-element result tensor.
+    # One patch (the single last layer) -> a one-row result.
     assert collector is not None
-    result = collector.result
+    result = _metric(collector)
     assert result.shape == (1,)
 
     # The same ablation done by hand: the last layer's residual is zeroed on the target run.
@@ -221,9 +227,9 @@ def _run_value_scale(model: HookedTransformer, scale: float) -> torch.Tensor:
 
     collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
 
-    # One patch (a single layer) -> a one-element result tensor.
+    # One patch (a single layer) -> a one-row result.
     assert collector is not None
-    result = collector.result
+    result = _metric(collector)
     assert result.shape == (1,)
     return result.squeeze()
 
@@ -294,9 +300,9 @@ def test_multi_config_patching_mlp_mhsa_and_pattern(model: HookedTransformer) ->
     ]
 
     # All three patches are applied together on a single forward pass and the collector keys the result
-    # off the first patch's (single) output coordinate -> a one-element tensor.
+    # off the first patch's (single) output coordinate -> a one-row result.
     assert collector is not None
-    result = collector.result
+    result = _metric(collector)
     assert result.shape == (1,)
 
     # The three replacements done by hand, on one forward pass, give the same logit diff...
@@ -377,7 +383,7 @@ def _run_explicit(
     )
     collector = Patcher(model).apply(patching_input, save_dir=save_dir, return_collector=True, verbose=False)
     assert collector is not None
-    return collector.result
+    return _metric(collector)
 
 
 def test_explicit_coordinates_matches_declarative_patch(model: HookedTransformer) -> None:
@@ -431,13 +437,15 @@ def test_explicit_pairing_and_artifacts(model: HookedTransformer, tmp_path: Path
     assert torch.allclose(paired, torch.cat([first, second]))
     assert not torch.allclose(first, second)
 
-    # index-0.csv pairs the source/target coordinates with the flat output axis.
+    # index-0.csv pairs each source coordinate with the target coordinate it was written into.
     index_df = pd.read_csv(save_dir / "index-0.csv")
     assert len(index_df) == 2
-    assert any(col.startswith("source_") for col in index_df.columns)
-    assert any(col.startswith("target_") for col in index_df.columns)
-    assert [col for col in index_df.columns if col.startswith("index_")] == ["index_coordinate"]
-    assert index_df["index_coordinate"].to_list() == [0, 1]
+    assert index_df["source_layer"].to_list() == [5, 6]
+    assert index_df["target_layer"].to_list() == [7, 7]
+    assert index_df["target_position"].nunique() == 2
+    # The locations the pairs name and nothing else — how they are laid out on a plot is not the
+    # index file's business.
+    assert all(col.startswith(("source_", "target_")) for col in index_df.columns)
 
 
 def test_explicit_per_coordinate_activation(model: HookedTransformer) -> None:
@@ -460,6 +468,54 @@ def test_explicit_per_coordinate_activation(model: HookedTransformer) -> None:
     assert result.shape == (2,)
     assert torch.allclose(result[0], torch.tensor(1.0), atol=1e-5)
     assert not torch.allclose(result[1], torch.tensor(1.0), atol=1e-2)
+
+
+def test_two_sources_differing_only_in_activation_keep_their_own_metric(model: HookedTransformer) -> None:
+    torch.manual_seed(42)
+
+    # Explicit source coordinates against a declarative target: that mix is what sends the index
+    # through the factorized output branch, which drops the activation column. Both coordinates sit at
+    # the same layer/position/neuron, so activation is the only thing telling the two runs apart --
+    # and a collector keyed on that coordinate would file both under one cell, reporting whichever ran
+    # last on both rows.
+    source = PatchingElementConfig(
+        type=PatchingType.REPLACE,
+        coordinates=[
+            {
+                ModelLocation.ACTIVATION: activation,
+                ModelLocation.LAYER: 0,
+                ModelLocation.POSITION: -1,
+                ModelLocation.NEURON: 1,
+            }
+            for activation in (ModelLayerLocation.MLP_POST, ModelLayerLocation.MLP_PRE)
+        ],
+    )
+    # One target row, so ``zip_fill`` holds it steady while the two source coordinates vary.
+    target = PatchingElementConfig(
+        type=PatchingType.REPLACE,
+        activation=ModelLayerLocation.MLP_POST,
+        location=[ModelLocation.LAYER],
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0}]),
+    )
+    config = PatchingConfig(
+        config_id="same_coordinate_two_activations",
+        metric=PatchingMetric.LOGIT_DIFF,
+        patch=[SinglePatchingConfig(source=source, target=target)],
+    )
+    patching_input = PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT)
+
+    collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
+    assert collector is not None
+    result = collector.result
+
+    # The two coordinates are one grid point once the activation is dropped...
+    assert patching_input.index[0].layout_df.drop_duplicates().shape[0] == 1
+    # ...yet each run keeps its own row, naming the activation it read and the metric it produced.
+    assert result[f"source_{ModelLocation.ACTIVATION.value}"].to_list() == [
+        ModelLayerLocation.MLP_POST,
+        ModelLayerLocation.MLP_PRE,
+    ]
+    assert _metric(collector)[0] != _metric(collector)[1]
 
 
 def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> None:
@@ -487,17 +543,21 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
     assert collector is not None
 
     # The three artifacts the collector is expected to persist.
-    result_path = save_dir / "result.pt"
+    result_path = save_dir / "result.csv"
     index_path = save_dir / "index-0.csv"
     config_path = save_dir / "config.json"
     assert result_path.exists()
     assert index_path.exists()
     assert config_path.exists()
+    assert not (save_dir / "result.pt").exists()
 
-    # result.pt round-trips to exactly the in-memory result tensor.
-    saved_result = torch.load(result_path)
-    assert saved_result.shape == collector.result.shape == (1,)
-    assert torch.equal(saved_result, collector.result)
+    # result.csv round-trips the in-memory frame: the source/target columns of the patched element,
+    # plus one column per metric, named after it.
+    result_df = pd.read_csv(result_path)
+    assert len(result_df) == len(collector.result) == 1
+    assert result_df["logit_diff"].to_list() == pytest.approx(collector.result["logit_diff"].to_list())
+    assert any(col.startswith("source_") for col in result_df.columns)
+    assert any(col.startswith("target_") for col in result_df.columns)
 
     # config.json mirrors the patching config that produced the run.
     saved_config = json.loads(config_path.read_text())
@@ -507,12 +567,11 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
     assert saved_config["patch"][0]["source"]["type"] == "replace"
     assert saved_config["patch"][0]["target"]["type"] == "replace"
 
-    # index-0.csv carries one row per result entry, with the source/target/index columns.
+    # index-0.csv carries one row per result entry, with the source/target columns.
     index_df = pd.read_csv(index_path)
-    assert len(index_df) == collector.result.numel()
+    assert len(index_df) == len(collector.result)
     assert any(col.startswith("source_") for col in index_df.columns)
     assert any(col.startswith("target_") for col in index_df.columns)
-    assert any(col.startswith("index_") for col in index_df.columns)
 
 
 def _gaussian_noise_config() -> PatchingConfig:
@@ -625,7 +684,7 @@ def test_a_run_without_a_collector_still_writes_its_artifacts(model: HookedTrans
 
     # Nothing comes back, but the run did all of its work and left it on disk.
     assert returned is None
-    assert torch.equal(torch.load(save_dir / "result.pt"), collector.result)
+    pd.testing.assert_frame_equal(pd.read_csv(save_dir / "result.csv"), collector.result)
     assert (save_dir / "index-0.csv").exists()
 
 
@@ -655,7 +714,7 @@ def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model: HookedTran
         patching_input = PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT)
         collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
         assert collector is not None
-        return collector.result
+        return _metric(collector)
 
     assert torch.equal(run(from_file), run(in_code))
 
@@ -681,7 +740,7 @@ def test_a_source_and_a_target_may_alias_the_same_yaml_anchor(model: HookedTrans
         PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
     )
     assert collector is not None
-    assert collector.result.shape == (1,)
+    assert len(collector.result) == 1
 
 
 def test_the_omitted_keys_of_an_element_fall_back_to_their_defaults(model: HookedTransformer, config_from_yaml) -> None:
@@ -716,7 +775,7 @@ def test_an_exclusion_term_is_deserialized_into_its_own_filter(model: HookedTran
         PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
     )
     assert collector is not None
-    assert collector.result.shape == (2,)  # layers 0 and 2 survive the exclusion
+    assert len(collector.result) == 2  # layers 0 and 2 survive the exclusion
 
 
 @pytest.mark.parametrize(
@@ -757,7 +816,7 @@ def test_a_run_through_a_cached_model_patches_the_same_way(model: HookedTransfor
         patching_input = PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT)
         collector = Patcher(target).apply(patching_input, return_collector=True, verbose=False)
         assert collector is not None
-        return collector.result
+        return _metric(collector)
 
     direct = patch(model)
     cached_model = CachedModel(model, str(tmp_path))
@@ -818,3 +877,227 @@ def test_a_plan_describes_the_run_that_follows_it(model: HookedTransformer, tmp_
     for planned, idx in zip(plan.index, patching_input.index, strict=True):
         pd.testing.assert_frame_equal(planned, idx.to_df())
     assert plan.steps == len(collector.result)
+
+
+# --------------------------------------------------------------------------------------------------
+# Visualization — the run's own grid, drawn from result.csv's columns
+# --------------------------------------------------------------------------------------------------
+_FIRST_THREE_LAYERS = Filter(inclusion_terms=[{ModelLocation.LAYER: {"range": [0, 2]}}])
+
+
+def _layer_position_config(
+    metric: PatchingMetric = PatchingMetric.LOGIT_DIFF, index_filter: Filter = _FIRST_THREE_LAYERS
+) -> PatchingConfig:
+    element = PatchingElementConfig(
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        filter=index_filter,
+        type=PatchingType.REPLACE,
+    )
+    return PatchingConfig(
+        config_id="sweep", metric=metric, patch=[SinglePatchingConfig(source=element, target=element)]
+    )
+
+
+def _draw(
+    model: HookedTransformer,
+    config: PatchingConfig,
+    save_dir: Path,
+    source: str = SOURCE_PROMPT,
+    target: str = TARGET_PROMPT,
+) -> RenderedFigure:
+    Patcher(model).apply(PatchingInput(config, source, target), save_dir=str(save_dir), verbose=False)
+    return rendered_figure(save_dir)
+
+
+def test_a_patching_run_writes_an_interactive_result_page(model: HookedTransformer, tmp_path: Path) -> None:
+    save_dir = tmp_path / "patch_run"
+    figure = _draw(model, _layer_position_config(), save_dir)
+
+    assert "Plotly.newPlot" in (save_dir / "result.html").read_text(encoding="utf-8")
+    assert figure.title.startswith("Patching — logit_diff (config: sweep)")
+
+
+def test_a_sweep_is_drawn_with_positions_across_and_layers_down(model: HookedTransformer, tmp_path: Path) -> None:
+    figure = _draw(model, _layer_position_config(), tmp_path / "patch_run")
+
+    assert figure.kind == "heatmap"
+    assert (figure.axis_title("xaxis"), figure.axis_title("yaxis")) == ("position", "layer")
+    # plotly draws the first row at the bottom, which is where layer 0 belongs.
+    assert figure.ticks("yaxis") == ["0", "1", "2"]
+    assert len(figure.trace["z"]) == 3
+    assert len(figure.trace["z"][0]) == model.to_tokens(TARGET_PROMPT).shape[1]
+
+
+def test_the_position_axis_is_labelled_with_the_target_prompts_tokens(model: HookedTransformer, tmp_path: Path) -> None:
+    # The patched run is the target run, so it is the target's tokens that name the positions — the
+    # two prompts differ at position 4, which is what makes the choice observable.
+    ticks = _draw(model, _layer_position_config(), tmp_path / "patch_run").ticks("xaxis")
+
+    assert ticks[4] == '4: " Spain"'
+    assert '4: " France"' not in ticks
+
+
+def test_the_colour_is_centred_on_the_value_an_ineffective_patch_would_produce(
+    model: HookedTransformer, tmp_path: Path
+) -> None:
+    save_dir = tmp_path / "patch_run"
+    patching_input = PatchingInput(_layer_position_config(), SOURCE_PROMPT, TARGET_PROMPT)
+    Patcher(model).apply(patching_input, save_dir=str(save_dir), verbose=False)
+
+    figure = rendered_figure(save_dir)
+    trace = figure.trace
+    baseline = float(patching_input.target_baseline)
+
+    assert trace["zmin"] == pytest.approx(2 * baseline - trace["zmax"])
+    assert trace["colorbar"]["title"]["text"] == "logit_diff"
+    # Nothing is printed inside a patching cell; the metric is the colour and the rest is hover.
+    assert "text" not in trace
+
+
+def test_patching_a_prompt_with_itself_leaves_the_scale_intact(model: HookedTransformer, tmp_path: Path) -> None:
+    # Every patch writes back what was already there, so every cell scores the same and the colour
+    # range has no spread of its own to take.
+    figure = _draw(model, _layer_position_config(), tmp_path / "no_op", source=TARGET_PROMPT)
+
+    assert {value for row in figure.trace["z"] for value in row} == {0.0}
+    assert (figure.trace["zmin"], figure.trace["zmax"]) == (-1.0, 1.0)
+
+
+def test_an_axis_the_run_does_not_vary_over_is_dropped(model: HookedTransformer, tmp_path: Path) -> None:
+    # One layer over every position: the layer offers no comparison, so it leaves the axes entirely.
+    config = _layer_position_config(index_filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0}]))
+
+    figure = _draw(model, config, tmp_path / "one_layer")
+
+    assert figure.kind == "bar"
+    assert figure.axis_title("xaxis") == "position"
+    assert figure.axis_title("yaxis") == "logit_diff"
+    assert len(figure.trace["y"]) == model.to_tokens(TARGET_PROMPT).shape[1]
+
+
+def test_a_sparse_index_leaves_holes_in_the_grid(model: HookedTransformer, tmp_path: Path) -> None:
+    # Two correlated points rather than a full grid: the pairs the run never visited stay empty.
+    config = _layer_position_config(
+        index_filter=Filter(
+            inclusion_terms=[
+                {ModelLocation.LAYER: 0, ModelLocation.POSITION: 1},
+                {ModelLocation.LAYER: 1, ModelLocation.POSITION: 2},
+            ]
+        )
+    )
+
+    figure = _draw(model, config, tmp_path / "sparse")
+
+    assert figure.kind == "heatmap"
+    assert [[cell is None for cell in row] for row in figure.trace["z"]] == [[False, True], [True, False]]
+
+
+def test_explicit_coordinates_are_drawn_as_a_bar_labelled_by_coordinate(
+    model: HookedTransformer, tmp_path: Path
+) -> None:
+    # An explicit index is a list of points, not a grid, so there is no second axis to lay out.
+    coordinates = [
+        {ModelLocation.LAYER: -2, ModelLocation.POSITION: -1},
+        {ModelLocation.LAYER: -1, ModelLocation.POSITION: -1},
+    ]
+
+    figure = _draw(model, _explicit_patch_config(coordinates, coordinates), tmp_path / "coordinates")
+
+    assert figure.kind == "bar"
+    assert len(figure.trace["y"]) == 2
+    assert figure.ticks("xaxis")[0].startswith("resid.post · layer")
+
+
+def test_the_axis_falls_back_to_the_target_when_the_source_does_not_span_it(
+    model: HookedTransformer, tmp_path: Path
+) -> None:
+    # One source coordinate read into two target coordinates: the source is repeated, so its columns
+    # are half empty in the result and cannot name the axis the target laid out.
+    source = [{ModelLocation.LAYER: -1, ModelLocation.POSITION: -1}]
+    target = [
+        {ModelLocation.LAYER: -1, ModelLocation.POSITION: -2},
+        {ModelLocation.LAYER: -1, ModelLocation.POSITION: -1},
+    ]
+
+    save_dir = tmp_path / "uneven"
+    figure = _draw(model, _explicit_patch_config(source, target), save_dir)
+
+    assert pd.read_csv(save_dir / "result.csv")["source_position"].isna().any()
+    positions = model.to_tokens(TARGET_PROMPT).shape[1]
+    assert figure.ticks("xaxis")[0].endswith(f"position {positions - 2}")
+
+
+def test_a_single_coordinate_run_still_writes_a_page(model: HookedTransformer, tmp_path: Path) -> None:
+    # One row has no axis to vary over at all, so the grid degenerates to a single bar.
+    coordinates = [{ModelLocation.LAYER: -1, ModelLocation.POSITION: -1}]
+
+    figure = _draw(model, _explicit_patch_config(coordinates, coordinates), tmp_path / "one_coordinate")
+
+    assert figure.kind == "bar"
+    assert len(figure.trace["y"]) == 1
+    assert figure.title.startswith("Patching — normalized_logit_diff")
+
+
+def test_a_grouped_location_does_not_break_the_page(model: HookedTransformer, tmp_path: Path) -> None:
+    # Grouping puts a list of heads in one index cell; it has to survive being turned into a label.
+    element = PatchingElementConfig(
+        activation=ModelLayerLocation.ATTENTION_Z,
+        location=[ModelLocation.LAYER, ModelLocation.HEAD],
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: -1, ModelLocation.HEAD: [0, 1, 2]}]),
+        group=Group({ModelLocation.HEAD: [0, 1]}),
+        type=PatchingType.REPLACE,
+    )
+    config = PatchingConfig(
+        metric=PatchingMetric.LOGIT_DIFF, patch=[SinglePatchingConfig(source=element, target=element)]
+    )
+
+    figure = _draw(model, config, tmp_path / "grouped")
+
+    assert figure.kind == "bar"
+    assert any("[0, 1]" in tick for tick in figure.ticks("xaxis"))
+
+
+def test_the_other_patched_elements_are_named_on_the_page(model: HookedTransformer, tmp_path: Path) -> None:
+    # A companion element patched identically on every run is constant, so it belongs in the subtitle
+    # rather than in every cell's hover.
+    companion = PatchingElementConfig(
+        activation=ModelLayerLocation.ATTENTION_PATTERN,
+        location=[ModelLocation.LAYER, ModelLocation.HEAD],
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0, ModelLocation.HEAD: 0}]),
+        type=PatchingType.REPLACE,
+    )
+    config = _layer_position_config()
+    config.patch.append(SinglePatchingConfig(source=companion, target=companion))
+
+    figure = _draw(model, config, tmp_path / "multi_element")
+
+    assert "also patched: attn.pattern · layer 0 · head 0" in figure.title
+
+
+def test_the_base_collector_skips_the_html(model: HookedTransformer, tmp_path: Path) -> None:
+    # The base collector persists the CSVs only; visualization is opt-in via the subclass.
+    save_dir = tmp_path / "no_viz"
+    collector = Patcher(model, collector_class=PatchingCollector).apply(
+        PatchingInput(_layer_position_config(), SOURCE_PROMPT, TARGET_PROMPT),
+        save_dir=str(save_dir),
+        return_collector=True,
+        verbose=False,
+    )
+
+    assert collector is not None
+    assert type(collector) is PatchingCollector
+    assert (save_dir / "result.csv").exists()
+    assert not (save_dir / "result.html").exists()
+
+
+def test_a_plan_for_the_base_collector_promises_no_html(model: HookedTransformer, tmp_path: Path) -> None:
+    save_dir = tmp_path / "no_viz_plan"
+    patching_input = PatchingInput(_layer_position_config(), SOURCE_PROMPT, TARGET_PROMPT)
+    patcher = Patcher(model, collector_class=PatchingCollector)
+
+    plan = patcher.plan(patching_input, save_dir=str(save_dir), verbose=False)
+    patcher.apply(patching_input, save_dir=str(save_dir), verbose=False)
+
+    assert "result.html" not in plan.outputs
+    assert sorted(path.name for path in save_dir.iterdir()) == sorted(plan.outputs)

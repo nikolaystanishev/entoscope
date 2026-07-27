@@ -2,11 +2,12 @@ import pandas as pd
 import pytest
 import torch
 
-from intex.lens.collector import LensCollector, escape_token
+from intex.lens.collector import LensCollector
 from intex.lens.config import LensConfig, LensType, ProjectionSpace
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from intex.model.token import escape_token
 
 PROMPT = "The capital of France is"
 NEURON = 373

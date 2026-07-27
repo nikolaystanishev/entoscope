@@ -1,37 +1,25 @@
-import os
-from collections.abc import Sequence
-
 import torch
 
-from intex.operation.collector import AbstractCollector
+from intex.model.index import Index
+from intex.operation.collector import FrameCollector, VisualizationCollector
 from intex.patching.input import PatchingInput
+from intex.patching.visualization import PatchingFigure
 
-CHUNK_SIZE = 256
+
+class PatchingCollector(FrameCollector[PatchingInput]):
+    """Persists the metric of every patch run as ``result.csv``, plus one index file per element.
+
+    This base collector writes the CSVs only. Use ``PatchingVisualizationCollector`` to also render
+    an interactive HTML.
+    """
+
+    def collect(self, logits: torch.Tensor, index: int, metric_value: float):
+        self._collect_cell(index, {self.operation_input.config.metric.value: metric_value})
+
+    def _indices(self) -> dict[str, Index]:
+        # Numbered even for a single element, so a file name means the same thing in every run.
+        return {f"index-{i}.csv": index for i, index in enumerate(self.operation_input.index)}
 
 
-class DefaultCollector(AbstractCollector[PatchingInput]):
-    def __init__(self, patching_input: PatchingInput, save_dir: str):
-        super().__init__(patching_input, save_dir)
-
-        self._result = None
-
-        self.nan_tensor = torch.tensor([float("nan")])
-
-    @property
-    def result(self) -> torch.Tensor:
-        return self._result
-
-    def prepare(self):
-        self._result = self.operation_input.index[0].prepare_output_placeholder()
-
-    def collect(self, logits: torch.Tensor, index: Sequence[int] | None = None, metric_value: float = 0.0):
-        self._result[index] = metric_value
-
-    def _save_result(self, save_dir: str):
-        torch.save(self._result, os.path.join(save_dir, "result.pt"))
-        for i, idx in enumerate(self.operation_input.index):
-            idx.to_csv(os.path.join(save_dir, f"index-{i}.csv"))
-
-    def output_files(self) -> list[str]:
-        indices = [f"index-{i}.csv" for i in range(len(self.operation_input.index))]
-        return ["result.pt", *indices, *super().output_files()]
+class PatchingVisualizationCollector(VisualizationCollector[PatchingInput, PatchingFigure], PatchingCollector):
+    """A ``PatchingCollector`` that also draws its result as an interactive Plotly ``result.html``."""
