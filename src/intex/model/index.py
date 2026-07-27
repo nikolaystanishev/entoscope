@@ -152,8 +152,9 @@ class Index(Generic[T]):
         ):
             self.layout_df = make_df_from_ranges(["coordinate"], [len(laid_out)])
         else:
-            self.layout_df = laid_out.drop(columns=ModelLocation.ACTIVATION, errors="ignore").apply(
-                lambda col: pd.factorize(col.astype(str))[0]
+            axes = laid_out.drop(columns=ModelLocation.ACTIVATION, errors="ignore")
+            self.layout_df = pd.DataFrame(
+                {column: pd.factorize(axes[column].astype(str))[0] for column in axes.columns}, index=axes.index
             )
 
     def source_activation_names(self) -> set[str]:

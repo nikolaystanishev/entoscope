@@ -54,7 +54,7 @@ class PatchingFigure(GridFigure[PatchingInput]):
         # KL difference are both defined so that value is zero.
         midpoint = (
             float(self.operation_input.target_baseline)
-            if self.operation_input.config.metric is PatchingMetric.NORMALIZED_LOGIT_DIFF
+            if self.operation_input.config.metric is PatchingMetric.LOGIT_DIFF
             else 0.0
         )
         return diverging_range(values, midpoint)
