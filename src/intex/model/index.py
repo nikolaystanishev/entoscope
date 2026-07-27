@@ -144,20 +144,16 @@ class Index(Generic[T]):
         self.target_config = target_config
         self.target = target
 
-        output_df = (
+        laid_out = (
             self.target.df if self.target is not None and len(self.target.df) >= len(self.source.df) else self.source.df
         )
         if self.source_config.coordinates is not None and (
             self.target_config is None or self.target_config.coordinates is not None
         ):
-            self.output_df = make_df_from_ranges(["coordinate"], [len(output_df)])
+            self.layout_df = make_df_from_ranges(["coordinate"], [len(laid_out)])
         else:
-            # Keep one output row per index row (the df may be a sparse, correlated set rather than
-            # a full grid), mapping each column's values to dense first-appearance codes.
-            coordinate_df = output_df[[col for col in output_df.columns if col != ModelLocation.ACTIVATION]]
-            factorized = {col: pd.factorize(coordinate_df[col].astype(str)) for col in coordinate_df.columns}
-            self.output_df = pd.DataFrame(
-                {col: codes for col, (codes, _) in factorized.items()}, index=coordinate_df.index
+            self.layout_df = laid_out.drop(columns=ModelLocation.ACTIVATION, errors="ignore").apply(
+                lambda col: pd.factorize(col.astype(str))[0]
             )
 
     def source_activation_names(self) -> set[str]:
@@ -169,7 +165,6 @@ class Index(Generic[T]):
         dfs = [self.source.df.add_prefix("source_")]
         if self.target is not None:
             dfs.append(self.target.df.add_prefix("target_"))
-        dfs.append(self.output_df.add_prefix("index_"))
 
         return pd.concat(dfs, axis=1)
 
@@ -198,4 +193,4 @@ class Index(Generic[T]):
         )
 
     def __len__(self) -> int:
-        return len(self.output_df)
+        return len(self.layout_df)

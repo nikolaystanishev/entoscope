@@ -1,10 +1,10 @@
 """Index-grid plotting shared by the operations whose result is a tidy frame over an ``Index``.
 
-A result frame carries dense ``index_*`` codes alongside the original ``source_*``/``target_*``
-values, so laying one out is the same problem for every operation and only the cell payload differs.
-Everything produced here ends up inside plotly HTML, so values are escaped once, in ``format_value``,
-rather than at each call site. ``Figure`` — the page every operation's HTML is written through,
-grid-drawn or not — lives here too.
+An ``Index`` lays its rows out as dense per-axis codes and the result frame carries the original
+``source_*``/``target_*`` values, so laying one out is the same problem for every operation and only
+the cell payload differs. Everything produced here ends up inside plotly HTML, so values are escaped
+once, in ``format_value``, rather than at each call site. ``Figure`` — the page every operation's
+HTML is written through, grid-drawn or not — lives here too.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ import plotly.graph_objects as go
 
 from intex.model import Model
 from intex.model.config import ModelLocation
+from intex.model.index import Index
 from intex.operation.config import AbstractConfig
 from intex.operation.input import OperationInput
 
@@ -34,8 +35,6 @@ AXIS_ORDER: tuple[ModelLocation, ...] = (
     ModelLocation.NEURON,
     ModelLocation.POSITION,
 )
-
-INDEX_PREFIX = "index_"
 
 DIVERGING = [(0.0, "#2166ac"), (0.5, "#f7f7f7"), (1.0, "#b2182b")]
 # Stops well short of navy: a heatmap's cell text takes a single colour for the whole trace, so the
@@ -58,33 +57,28 @@ def format_value(value: Any) -> str:
     return escape(str(value))
 
 
-def location_of(column: str) -> ModelLocation | None:
-    return _location(column.removeprefix(INDEX_PREFIX))
-
-
-def label_column(frame: pd.DataFrame, column: str, prefixes: Sequence[str]) -> str | None:
-    """The ``source_*``/``target_*`` column holding the real values behind ``column``'s dense codes.
+def label_column(frame: pd.DataFrame, axis: str, prefixes: Sequence[str]) -> str | None:
+    """The ``source_*``/``target_*`` column holding the real values behind ``axis``'s dense codes.
 
     Prefixes are tried in the caller's order of preference, and a column that is not fully populated
     is rejected: concatenating a shorter source index onto a longer target one leaves NaN behind, and
     a half-filled axis labels nothing.
     """
     for prefix in prefixes:
-        candidate = f"{prefix}{column.removeprefix(INDEX_PREFIX)}"
+        candidate = f"{prefix}{axis}"
         if candidate in frame.columns and frame[candidate].notna().all():
             return candidate
     return None
 
 
 def tick_text(
-    frame: pd.DataFrame, column: str, prefixes: Sequence[str], tokens: dict[str, list[str]]
+    frame: pd.DataFrame, grid: IndexGrid, axis: str, prefixes: Sequence[str], tokens: dict[str, list[str]]
 ) -> dict[int, str]:
     labels: dict[int, str] = {}
-    source = label_column(frame, column, prefixes)
+    source = label_column(frame, axis, prefixes)
     column_tokens = tokens.get(source, []) if source is not None else []
 
-    for position, code in enumerate(frame[column]):
-        code = int(code)
+    for position, code in enumerate(grid.codes[axis]):
         if code in labels:
             continue
         if source is None:
@@ -113,7 +107,9 @@ def describe_row(row: pd.Series, prefix: str) -> str:
         value = row[column]
         if not isinstance(value, list | tuple) and pd.isna(value):
             continue
-        parts.append(format_value(value) if column == activation else _named(column, prefix, format_value(value)))
+        parts.append(
+            format_value(value) if column == activation else _named(column.removeprefix(prefix), format_value(value))
+        )
 
     return " · ".join(parts)
 
@@ -155,38 +151,39 @@ class Figure(abc.ABC):
 class IndexGrid:
     """Where each result row sits once the axes a run varies over are laid out.
 
-    Pure frame logic with no dependency on a live model, so the axis rule can be read — and tested —
-    on its own. An axis the run does not vary over is dropped: it offers no comparison and belongs in
-    the subtitle. Axes beyond the first two fold into composite y keys rather than being aggregated
-    away, so nothing is hidden; ``y_keys`` ascends and plotly draws the first at the bottom, putting
-    layer 0 there as the circuit figures do.
+    Built from the index's own layout codes rather than from the result frame, so the axis rule can be
+    read — and tested — without a run behind it. An axis the run does not vary over is dropped: it
+    offers no comparison and belongs in the subtitle. Axes beyond the first two fold into composite y
+    keys rather than being aggregated away, so nothing is hidden; ``y_keys`` ascends and plotly draws
+    the first at the bottom, putting layer 0 there as the circuit figures do.
     """
 
-    x_column: str | None
-    y_columns: list[str]
+    x_axis: str | None
+    y_axes: list[str]
+    codes: dict[str, list[int]]
     x_codes: list[int]
     y_keys: list[tuple[int, ...]]
     rows: dict[tuple[tuple[int, ...], int], int]
 
     @classmethod
-    def of(cls, frame: pd.DataFrame) -> IndexGrid:
-        columns = [column for column in frame.columns if column.startswith(INDEX_PREFIX)]
-        varying = [column for column in columns if frame[column].nunique(dropna=False) > 1]
-        ordered = sorted(varying, key=lambda column: (_axis_rank(location_of(column)), columns.index(column)))
+    def of(cls, layout: pd.DataFrame) -> IndexGrid:
+        axes = [_axis_name(column) for column in layout.columns]
+        codes = {
+            axis: [int(code) for code in layout[column]] for axis, column in zip(axes, layout.columns, strict=True)
+        }
+        varying = [axis for axis in axes if len(set(codes[axis])) > 1]
+        ordered = sorted(varying, key=lambda axis: (_axis_rank(_location(axis)), axes.index(axis)))
 
-        x_column = ordered[-1] if ordered else None
-        y_columns = ordered[:-1]
+        x_axis = ordered[-1] if ordered else None
+        y_axes = ordered[:-1]
 
-        x_values = [int(code) for code in frame[x_column]] if x_column is not None else [0] * len(frame)
-        y_values = (
-            [tuple(int(code) for code in key) for key in zip(*(frame[column] for column in y_columns), strict=True)]
-            if y_columns
-            else [()] * len(frame)
-        )
+        x_values = codes[x_axis] if x_axis is not None else [0] * len(layout)
+        y_values = list(zip(*(codes[axis] for axis in y_axes), strict=True)) if y_axes else [()] * len(layout)
 
         return cls(
-            x_column=x_column,
-            y_columns=y_columns,
+            x_axis=x_axis,
+            y_axes=y_axes,
+            codes=codes,
             x_codes=sorted(set(x_values)),
             y_keys=sorted(set(y_values)),
             rows={cell: position for position, cell in enumerate(zip(y_values, x_values, strict=True))},
@@ -194,7 +191,7 @@ class IndexGrid:
 
     @property
     def is_bar(self) -> bool:
-        return not self.y_columns
+        return not self.y_axes
 
     def lay_out(self, values: Sequence[Any], fill: Any = None) -> list[list[Any]]:
         return [
@@ -204,19 +201,19 @@ class IndexGrid:
 
 
 def x_labels(frame: pd.DataFrame, grid: IndexGrid, prefixes: Sequence[str], tokens: dict[str, list[str]]) -> list[str]:
-    if grid.x_column is None:
+    if grid.x_axis is None:
         return [describe_row(frame.iloc[0], prefixes[0])] if len(frame) else []
-    labels = tick_text(frame, grid.x_column, prefixes, tokens)
+    labels = tick_text(frame, grid, grid.x_axis, prefixes, tokens)
     return [labels.get(code, str(code)) for code in grid.x_codes]
 
 
 def y_labels(frame: pd.DataFrame, grid: IndexGrid, prefixes: Sequence[str], tokens: dict[str, list[str]]) -> list[str]:
-    per_column = [tick_text(frame, column, prefixes, tokens) for column in grid.y_columns]
-    named = len(grid.y_columns) > 1
+    per_axis = [tick_text(frame, grid, axis, prefixes, tokens) for axis in grid.y_axes]
+    named = len(grid.y_axes) > 1
     return [
         " · ".join(
-            _named(column, INDEX_PREFIX, labels.get(code, str(code))) if named else labels.get(code, str(code))
-            for column, labels, code in zip(grid.y_columns, per_column, key, strict=True)
+            _named(axis, labels.get(code, str(code))) if named else labels.get(code, str(code))
+            for axis, labels, code in zip(grid.y_axes, per_axis, key, strict=True)
         )
         for key in grid.y_keys
     ]
@@ -225,22 +222,22 @@ def y_labels(frame: pd.DataFrame, grid: IndexGrid, prefixes: Sequence[str], toke
 def cell_labels(
     frame: pd.DataFrame, grid: IndexGrid, prefixes: Sequence[str], tokens: dict[str, list[str]]
 ) -> list[str]:
-    columns = [*grid.y_columns, *([grid.x_column] if grid.x_column is not None else [])]
-    per_column = [tick_text(frame, column, prefixes, tokens) for column in columns]
+    axes = [*grid.y_axes, *([grid.x_axis] if grid.x_axis is not None else [])]
+    per_axis = [tick_text(frame, grid, axis, prefixes, tokens) for axis in axes]
 
     labels = []
     for position in range(len(frame)):
         parts = [
-            _named(column, INDEX_PREFIX, column_labels.get(int(frame[column].iloc[position]), ""))
-            for column, column_labels in zip(columns, per_column, strict=True)
+            _named(axis, axis_labels.get(grid.codes[axis][position], ""))
+            for axis, axis_labels in zip(axes, per_axis, strict=True)
         ]
         labels.append(" · ".join(part for part in parts if part))
 
     return labels
 
 
-def axis_title(columns: Sequence[str]) -> str:
-    return " · ".join(column.removeprefix(INDEX_PREFIX) for column in columns)
+def axis_title(axes: Sequence[str]) -> str:
+    return " · ".join(axes)
 
 
 def titled(kind: str, config: AbstractConfig) -> str:
@@ -255,17 +252,18 @@ class GridFigure(Figure, Generic[InputT]):
     result means — which column holds the value, how to colour it, and what a cell reads on hover.
     Those answers are read off the run's input, which comes along for that reason — and because it
     lets a collector name a figure class and construct it without knowing what produced the frame.
+    ``index`` is the one that laid the result out; its layout codes are what the grid is built from.
     """
 
     prefixes: tuple[str, ...] = ("source_",)
     colorscale = SEQUENTIAL
 
-    def __init__(self, result: pd.DataFrame, operation_input: InputT, model: Model) -> None:
+    def __init__(self, result: pd.DataFrame, operation_input: InputT, model: Model, index: Index) -> None:
         self.result = result
         self.operation_input = operation_input
         self.model = model
         self.tokens = self.str_tokens()
-        self.grid = IndexGrid.of(result)
+        self.grid = IndexGrid.of(index.layout_df)
 
     @property
     @abc.abstractmethod
@@ -348,7 +346,7 @@ class GridFigure(Figure, Generic[InputT]):
             width=min(2000, max(640, 90 * len(grid.x_codes) + 260)),
             height=min(2400, max(360, 26 * len(grid.y_keys) + 220)),
             xaxis=dict(
-                title=axis_title([grid.x_column]) if grid.x_column is not None else "",
+                title=axis_title([grid.x_axis]) if grid.x_axis is not None else "",
                 tickmode="array",
                 tickvals=self._x_positions,
                 ticktext=x_labels(self.result, grid, self.prefixes, self.tokens),
@@ -402,7 +400,7 @@ class GridFigure(Figure, Generic[InputT]):
         figure = go.Figure(heatmap)
         figure.update_layout(
             yaxis=dict(
-                title=axis_title(self.grid.y_columns),
+                title=axis_title(self.grid.y_axes),
                 tickmode="array",
                 tickvals=self._y_positions,
                 ticktext=y_labels(self.result, self.grid, self.prefixes, self.tokens),
@@ -418,10 +416,15 @@ def _location(name: str) -> ModelLocation | None:
         return None
 
 
+def _axis_name(column: Any) -> str:
+    # A layout frame is keyed by ``ModelLocation`` members, whose ``str`` is the member name, not the
+    # location — everything downstream matches on the location, so take the value.
+    return column.value if isinstance(column, Enum) else str(column)
+
+
 def _axis_rank(location: ModelLocation | None) -> int:
     return AXIS_ORDER.index(location) if location in AXIS_ORDER else len(AXIS_ORDER)
 
 
-def _named(column: str, prefix: str, label: str) -> str:
-    name = column.removeprefix(prefix)
-    return f"{name} {label}" if _location(name) is not None else label
+def _named(axis: str, label: str) -> str:
+    return f"{axis} {label}" if _location(axis) is not None else label

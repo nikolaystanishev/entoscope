@@ -146,13 +146,15 @@ class VisualizationCollector(FrameCollector[InputT], FigureMixin[FigureT], abc.A
 
     Kept apart from the base collectors so that anything which only needs the CSVs builds no figure,
     and so visualization is opt-in by collector choice rather than by a config flag. Every
-    ``GridFigure`` is built from the same three arguments and reads what it draws off them, so a
+    ``GridFigure`` is built from the same four arguments and reads what it draws off them, so a
     subclass names its figure in its base list and nothing else.
     """
 
     def _save_result(self, save_dir: str) -> None:
         super()._save_result(save_dir)
-        self.figure_class(self.result, self.operation_input, self.model).render(os.path.join(save_dir, "result.html"))
+        self.figure_class(self.result, self.operation_input, self.model, self._index).render(
+            os.path.join(save_dir, "result.html")
+        )
 
     def output_files(self) -> list[str]:
         return ["result.html", *super().output_files()]

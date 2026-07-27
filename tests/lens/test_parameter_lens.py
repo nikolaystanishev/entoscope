@@ -65,7 +65,7 @@ def test_a_parameter_lens_run_needs_no_prompt(model):
 
     assert len(result) == model.cfg.n_layers
     assert result["source_neuron"].tolist() == [NEURON] * model.cfg.n_layers
-    assert [column for column in result.columns if not column.startswith(("source_", "index_"))] == [
+    assert [column for column in result.columns if not column.startswith("source_")] == [
         "token_0",
         "str_token_0",
         "probability_0",

@@ -47,7 +47,7 @@ LENS_YAML = {
 
 
 def _result_columns(result: pd.DataFrame) -> list[str]:
-    return [column for column in result.columns if not column.startswith(("source_", "index_"))]
+    return [column for column in result.columns if not column.startswith("source_")]
 
 
 # --------------------------------------------------------------------------------------------------
@@ -339,8 +339,9 @@ def test_artifacts_are_saved_to_disk(model, config_from_yaml, tmp_path):
 
     index_df = pd.read_csv(save_dir / "index.csv")
     assert len(index_df) == len(collector.operation_input.index)
-    assert sum(column.startswith("source_") for column in index_df.columns) == 3  # layer, position, activation
-    assert sum(column.startswith("index_") for column in index_df.columns) == 2  # layer, position
+    # The locations the run swept and nothing else: how they are laid out on a plot is not the
+    # index file's business.
+    assert list(index_df.columns) == ["source_layer", "source_position", "source_activation"]
 
     with open(save_dir / "config.json", encoding="utf-8") as f:
         saved_config = json.load(f)

@@ -437,13 +437,15 @@ def test_explicit_pairing_and_artifacts(model: HookedTransformer, tmp_path: Path
     assert torch.allclose(paired, torch.cat([first, second]))
     assert not torch.allclose(first, second)
 
-    # index-0.csv pairs the source/target coordinates with the flat output axis.
+    # index-0.csv pairs each source coordinate with the target coordinate it was written into.
     index_df = pd.read_csv(save_dir / "index-0.csv")
     assert len(index_df) == 2
-    assert any(col.startswith("source_") for col in index_df.columns)
-    assert any(col.startswith("target_") for col in index_df.columns)
-    assert [col for col in index_df.columns if col.startswith("index_")] == ["index_coordinate"]
-    assert index_df["index_coordinate"].to_list() == [0, 1]
+    assert index_df["source_layer"].to_list() == [5, 6]
+    assert index_df["target_layer"].to_list() == [7, 7]
+    assert index_df["target_position"].nunique() == 2
+    # The locations the pairs name and nothing else — how they are laid out on a plot is not the
+    # index file's business.
+    assert all(col.startswith(("source_", "target_")) for col in index_df.columns)
 
 
 def test_explicit_per_coordinate_activation(model: HookedTransformer) -> None:
@@ -507,7 +509,7 @@ def test_two_sources_differing_only_in_activation_keep_their_own_metric(model: H
     result = collector.result
 
     # The two coordinates are one grid point once the activation is dropped...
-    assert patching_input.index[0].output_df.drop_duplicates().shape[0] == 1
+    assert patching_input.index[0].layout_df.drop_duplicates().shape[0] == 1
     # ...yet each run keeps its own row, naming the activation it read and the metric it produced.
     assert result[f"source_{ModelLocation.ACTIVATION.value}"].to_list() == [
         ModelLayerLocation.MLP_POST,
@@ -549,14 +551,13 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
     assert config_path.exists()
     assert not (save_dir / "result.pt").exists()
 
-    # result.csv round-trips the in-memory frame: the source/target/index columns of the patched
-    # element, plus one column per metric, named after it.
+    # result.csv round-trips the in-memory frame: the source/target columns of the patched element,
+    # plus one column per metric, named after it.
     result_df = pd.read_csv(result_path)
     assert len(result_df) == len(collector.result) == 1
     assert result_df["logit_diff"].to_list() == pytest.approx(collector.result["logit_diff"].to_list())
     assert any(col.startswith("source_") for col in result_df.columns)
     assert any(col.startswith("target_") for col in result_df.columns)
-    assert any(col.startswith("index_") for col in result_df.columns)
 
     # config.json mirrors the patching config that produced the run.
     saved_config = json.loads(config_path.read_text())
@@ -566,12 +567,11 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
     assert saved_config["patch"][0]["source"]["type"] == "replace"
     assert saved_config["patch"][0]["target"]["type"] == "replace"
 
-    # index-0.csv carries one row per result entry, with the source/target/index columns.
+    # index-0.csv carries one row per result entry, with the source/target columns.
     index_df = pd.read_csv(index_path)
     assert len(index_df) == len(collector.result)
     assert any(col.startswith("source_") for col in index_df.columns)
     assert any(col.startswith("target_") for col in index_df.columns)
-    assert any(col.startswith("index_") for col in index_df.columns)
 
 
 def _gaussian_noise_config() -> PatchingConfig:

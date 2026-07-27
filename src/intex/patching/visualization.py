@@ -13,6 +13,7 @@ from html import escape
 import pandas as pd
 
 from intex.model import Model
+from intex.model.index import Index
 from intex.model.token import str_token_labels
 from intex.operation.visualization import DIVERGING, GridFigure, describe_row, diverging_range, format_value, titled
 from intex.patching.config import PatchingMetric
@@ -25,8 +26,8 @@ class PatchingFigure(GridFigure[PatchingInput]):
     prefixes = ("target_", "source_")
     colorscale = DIVERGING
 
-    def __init__(self, result: pd.DataFrame, operation_input: PatchingInput, model: Model) -> None:
-        super().__init__(result, operation_input, model)
+    def __init__(self, result: pd.DataFrame, operation_input: PatchingInput, model: Model, index: Index) -> None:
+        super().__init__(result, operation_input, model, index)
         self.constant, self.per_row = self._companions()
 
     @property

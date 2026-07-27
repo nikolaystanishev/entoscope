@@ -54,7 +54,7 @@ def test_a_probe_is_trained_for_every_location(model):
     result = collector.result
 
     assert len(result) == model.cfg.n_layers
-    assert [column for column in result.columns if not column.startswith(("source_", "index_"))] == ["accuracy"]
+    assert [column for column in result.columns if not column.startswith("source_")] == ["accuracy"]
     assert set(collector.probes) == {single.output for single in collector.operation_input.index}
     assert len({id(probe) for probe in collector.probes.values()}) == model.cfg.n_layers
     for probe in collector.probes.values():
@@ -74,7 +74,7 @@ def test_the_metrics_score_the_probes_own_predictions(model, caches):
     result = collector.result
     labels = np.array([1] * len(POSITIVE) + [0] * len(NEGATIVE))
 
-    assert [column for column in result.columns if not column.startswith(("source_", "index_"))] == METRIC_COLUMNS
+    assert [column for column in result.columns if not column.startswith("source_")] == METRIC_COLUMNS
 
     for _, row in result.iterrows():
         features = _neuron_features(caches, row["source_layer"]).numpy()

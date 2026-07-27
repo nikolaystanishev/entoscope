@@ -197,10 +197,10 @@ Lens plan — logit_lens (config: my_lens)
   work: 72 elements, 1 forward pass
   writes: runs/logit_lens/{result.html, result.csv, index.csv, config.json}
   index (72 rows):
-     source_layer  source_position source_activation  index_layer  index_position
-                0                0        resid.post            0               0
-                0                1        resid.post            0               1
-              ...              ...               ...          ...             ...
+     source_layer  source_position source_activation
+                0                0        resid.post
+                0                1        resid.post
+              ...              ...               ...
 ```
 
 What each operator reports:
