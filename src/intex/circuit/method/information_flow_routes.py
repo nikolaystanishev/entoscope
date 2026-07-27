@@ -29,10 +29,10 @@ from transformer_lens import ActivationCache
 
 from intex.circuit.method.circuit import AbstractCircuitMethod, PromptCircuit
 from intex.circuit.vendor import contributions
-from intex.lens.collector import escape_token
 from intex.model import Model
 from intex.model.config import ModelLayerLocation
 from intex.model.index import TRANSFORMER_ACT_NAME
+from intex.model.token import str_token_labels
 from intex.model.weight import attention_out_weight
 
 # Sentinel head id for edges that are not attention (residual skips and the MLP block).
@@ -271,18 +271,13 @@ def prune_routes_to_predictions(
     return nx.MultiDiGraph(search.edge_subgraph(edges).reverse(copy=True))
 
 
-def str_tokens_for(model: Model, tokens: Int[torch.Tensor, "batch pos"]) -> list[str]:
-    """Human-readable, CSV/XML-safe token strings for one prompt (batch item 0)."""
-    return [escape_token(token) for token in model.to_str_tokens(tokens[0])]
-
-
 class InformationFlowRoutes(AbstractCircuitMethod):
     @torch.no_grad()
     def build(self, prompt: str, tokens: Int[torch.Tensor, "batch pos"]) -> PromptCircuit:
         _, cache = self.model.run_with_cache(tokens)
 
         n_tokens = tokens.shape[1]
-        str_tokens = str_tokens_for(self.model, tokens)
+        str_tokens = str_token_labels(self.model, tokens)
 
         graph = build_information_flow_graph(self.model, cache, n_tokens, str_tokens, self.config.threshold)
         routes = prune_routes_to_predictions(

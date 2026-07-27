@@ -8,26 +8,21 @@ from __future__ import annotations
 
 from html import escape
 
-import pandas as pd
-
 from intex.lens.input import LensInput
+from intex.model.token import str_token_labels
 from intex.operation.visualization import GridFigure, describe_row, format_value, titled
 
 
-class LensFigure(GridFigure):
-    def __init__(self, result: pd.DataFrame, lens_input: LensInput, tokens: dict[str, list[str]]) -> None:
-        super().__init__(result, tokens)
-        self.lens_input = lens_input
-
+class LensFigure(GridFigure[LensInput]):
     @property
     def title(self) -> str:
-        return titled(f"Lens — {self.lens_input.config.type.value}", self.lens_input.config)
+        return titled(f"Lens — {self.operation_input.config.type.value}", self.operation_input.config)
 
     @property
     def subtitle(self) -> str:
-        prompt = self.lens_input.prompt
+        prompt = self.operation_input.prompt
         read = f'prompt: "{escape(prompt)}"' if prompt is not None else "weights (no prompt)"
-        return f"{read} · top-1 of top-{self.lens_input.config.top_k}"
+        return f"{read} · top-1 of top-{self.operation_input.config.top_k}"
 
     @property
     def value_column(self) -> str:
@@ -43,10 +38,16 @@ class LensFigure(GridFigure):
     def cell_text(self) -> list[str]:
         return [format_value(token) for token in self.result["str_token_0"]]
 
+    def str_tokens(self) -> dict[str, list[str]]:
+        # The parameter lens reads the weights, so it has no prompt and no tokens to label an axis with.
+        if self.operation_input.prompt is None:
+            return {}
+        return {"source_position": str_token_labels(self.model, self.operation_input.tokens)}
+
     def hover(self, position: int, coordinate: str) -> str:
         row = self.result.iloc[position]
         lines = [coordinate, describe_row(row, "source_")]
-        for i in range(self.lens_input.config.top_k):
+        for i in range(self.operation_input.config.top_k):
             token, probability = f"str_token_{i}", f"probability_{i}"
             if token in row.index and probability in row.index:
                 lines.append(f"{i + 1}. {format_value(row[token])} — {format_value(row[probability])}")

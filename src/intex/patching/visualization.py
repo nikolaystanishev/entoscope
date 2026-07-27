@@ -12,32 +12,33 @@ from html import escape
 
 import pandas as pd
 
+from intex.model import Model
+from intex.model.token import str_token_labels
 from intex.operation.visualization import DIVERGING, GridFigure, describe_row, diverging_range, format_value, titled
 from intex.patching.config import PatchingMetric
 from intex.patching.input import PatchingInput
 
 
-class PatchingFigure(GridFigure):
+class PatchingFigure(GridFigure[PatchingInput]):
     # The patched run is the target run, so the target's own coordinates label the axes; the source's
     # are the fallback for an index the target does not span.
     prefixes = ("target_", "source_")
     colorscale = DIVERGING
 
-    def __init__(self, result: pd.DataFrame, patching_input: PatchingInput, tokens: dict[str, list[str]]) -> None:
-        super().__init__(result, tokens)
-        self.patching_input = patching_input
+    def __init__(self, result: pd.DataFrame, operation_input: PatchingInput, model: Model) -> None:
+        super().__init__(result, operation_input, model)
         self.constant, self.per_row = self._companions()
 
     @property
     def title(self) -> str:
-        config = self.patching_input.config
+        config = self.operation_input.config
         return titled(f"Patching — {config.metric.value}", config)
 
     @property
     def subtitle(self) -> str:
         parts = [
-            f'source: "{escape(self.patching_input.source_prompt)}" →'
-            + f' target: "{escape(self.patching_input.target_prompt)}"'
+            f'source: "{escape(self.operation_input.source_prompt)}" →'
+            + f' target: "{escape(self.operation_input.target_prompt)}"'
         ]
         if self.constant:
             parts.append(self.constant)
@@ -45,17 +46,26 @@ class PatchingFigure(GridFigure):
 
     @property
     def value_column(self) -> str:
-        return self.patching_input.config.metric.value
+        return self.operation_input.config.metric.value
 
     def value_range(self, values: Sequence[float]) -> tuple[float, float]:
         # An ineffective patch reproduces the target's own logit diff; the normalized metric and the
         # KL difference are both defined so that value is zero.
         midpoint = (
-            float(self.patching_input.target_baseline)
-            if self.patching_input.config.metric is PatchingMetric.NORMALIZED_LOGIT_DIFF
+            float(self.operation_input.target_baseline)
+            if self.operation_input.config.metric is PatchingMetric.NORMALIZED_LOGIT_DIFF
             else 0.0
         )
         return diverging_range(values, midpoint)
+
+    def str_tokens(self) -> dict[str, list[str]]:
+        return {
+            f"{prefix}position": str_token_labels(self.model, tokens)
+            for prefix, tokens in (
+                ("target_", self.operation_input.target_tokens),
+                ("source_", self.operation_input.source_tokens),
+            )
+        }
 
     def hover(self, position: int, coordinate: str) -> str:
         row = self.result.iloc[position]
@@ -78,7 +88,7 @@ class PatchingFigure(GridFigure):
         rows = len(self.result)
         constant = []
         varying = []
-        for index in self.patching_input.index[1:]:
+        for index in self.operation_input.index[1:]:
             frame = index.to_df()
             if len(frame) == 1:
                 constant.append(describe_row(frame.iloc[0], "target_"))

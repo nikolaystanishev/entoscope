@@ -468,6 +468,54 @@ def test_explicit_per_coordinate_activation(model: HookedTransformer) -> None:
     assert not torch.allclose(result[1], torch.tensor(1.0), atol=1e-2)
 
 
+def test_two_sources_differing_only_in_activation_keep_their_own_metric(model: HookedTransformer) -> None:
+    torch.manual_seed(42)
+
+    # Explicit source coordinates against a declarative target: that mix is what sends the index
+    # through the factorized output branch, which drops the activation column. Both coordinates sit at
+    # the same layer/position/neuron, so activation is the only thing telling the two runs apart --
+    # and a collector keyed on that coordinate would file both under one cell, reporting whichever ran
+    # last on both rows.
+    source = PatchingElementConfig(
+        type=PatchingType.REPLACE,
+        coordinates=[
+            {
+                ModelLocation.ACTIVATION: activation,
+                ModelLocation.LAYER: 0,
+                ModelLocation.POSITION: -1,
+                ModelLocation.NEURON: 1,
+            }
+            for activation in (ModelLayerLocation.MLP_POST, ModelLayerLocation.MLP_PRE)
+        ],
+    )
+    # One target row, so ``zip_fill`` holds it steady while the two source coordinates vary.
+    target = PatchingElementConfig(
+        type=PatchingType.REPLACE,
+        activation=ModelLayerLocation.MLP_POST,
+        location=[ModelLocation.LAYER],
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0}]),
+    )
+    config = PatchingConfig(
+        config_id="same_coordinate_two_activations",
+        metric=PatchingMetric.LOGIT_DIFF,
+        patch=[SinglePatchingConfig(source=source, target=target)],
+    )
+    patching_input = PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT)
+
+    collector = Patcher(model).apply(patching_input, return_collector=True, verbose=False)
+    assert collector is not None
+    result = collector.result
+
+    # The two coordinates are one grid point once the activation is dropped...
+    assert patching_input.index[0].output_df.drop_duplicates().shape[0] == 1
+    # ...yet each run keeps its own row, naming the activation it read and the metric it produced.
+    assert result[f"source_{ModelLocation.ACTIVATION.value}"].to_list() == [
+        ModelLayerLocation.MLP_POST,
+        ModelLayerLocation.MLP_PRE,
+    ]
+    assert _metric(collector)[0] != _metric(collector)[1]
+
+
 def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> None:
     torch.manual_seed(42)
 

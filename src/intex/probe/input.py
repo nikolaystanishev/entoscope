@@ -36,7 +36,7 @@ class ProbeInput(OperationInput):
     negative_prompts: list[str]
 
     _labels: Int[torch.Tensor, " examples"] | None = field(init=False, default=None)
-    _features: dict[tuple[int, ...], Float[torch.Tensor, "examples features"]] | None = field(init=False, default=None)
+    _features: dict[int, Float[torch.Tensor, "examples features"]] | None = field(init=False, default=None)
     _index: Index[ModelLocatorConfig] | None = field(init=False, default=None)
     _token_tensors: list[Int[torch.Tensor, "batch pos"]] | None = field(init=False, default=None)
 
@@ -77,10 +77,11 @@ class ProbeInput(OperationInput):
         model: Model,
         token_tensors: list[Int[torch.Tensor, "batch pos"]],
         index: Index[ModelLocatorConfig],
-    ) -> dict[tuple[int, ...], Float[torch.Tensor, "examples features"]]:
+    ) -> dict[int, Float[torch.Tensor, "examples features"]]:
         # One prompt at a time keeps a single activation cache alive; features go to CPU
         # immediately, so memory stays bounded regardless of the number of examples.
-        vectors: dict[tuple[int, ...], list[torch.Tensor]] = defaultdict(list)
+        # Keyed by the index row's position, which is the same for a location on every prompt.
+        vectors: dict[int, list[torch.Tensor]] = defaultdict(list)
         for tokens in token_tensors:
             with torch.no_grad():
                 _, cache = model.run_with_cache(tokens, names_filter=sorted(index.source_activation_names()))
@@ -91,11 +92,11 @@ class ProbeInput(OperationInput):
                 feature = pool(activation[0], single_index.source.remaining_axes(), self.config.pool)
                 vectors[single_index.output].append(feature.detach().to("cpu", torch.float32))
 
-        features: dict[tuple[int, ...], Float[torch.Tensor, "examples features"]] = {}
+        features: dict[int, Float[torch.Tensor, "examples features"]] = {}
         for output, feature_list in vectors.items():
             if len({feature.shape[0] for feature in feature_list}) != 1:
                 raise ValueError(
-                    f"Feature size varies across prompts for location {output}; activations with a "
+                    f"Feature size varies across prompts for index row {output}; activations with a "
                     "position-sized feature axis (e.g. 'attn.pattern') require equal-length prompts"
                 )
             features[output] = torch.stack(feature_list)
@@ -120,7 +121,7 @@ class ProbeInput(OperationInput):
         return self._labels
 
     @property
-    def features(self) -> dict[tuple[int, ...], Float[torch.Tensor, "examples features"]]:
+    def features(self) -> dict[int, Float[torch.Tensor, "examples features"]]:
         assert self._features is not None
         return self._features
 

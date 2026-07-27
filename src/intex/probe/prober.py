@@ -24,7 +24,7 @@ class Prober(Operator):
         verbose: bool = True,
     ) -> ProbeCollector | None:
         probe_input.prepare(self.model)
-        collector = self.collector_class(probe_input, save_dir)
+        collector = self.collector_class(probe_input, self.model, save_dir)
         collector.prepare()
         labels = probe_input.labels.detach().cpu().numpy()
 
@@ -66,7 +66,7 @@ class Prober(Operator):
             ],
             activations=sorted(probe_input.index.source_activation_names()),
             save_dir=save_dir,
-            outputs=self.collector_class(probe_input, save_dir).output_files(),
+            outputs=self.collector_class(probe_input, self.model, save_dir).output_files(),
         )
 
         if verbose:

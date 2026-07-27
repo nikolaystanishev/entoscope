@@ -1,12 +1,20 @@
 import dataclasses
+import os
 from typing import Generic, TypeVar, get_args
 
-from intex.util.data import from_dict, read_yaml
+from intex.util.collections import to_dict
+from intex.util.data import from_dict, read_yaml, write_json
+
+CONFIG_FILE = "config.json"
 
 
 @dataclasses.dataclass(kw_only=True)
 class AbstractConfig:
     config_id: str | None = None
+
+    def save(self, save_dir: str) -> None:
+        """Write the config a run was made under beside that run's results."""
+        write_json(os.path.join(save_dir, CONFIG_FILE), to_dict(self))
 
 
 T = TypeVar("T", bound=AbstractConfig)

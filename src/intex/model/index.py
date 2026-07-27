@@ -6,7 +6,6 @@ from copy import deepcopy
 from typing import Generic, TypeVar
 
 import pandas as pd
-import torch
 
 try:
     from transformer_lens.utilities import get_act_name
@@ -103,10 +102,17 @@ class IndexElement(Generic[T]):
 
 
 class SingleIndex(Generic[T]):
-    def __init__(self, source: IndexElement[T], output_index: list[int], target: IndexElement | None = None):
+    """One row of an ``Index``: where to read, where to write, and which result row it fills.
+
+    ``output`` is that row's position in the index — the key a collector files its cell under and the
+    row it lands on in the result frame. Positions are what ``Index`` iteration already hands out in
+    order, so a run needs no coordinate of its own to find its row.
+    """
+
+    def __init__(self, output_position: int, source: IndexElement[T], target: IndexElement | None = None):
+        self.output = output_position
         self._source = source
         self._target = target
-        self.output = tuple(output_index)
 
     @property
     def source(self) -> IndexElement[T]:
@@ -119,8 +125,8 @@ class SingleIndex(Generic[T]):
 
     def set_batch_index(self, batch_index: int) -> SingleIndex[T]:
         self.source.set_batch_index(batch_index)
-        if self.target is not None:
-            self.target.set_batch_index(batch_index)
+        if self._target is not None:
+            self._target.set_batch_index(batch_index)
 
         return self
 
@@ -144,14 +150,12 @@ class Index(Generic[T]):
         if self.source_config.coordinates is not None and (
             self.target_config is None or self.target_config.coordinates is not None
         ):
-            self.axis_range = [len(output_df)]
-            self.output_df = make_df_from_ranges(["coordinate"], self.axis_range)
+            self.output_df = make_df_from_ranges(["coordinate"], [len(output_df)])
         else:
             # Keep one output row per index row (the df may be a sparse, correlated set rather than
             # a full grid), mapping each column's values to dense first-appearance codes.
             coordinate_df = output_df[[col for col in output_df.columns if col != ModelLocation.ACTIVATION]]
             factorized = {col: pd.factorize(coordinate_df[col].astype(str)) for col in coordinate_df.columns}
-            self.axis_range = [len(uniques) for _, uniques in factorized.values()]
             self.output_df = pd.DataFrame(
                 {col: codes for col, (codes, _) in factorized.items()}, index=coordinate_df.index
             )
@@ -160,9 +164,6 @@ class Index(Generic[T]):
         columns = self.source.df.columns.to_list()
         elements = (IndexElement(self.source_config, columns, row) for row in dataframe_to_list(self.source.df))
         return {element.transformer_activation() for element in elements if element.activation() is not None}
-
-    def prepare_output_placeholder(self, device: str | torch.device = "cpu") -> torch.Tensor:
-        return torch.zeros(self.axis_range, device=device)
 
     def to_df(self) -> pd.DataFrame:
         dfs = [self.source.df.add_prefix("source_")]
@@ -180,21 +181,19 @@ class Index(Generic[T]):
 
         if self.target is None or self.target_config is None:
             return (
-                SingleIndex[T](IndexElement[T](self.source_config, source_columns, source_row), output_row)
-                for source_row, output_row in zip(
-                    dataframe_to_list(self.source.df), dataframe_to_list(self.output_df), strict=True
-                )
+                SingleIndex[T](position, IndexElement[T](self.source_config, source_columns, source_row))
+                for position, source_row in enumerate(dataframe_to_list(self.source.df))
             )
 
         target_columns = self.target.df.columns.to_list()
         return (
             SingleIndex[T](
+                position,
                 IndexElement[T](self.source_config, source_columns, source_row),
-                output_row,
                 IndexElement[T](self.target_config, target_columns, target_row),
             )
-            for source_row, target_row, output_row in zip_fill(
-                dataframe_to_list(self.source.df), dataframe_to_list(self.target.df), dataframe_to_list(self.output_df)
+            for position, (source_row, target_row) in enumerate(
+                zip_fill(dataframe_to_list(self.source.df), dataframe_to_list(self.target.df))
             )
         )
 

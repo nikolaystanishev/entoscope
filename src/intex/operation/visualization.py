@@ -3,7 +3,8 @@
 A result frame carries dense ``index_*`` codes alongside the original ``source_*``/``target_*``
 values, so laying one out is the same problem for every operation and only the cell payload differs.
 Everything produced here ends up inside plotly HTML, so values are escaped once, in ``format_value``,
-rather than at each call site.
+rather than at each call site. ``Figure`` — the page every operation's HTML is written through,
+grid-drawn or not — lives here too.
 """
 
 from __future__ import annotations
@@ -13,13 +14,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from html import escape
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 import pandas as pd
 import plotly.graph_objects as go
 
+from intex.model import Model
 from intex.model.config import ModelLocation
 from intex.operation.config import AbstractConfig
+from intex.operation.input import OperationInput
+
+InputT = TypeVar("InputT", bound=OperationInput)
 
 # x takes the last of these a run varies over and y the rest, so an activation-patching grid comes
 # out position-across / layer-down and a layer x head or layer x neuron grid keeps layer down too.
@@ -118,14 +123,32 @@ def diverging_range(values: Sequence[float], midpoint: float) -> tuple[float, fl
     return midpoint - spread, midpoint + spread
 
 
-def write_html(path: str, title: str, figure: go.Figure) -> None:
+def write_html(path: str, title: str, *figures: go.Figure) -> None:
+    # plotly.js is embedded by the first figure and shared by the rest of the page.
+    body = "<hr/>".join(figure.to_html(full_html=False, include_plotlyjs=(i == 0)) for i, figure in enumerate(figures))
     with open(path, "w", encoding="utf-8") as f:
         f.write(
             "<!doctype html><html><head><meta charset='utf-8'/>"
             f"<title>{escape(title)}</title></head><body>"
-            f"{figure.to_html(full_html=False, include_plotlyjs=True)}"
+            f"{body}"
             "</body></html>"
         )
+
+
+class Figure(abc.ABC):
+    """A self-contained interactive HTML page built from one or more plotly figures."""
+
+    @property
+    @abc.abstractmethod
+    def title(self) -> str:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def figures(self) -> list[go.Figure]:
+        raise NotImplementedError
+
+    def render(self, path: str) -> None:
+        write_html(path, self.title, *self.figures())
 
 
 @dataclass(frozen=True)
@@ -224,26 +247,25 @@ def titled(kind: str, config: AbstractConfig) -> str:
     return f"{kind} (config: {config.config_id})" if config.config_id else kind
 
 
-class GridFigure(abc.ABC):
+class GridFigure(Figure, Generic[InputT]):
     """An operation's result frame drawn as the grid its index describes.
 
     Choosing the axes, pivoting the rows onto them and falling back to a bar when only one of them
     varies is the same work whatever was run, so it lives here; a subclass says only what its own
     result means — which column holds the value, how to colour it, and what a cell reads on hover.
+    Those answers are read off the run's input, which comes along for that reason — and because it
+    lets a collector name a figure class and construct it without knowing what produced the frame.
     """
 
     prefixes: tuple[str, ...] = ("source_",)
     colorscale = SEQUENTIAL
 
-    def __init__(self, result: pd.DataFrame, tokens: dict[str, list[str]]) -> None:
+    def __init__(self, result: pd.DataFrame, operation_input: InputT, model: Model) -> None:
         self.result = result
-        self.tokens = tokens
+        self.operation_input = operation_input
+        self.model = model
+        self.tokens = self.str_tokens()
         self.grid = IndexGrid.of(result)
-
-    @property
-    @abc.abstractmethod
-    def title(self) -> str:
-        raise NotImplementedError
 
     @property
     @abc.abstractmethod
@@ -277,8 +299,16 @@ class GridFigure(abc.ABC):
         """
         return None
 
-    def render(self, path: str) -> None:
-        write_html(path, self.title, self.figure())
+    def str_tokens(self) -> dict[str, list[str]]:
+        """The prompt's token strings for each position column of the result, keyed by that column.
+
+        Read once at construction to label the axes; a figure whose index carries no position — or a
+        run with no prompt to read one from — labels its ticks with the coordinates alone.
+        """
+        return {}
+
+    def figures(self) -> list[go.Figure]:
+        return [self.figure()]
 
     # Both axes are drawn against dense positions with the real values as tick text, so a duplicate
     # or non-printable label cannot merge two cells the way a categorical axis would.
