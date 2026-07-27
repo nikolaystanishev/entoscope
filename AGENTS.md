@@ -1,0 +1,138 @@
+# AGENTS.md
+
+This file provides guidance to coding agents when working with code in this repository.
+
+## Commands
+
+```bash
+uv sync --group dev
+```
+
+```bash
+uv run pytest
+```
+
+```bash
+uv run pytest tests/lens/test_logit_lens.py::test_the_grid_covers_every_layer_and_position -x
+```
+
+```bash
+uv run ruff check . && uv run ruff format --check .
+```
+
+CI (`.github/workflows/ci.yml`) runs exactly the lint, format-check and `pytest` above, the tests on
+Python 3.10–3.14.
+
+## What this repo is
+
+intex - mechanistic interpretability modular framework for analysis of transformer models, currently supporting
+patching, probing, lensing, and circuit discovery.
+
+## Architecture
+
+Every operation — Logit/Tuned/Parameter Lens, Probing, Activation Patching, Circuit Discovery —
+follows the same four-part shape, and adding one means writing the same four pieces:
+
+- **Config** (`<op>/config.py`) — a `kw_only` dataclass extending `AbstractConfig`, validating in
+  `__post_init__`. Loadable from YAML through `ConfigFactory[TheConfig](path).create("id")`, which
+  deserializes strictly via `intex.util.data.from_dict` (unknown/missing keys raise; a
+  `from_config` classmethod on a field's type overrides the default handling). A config saves
+  itself as `config.json` beside the run's results.
+- **Input** (`<op>/input.py`) — a dataclass extending `OperationInput` that holds prompts and the
+  lazily-filled tensors. `prepare_index(model)` resolves everything that needs no forward pass;
+  `prepare(model)` calls it and then gathers activations. Both are idempotent, guarded on the
+  *cache* rather than the index, so `plan()` followed by `apply()` on the same object costs one
+  index resolution.
+- **Operator** (`<op>/<name>.py`) — `apply(input, save_dir, return_collector, verbose)` iterates
+  `input.index`, and `plan(input, save_dir, verbose)` builds an `OperationPlan` describing the same
+  run without touching the model or `save_dir`. Constructor takes `(model, collector_class=...)`.
+- **Collector** (`<op>/collector.py`) — accumulates one cell per index row and writes the run's
+  files. `FrameCollector` glues cells onto the index's own columns to produce `result.csv`;
+  `VisualizationCollector` additionally renders `result.html`.
+
+### The index is the spine
+
+`ModelLocatorConfig` (`model/config.py`) is what every operation's config embeds to say *where* in
+the model to look, in one of two mutually exclusive modes:
+
+- declarative — `location` names the axes (`layer`, `head`, `neuron`, `position`), the full range of
+  each is generated, then narrowed by `Filter` and reshaped by the `Group` / `Incremental` /
+  `Combination` transforms;
+- explicit — `coordinates` enumerates exact points, optionally each with its own `activation`.
+
+`parse(model, n_positions)` turns that into a DataFrame. `n_positions=None` means the prompt length
+varies (probing over unequal-length prompts): positions stay symbolic so torch resolves a negative
+against each prompt's own cache at slice time, and an unfiltered `position` axis is rejected.
+
+`Index` (`model/index.py`) wraps the DataFrame(s) and is what operators iterate. Each `SingleIndex`
+carries an `output` position — the row a collector files its cell under — plus a source
+`IndexElement` and, for patching, a target one. `IndexElement.slices()` turns a row into the tuple
+of tensor slices for that activation, via `ActivationSlicer` (`model/slicer.py`), which owns the
+axis order per activation kind (`[batch, pos, neuron]`, `[batch, pos, head, neuron]`,
+`[batch, head, dest_pos, src_pos]`). `transformer_activation()` maps intex's dotted
+`ModelLayerLocation` values onto `transformer_lens` hook names.
+
+Adding a location or activation therefore means touching `ModelLayerLocation`,
+`MODEL_LOCATION_MAPPER`, `TRANSFORMER_ACT_NAME` and `ActivationSlicer` together.
+
+### Models and backends
+
+`Model` (`model/base.py`) is a union: `TransformerBridge | HookedTransformer | CachedModel`.
+`TransformerBridge` with raw HuggingFace numerics is the default; `enable_compatibility_mode()`
+switches to `transformer_lens`'s folded-LayerNorm convention and both must keep working.
+`HookedTransformer` is kept because Intel macOS is pinned to `transformer-lens` 2.x (see the
+platform markers in `pyproject.toml`). **Any new `transformer_lens` import that moved between 2.x
+and 3.x needs the same `try/except ImportError` fallback** used in `model/index.py`,
+`model/base.py` and `tests/conftest.py`. Backend-dependent weight access is centralized in
+`model/weight.py` and `model/unembed.py` — go through those rather than reading `model.W_*`
+directly.
+
+`CachedModel` (`model/cache.py`) is a transparent read-through disk cache that overrides only
+`run_with_cache` and forwards everything else via `__getattr__`; `cache_dir=None` makes it a
+pass-through. Cache keys fold in a sampled digest of the model's weights, so a fine-tune or a
+supplied `hf_model` cannot collide with the base model.
+
+### Visualization is a collector choice, not a config flag
+
+Passing `collector_class=LensCollector` / `PatchingCollector` / `CircuitCollector` opts out of HTML
+— and only then does the operation avoid importing plotly, which is why `operation/collector.py`
+imports `Figure` under `TYPE_CHECKING` only. `GridFigure` (`operation/visualization.py`) derives the
+whole layout from the `Index`: position on x and layer on y when both vary, otherwise `AXIS_ORDER`
+with the last varying axis across; a one-dimensional index becomes a bar chart. A subclass supplies
+only the cell payload (`value_column`, `hover`, `value_range`, ...).
+
+### Dispatch
+
+Method selection is `match` on an enum in a `*MethodFactory` (`lens/method/factory.py`,
+`circuit/method/factory.py`), or an `AbstractX.get(enum)` static method (`patching/metric.py`,
+`patching/processor.py`'s source/target strategies, `probe/pool.py`, `model/slicer.py`). The one
+open registry is `DatasetFactory.register("name")`, since dataset implementations live outside the
+package — intex ships none.
+
+### Scripts
+
+`@intex.script.experiment.experiment` turns `main(config: SomeDataclass)` into a CLI: fields become
+`--kebab-case` options with types, defaults and required-ness derived from the dataclass
+(`script/argument.py` handles `list`/`dict`/`tuple`/`bool`/`Optional`; anything argparse-specific
+goes in `field(metadata={...})`). When the decorated function is in `__main__` it runs at decoration
+time, so the config class must be defined above it.
+
+## Conventions
+
+- Comments and docstrings explain *why* and what is non-obvious (a numerical gotcha, why a guard
+  exists, what a backend does differently). They do not restate what the code or the math already
+  says; such comments get deleted.
+- `src/intex/circuit/vendor/` is CC BY-NC 4.0 third-party code, kept close to verbatim and excluded
+  from ruff. Do not reformat or refactor it. Circuit Discovery's `information_flow_routes` method is
+  non-commercial-only as a result.
+- Line length 120, ruff rules `E,F,UP,B,SIM,I`; `F722` is off for jaxtyping shape strings.
+
+## Tests
+
+Integration-style, against real (tiny, randomly initialized) transformers built in
+`tests/conftest.py`, plus real GPT-2 for the `model` fixture. Everything derives from the
+session-scoped `backend` fixture, so each test runs once per backend (`bridge`, `hooked`) and a test
+taking several model fixtures gets them all on the same one — a test reaching a fixture through
+`request.getfixturevalue` must also name `backend`. Other shared helpers: `forbid_model_runs` (asserts
+a `plan()` never runs the model), `rendered_figure` (parses the plotly JSON back out of
+`result.html`), and `config_from_yaml` (sources a config the way a run does, through `ConfigFactory`).
