@@ -2,7 +2,8 @@
 
 The grid is the run's own index — layer down, position across for the canonical sweep — coloured by
 the metric on a diverging scale centred on the value an ineffective patch would produce, so warm
-cells are the locations that moved the model toward the source.
+cells are the locations that moved the model toward the source. One such grid is drawn per column
+the config names, each centred on its own comparison's ineffective value.
 """
 
 from __future__ import annotations
@@ -16,11 +17,11 @@ from intex.model import Model
 from intex.model.index import Index
 from intex.model.token import str_token_labels
 from intex.operation.visualization import DIVERGING, GridFigure, describe_row, diverging_range, format_value, titled
-from intex.patching.config import MetricComparison, PatchingMethodType, metric_column
+from intex.patching.config import MetricComparison, MetricPair, PatchingMethodType, metric_column
 from intex.patching.input import PatchingInput
 
 
-class PatchingFigure(GridFigure[PatchingInput]):
+class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
     # The patched run is the target run, so the target's own coordinates label the axes; the source's
     # are the fallback for an index the target does not span.
     prefixes = ("target_", "source_")
@@ -32,14 +33,19 @@ class PatchingFigure(GridFigure[PatchingInput]):
 
     @property
     def title(self) -> str:
+        return titled("Patching", self.operation_input.config)
+
+    def panels(self) -> list[MetricPair]:
+        return self.operation_input.config.metric_pairs()
+
+    def heading(self, panel: MetricPair) -> str:
         config = self.operation_input.config
-        kind = self.value_column
+        kind = self.value_column(panel)
         if config.method is not PatchingMethodType.EXACT:
             kind = f"{config.method.value} {kind}"
         return titled(f"Patching — {kind}", config)
 
-    @property
-    def subtitle(self) -> str:
+    def subtitle(self, panel: MetricPair) -> str:
         target = f'target: "{escape(self.operation_input.target_prompt)}"'
         source = self.operation_input.source_prompt
         parts = [f'source: "{escape(source)}" → {target}' if source is not None else target]
@@ -47,16 +53,14 @@ class PatchingFigure(GridFigure[PatchingInput]):
             parts.append(self.constant)
         return " · ".join(parts)
 
-    @property
-    def value_column(self) -> str:
-        """The first column the config asks for — the others are columns of ``result.csv`` only."""
-        return metric_column(*self.operation_input.config.primary())
+    def value_column(self, panel: MetricPair) -> str:
+        return metric_column(*panel)
 
-    def value_range(self, values: Sequence[float]) -> tuple[float, float]:
+    def value_range(self, panel: MetricPair, values: Sequence[float]) -> tuple[float, float]:
         # An ineffective patch reproduces the target run, so that is where the diverging scale is
         # centred: at the target's own metric when it is reported absolutely, and at zero once the
         # comparison has already subtracted it.
-        metric, comparison = self.operation_input.config.primary()
+        metric, comparison = panel
         midpoint = (
             float(self.operation_input.target_baseline(metric)) if comparison is MetricComparison.ABSOLUTE else 0.0
         )
@@ -68,10 +72,11 @@ class PatchingFigure(GridFigure[PatchingInput]):
             prompts.append(("source_", self.operation_input.source_tokens))
         return {f"{prefix}position": str_token_labels(self.model, tokens) for prefix, tokens in prompts}
 
-    def hover(self, position: int, coordinate: str) -> str:
+    def hover(self, panel: MetricPair, position: int, coordinate: str) -> str:
         row = self.result.iloc[position]
         target = describe_row(row, "target_")
-        lines = [f"<b>{self.value_column} = {format_value(row[self.value_column])}</b>"]
+        column = self.value_column(panel)
+        lines = [f"<b>{column} = {format_value(row[column])}</b>"]
         if coordinate and coordinate != target:
             lines.append(coordinate)
         lines.append(f"source: {describe_row(row, 'source_')}")

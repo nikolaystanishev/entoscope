@@ -62,7 +62,7 @@ def _line_trace(segments: list[tuple[float, float]], color: str, name: str, dash
     )
 
 
-class CircuitFigure(Figure):
+class CircuitFigure(Figure[tuple[nx.MultiDiGraph, str]]):
     def __init__(self, circuit: PromptCircuit, model: Model) -> None:
         self.circuit = circuit
         self.n_layers = model.cfg.n_layers
@@ -71,14 +71,15 @@ class CircuitFigure(Figure):
     def title(self) -> str:
         return f"Circuit — {self.circuit.prompt}"
 
-    def figures(self) -> list[go.Figure]:
+    def panels(self) -> list[tuple[nx.MultiDiGraph, str]]:
         prompt = escape(self.circuit.prompt)
         return [
-            self._graph_figure(self.circuit.routes, f'Information Flow Routes — "{prompt}"'),
-            self._graph_figure(self.circuit.graph, f'Full contribution graph — "{prompt}"'),
+            (self.circuit.routes, f'Information Flow Routes — "{prompt}"'),
+            (self.circuit.graph, f'Full contribution graph — "{prompt}"'),
         ]
 
-    def _graph_figure(self, graph: nx.MultiDiGraph, title: str) -> go.Figure:
+    def figure(self, panel: tuple[nx.MultiDiGraph, str]) -> go.Figure:
+        graph, title = panel
         str_tokens, n_layers = self.circuit.str_tokens, self.n_layers
         fig = go.Figure()
 

@@ -12,7 +12,7 @@ from intex.circuit.input import CircuitInput
 from intex.circuit.method.circuit import PromptCircuit
 from intex.operation.config import ConfigFactory
 
-from ..conftest import forbid_model_runs
+from ..conftest import forbid_model_runs, rendered_figures
 
 PROMPTS = ["The capital of France is", "The Eiffel Tower is in"]
 
@@ -64,9 +64,12 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path):
     from_json = nx.node_link_graph(data, edges="links")
     assert from_json.number_of_edges() == collector.result[0].graph.number_of_edges()
 
-    # The HTML is self-contained (embeds plotly.js).
+    # The HTML is self-contained (embeds plotly.js) and holds both of the circuit's panels.
     html = (save_dir / "circuit_0.html").read_text()
     assert "Plotly.newPlot" in html or "plotly" in html.lower()
+    routes, graph = rendered_figures(save_dir, "circuit_0.html")
+    assert routes.layout["title"]["text"].startswith("Information Flow Routes")
+    assert graph.layout["title"]["text"].startswith("Full contribution graph")
 
     prompts = json.loads((save_dir / "prompts.json").read_text())
     assert [p["prompt"] for p in prompts] == PROMPTS

@@ -25,7 +25,7 @@ from intex.patching.input import PatchingInput
 from intex.patching.method.factory import PatchingMethodFactory
 from intex.patching.patcher import Patcher
 
-from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure
+from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
 
 SOURCE_PROMPT = "The capital of France is"
 TARGET_PROMPT = "The capital of Spain is"
@@ -1586,16 +1586,46 @@ def test_a_gradient_run_names_its_method_on_the_page(model: HookedTransformer, t
     assert figure.title.startswith("Patching — attribution indirect_effect_logit_diff (config: sweep)")
 
 
-def test_the_first_metric_is_the_one_that_is_drawn(model: HookedTransformer, tmp_path: Path) -> None:
-    save_dir = tmp_path / "two_metrics"
+def test_every_column_the_config_names_is_drawn_as_its_own_plot(model: HookedTransformer, tmp_path: Path) -> None:
+    save_dir = tmp_path / "three_columns"
     config = _layer_position_config()
-    config.metric = dict.fromkeys((PatchingMetric.PROBABILITY, PatchingMetric.LOGIT_DIFF), [MetricComparison.ABSOLUTE])
+    config.metric = {
+        PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE, MetricComparison.NORMALIZED],
+        PatchingMetric.KL_DIVERGENCE: [MetricComparison.INDIRECT_EFFECT],
+    }
 
-    figure = _draw(model, config, save_dir)
+    Patcher(model).apply(
+        PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT, correct_token=" Madrid", distractor_token=" Paris"),
+        save_dir=str(save_dir),
+        verbose=False,
+    )
+    figures = rendered_figures(save_dir)
+    result = pd.read_csv(save_dir / "result.csv")
 
-    # Both land in the CSV; the page colours by the first and names it on the colour bar.
-    assert {"probability", "logit_diff"} <= set(pd.read_csv(save_dir / "result.csv").columns)
-    assert figure.trace["colorbar"]["title"]["text"] == "probability"
+    # One plot per column, in the order the config names them, each drawn from its own column.
+    assert len(figures) == len(config.metric_columns())
+    for figure, column in zip(figures, config.metric_columns(), strict=True):
+        assert figure.trace["colorbar"]["title"]["text"] == column
+        assert figure.title.startswith(f"Patching — {column} (config: sweep)")
+        assert [value for row in figure.trace["z"] for value in row] == pytest.approx(result[column].tolist())
+
+
+def test_each_plot_is_centred_on_its_own_comparisons_ineffective_value(
+    model: HookedTransformer, tmp_path: Path
+) -> None:
+    save_dir = tmp_path / "two_comparisons"
+    config = _layer_position_config()
+    config.metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE, MetricComparison.INDIRECT_EFFECT]}
+    patching_input = PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT)
+
+    Patcher(model).apply(patching_input, save_dir=str(save_dir), verbose=False)
+    absolute, effect = (figure.trace for figure in rendered_figures(save_dir))
+
+    # The same metric, so the same spread — but the absolute plot sits on the target's own value and
+    # the effect plot on zero, because its comparison has already subtracted that value out.
+    baseline = float(patching_input.target_baseline(PatchingMetric.LOGIT_DIFF))
+    assert absolute["zmin"] == pytest.approx(2 * baseline - absolute["zmax"])
+    assert effect["zmin"] == pytest.approx(-effect["zmax"])
 
 
 def test_a_sweep_is_drawn_with_positions_across_and_layers_down(model: HookedTransformer, tmp_path: Path) -> None:

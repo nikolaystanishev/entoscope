@@ -68,6 +68,9 @@ class SinglePatchingConfig:
     target: PatchingElementConfig
 
 
+MetricPair = tuple[PatchingMetric, MetricComparison]
+
+
 def metric_column(metric: PatchingMetric, comparison: MetricComparison) -> str:
     if comparison is MetricComparison.ABSOLUTE:
         return metric.value
@@ -80,7 +83,7 @@ class PatchingConfig(AbstractConfig):
 
     Everything named there is read off the same patched run, so a second metric costs no extra
     forward pass and a second comparison of a metric already asked for costs nothing at all — it
-    re-reads that metric's change. The figure colours by the first column.
+    re-reads that metric's change. Each column is drawn as its own plot on the result page.
 
     ``interpolation_steps`` is the number of points the integrated-gradients method averages its
     gradient over and is ignored by the other two.
@@ -103,15 +106,14 @@ class PatchingConfig(AbstractConfig):
         if self.interpolation_steps < 1:
             raise ValueError(f"interpolation_steps must be at least 1, got {self.interpolation_steps}")
 
+    def metric_pairs(self) -> list[MetricPair]:
+        """Every metric with each comparison it is reported under, in the order the config names them."""
+        return [(metric, comparison) for metric, comparisons in self.metric.items() for comparison in comparisons]
+
     def metric_columns(self) -> list[str]:
         """The result columns, in the order the config names them."""
-        return [
-            metric_column(metric, comparison)
-            for metric, comparisons in self.metric.items()
-            for comparison in comparisons
-        ]
+        return [metric_column(*pair) for pair in self.metric_pairs()]
 
-    def primary(self) -> tuple[PatchingMetric, MetricComparison]:
-        """The first column's metric and comparison — what the figure is drawn from."""
-        metric, comparisons = next(iter(self.metric.items()))
-        return metric, comparisons[0]
+    def primary(self) -> MetricPair:
+        """The first column's metric and comparison — the run's headline pair."""
+        return self.metric_pairs()[0]

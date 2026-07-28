@@ -17,8 +17,9 @@ from intex.lens.method.logit_lens import _attention_scale
 from intex.model.cache import CachedModel
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.operation.config import ConfigFactory
+from intex.operation.visualization import format_value
 
-from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure
+from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
 from .conftest import (
     HEAD,
     NEURON,
@@ -465,6 +466,10 @@ def test_the_lens_runs_from_an_experiment_script(tmp_path):
             {"type": "logit_lens", "source": {"activation": "resid.post"}, "target": {}},
             "Unknown keys for LensConfig.*target",
         ),
+        (
+            {"type": "logit_lens", "top_k": 0, "source": {"activation": "resid.post"}},
+            "top_k must be at least 1",
+        ),
     ],
 )
 def test_a_malformed_lens_config_is_rejected_when_it_is_loaded(config_from_yaml, raw, message):
@@ -605,6 +610,31 @@ def test_a_lens_run_writes_an_interactive_result_page(model, tmp_path):
     assert figure.trace["colorbar"]["title"]["text"] == "probability"
     # The top-1 token is printed into its own cell, so it reaches the page as more than hover text.
     assert figure.trace["text"][0][0] == expected["str_token_0"].iloc[0]
+
+
+def test_every_rank_of_the_top_k_gets_its_own_plot(model, tmp_path):
+    save_dir = tmp_path / "top_k_plots"
+    config = declarative_config(**LAYER_POSITION_GRID, top_k=3)
+    expected = lens_rows(model, config)
+
+    Lens(model).apply(LensInput(config, PROMPT), save_dir=str(save_dir), verbose=False)
+    figures = rendered_figures(save_dir)
+
+    assert len(figures) == config.top_k
+    for rank, figure in enumerate(figures):
+        assert figure.title.startswith(f"Lens — logit_lens · top-{rank + 1}")
+        # Each plot reads its own rank's probability, and prints that rank's token in the cell.
+        assert figure.trace["z"][0][0] == pytest.approx(expected[f"probability_{rank}"].iloc[0])
+        assert figure.trace["text"][0][0] == format_value(expected[f"str_token_{rank}"].iloc[0])
+
+
+def test_a_top_1_run_is_drawn_as_a_single_plot(model, tmp_path):
+    save_dir = tmp_path / "top_1"
+
+    lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT)
+    Lens(model).apply(lens_input, save_dir=str(save_dir), verbose=False)
+
+    assert len(rendered_figures(save_dir)) == 1
 
 
 def test_the_position_axis_is_labelled_with_the_prompts_tokens(model, tmp_path):
