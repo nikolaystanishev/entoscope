@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -193,18 +194,33 @@ class RenderedFigure:
         return self.layout.get(axis, {}).get("title", {}).get("text", "")
 
 
-def rendered_figure(save_dir) -> RenderedFigure:
-    """The figure a run wrote into ``save_dir/result.html``.
+def rendered_figures(save_dir, name: str = "result.html") -> list[RenderedFigure]:
+    """Every plot on the page a run wrote into ``save_dir``, in the order it draws them.
 
-    ``Plotly.newPlot(`` appears inside the bundled plotly.js too (in an error message), so the call
-    itself is the last occurrence; the trailing config object marks where the layout argument ends.
+    ``Plotly.newPlot(`` appears inside the bundled plotly.js too (in an error message), so an
+    occurrence is a real call only if what follows it parses as the two arguments a call takes; the
+    trailing config object marks where the layout argument ends.
     """
-    html = (Path(save_dir) / "result.html").read_text(encoding="utf-8")
-    start = html.rindex("Plotly.newPlot(") + len("Plotly.newPlot(")
-    arguments = html[start : html.index('{"responsive": true}', start)].rstrip().rstrip(",")
+    html = (Path(save_dir) / name).read_text(encoding="utf-8")
 
-    traces, layout = json.loads(f"[{arguments[arguments.index(',') + 1 :]}]")
-    return RenderedFigure(traces, layout)
+    figures = []
+    for match in re.finditer(r"Plotly\.newPlot\(", html):
+        end = html.find('{"responsive": true}', match.end())
+        if end == -1:
+            continue
+        arguments = html[match.end() : end].rstrip().rstrip(",")
+        try:
+            traces, layout = json.loads(f"[{arguments[arguments.index(',') + 1 :]}]")
+        except ValueError:
+            continue
+        figures.append(RenderedFigure(traces, layout))
+
+    return figures
+
+
+def rendered_figure(save_dir, name: str = "result.html") -> RenderedFigure:
+    """The first plot on the page — what a run drawing a single one wrote."""
+    return rendered_figures(save_dir, name)[0]
 
 
 @pytest.fixture

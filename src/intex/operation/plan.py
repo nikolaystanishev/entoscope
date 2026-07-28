@@ -37,6 +37,7 @@ class OperationPlan:
     steps: int
     steps_label: str
     forward_passes: int
+    backward_passes: int = 0
     batches: int | None = None
     index: list[pd.DataFrame] = field(default_factory=list)
     prompts: list[tuple[str, str, int]] = field(default_factory=list)
@@ -74,7 +75,10 @@ class OperationPlan:
         work = _plural(self.steps, self.steps_label)
         if self.batches is not None:
             work = f"{work} in {_plural(self.batches, 'batch')}"
-        return f"{work}, {_plural(self.forward_passes, 'forward pass')}"
+        passes = _plural(self.forward_passes, "forward pass")
+        if self.backward_passes:
+            passes = f"{passes}, {_plural(self.backward_passes, 'backward pass')}"
+        return f"{work}, {passes}"
 
     def _writes(self) -> str:
         if self.save_dir is None:

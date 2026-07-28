@@ -11,7 +11,7 @@ from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 
-from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure
+from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
 from .conftest import (
     HEAD,
     LAYER,
@@ -386,9 +386,11 @@ def test_a_neuron_axis_goes_across_with_the_layers_down(small_model, tmp_path):
 
 def test_an_empty_index_still_writes_a_page(model, tmp_path):
     # Including and excluding the same layer leaves nothing to run, and a result with no rows has no
-    # value column either — the page says so rather than failing to render.
+    # value column either — the page says so rather than failing to render. It says it once: with
+    # nothing to read, every rank of the top-k would draw the same empty plot.
     config = LensConfig(
         type=LensType.PARAMETER_LENS,
+        top_k=3,
         source=ModelLocatorConfig(
             activation=ModelLayerLocation.MLP_POST,
             location=[ModelLocation.LAYER],
@@ -401,3 +403,4 @@ def test_an_empty_index_still_writes_a_page(model, tmp_path):
 
     assert len(pd.read_csv(save_dir / "result.csv")) == 0
     assert "No rows in the index" in (save_dir / "result.html").read_text(encoding="utf-8")
+    assert len(rendered_figures(save_dir)) == 1

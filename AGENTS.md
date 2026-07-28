@@ -96,18 +96,30 @@ supplied `hf_model` cannot collide with the base model.
 
 Passing `collector_class=LensCollector` / `PatchingCollector` / `CircuitCollector` opts out of HTML
 — and only then does the operation avoid importing plotly, which is why `operation/collector.py`
-imports `Figure` under `TYPE_CHECKING` only. `GridFigure` (`operation/visualization.py`) derives the
-whole layout from the `Index`: position on x and layer on y when both vary, otherwise `AXIS_ORDER`
-with the last varying axis across; a one-dimensional index becomes a bar chart. A subclass supplies
-only the cell payload (`value_column`, `hover`, `value_range`, ...).
+imports `Figure` under `TYPE_CHECKING` only. A `Figure` is a page of *panels* — `panels()` names
+them and `figure(panel)` draws one plot each, which is how a patching page gets a plot per metric
+column, a lens page one per top-k rank and a circuit page its routes and its full graph.
+`GridFigure` (`operation/visualization.py`) derives the whole layout from the `Index`: position on x
+and layer on y when both vary, otherwise `AXIS_ORDER` with the last varying axis across; a
+one-dimensional index becomes a bar chart. That layout is shared by every panel, so a subclass
+supplies only the per-panel payload (`value_column`, `hover`, `value_range`, ...).
 
 ### Dispatch
 
 Method selection is `match` on an enum in a `*MethodFactory` (`lens/method/factory.py`,
-`circuit/method/factory.py`), or an `AbstractX.get(enum)` static method (`patching/metric.py`,
-`patching/processor.py`'s source/target strategies, `probe/pool.py`, `model/slicer.py`). The one
-open registry is `DatasetFactory.register("name")`, since dataset implementations live outside the
-package — intex ships none.
+`circuit/method/factory.py`, `patching/method/factory.py`), or an `AbstractX.get(enum)` static
+method (`patching/metric.py`'s metrics and comparisons, `patching/processor.py`'s source/target
+strategies, `probe/pool.py`, `model/slicer.py`). The one open registry is
+`DatasetFactory.register("name")`, since dataset implementations live outside the package — intex
+ships none.
+
+Patching composes three of those: `PatchingMetric` picks the scalar read off a run, `MetricComparison`
+picks what the patched run is reported against, and `PatchingMethodType` picks how the change in the
+metric is obtained. The config's `metric` maps the first onto a list of the second, one result column
+per pair, so the comparison is chosen per metric and a metric may carry several. Every method yields
+the same primitive — the patched run's metric minus the unpatched target run's, one per *metric* —
+so adding one means implementing `AbstractPatchingMethod.scores` and nothing else; `_report` fans
+that out into the columns and the figure draws one plot per `config.metric_pairs()` entry.
 
 ### Scripts
 

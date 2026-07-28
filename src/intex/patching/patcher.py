@@ -1,13 +1,10 @@
-import torch
-from tqdm import tqdm
-
 from intex.model import Model
 from intex.operation.operator import Operator
 from intex.operation.plan import OperationPlan
 from intex.patching.collector import PatchingCollector, PatchingVisualizationCollector
+from intex.patching.config import PatchingMethodType
 from intex.patching.input import PatchingInput
-from intex.patching.metric import AbstractMetric
-from intex.patching.processor import HookedPatchProcessor
+from intex.patching.method.factory import PatchingMethodFactory
 from intex.util.collections import batch_generator, zip_fill
 
 
@@ -41,20 +38,24 @@ class Patcher(Operator):
 
         runs = len(list(zip_fill(*patching_input.index))) if patching_input.index else 0
         batches = len(list(batch_generator(list(range(runs)), self.batch_size)))
+        method = PatchingMethodFactory.create(patching_input.config, self.model, self.batch_size)
+        forward_passes, backward_passes = method.passes(runs, batches)
+
+        prompts = [("target", patching_input.target_prompt, patching_input.target_tokens.shape[1])]
+        if patching_input.source_prompt is not None:
+            prompts.insert(0, ("source", patching_input.source_prompt, patching_input.source_tokens.shape[1]))
 
         plan = OperationPlan(
             operation="Patcher",
             config=patching_input.config,
             steps=runs,
             steps_label="patch run",
-            # One patched run per batch, on top of the two cached runs the input prepares.
-            forward_passes=batches + 2,
-            batches=batches,
+            # The method's own passes, on top of the cached run the input prepares per prompt.
+            forward_passes=forward_passes + len(prompts),
+            backward_passes=backward_passes,
+            batches=batches if patching_input.config.method is PatchingMethodType.EXACT else None,
             index=[idx.to_df() for idx in patching_input.index],
-            prompts=[
-                ("source", patching_input.source_prompt, patching_input.source_tokens.shape[1]),
-                ("target", patching_input.target_prompt, patching_input.target_tokens.shape[1]),
-            ],
+            prompts=prompts,
             activations=patching_input.activation_names(),
             save_dir=save_dir,
             outputs=self.collector_class(patching_input, self.model, save_dir).output_files(),
@@ -67,26 +68,10 @@ class Patcher(Operator):
     def _patch(self, patching_input: PatchingInput, save_dir: str | None, verbose: bool = True) -> PatchingCollector:
         patching_input.prepare(self.model)
         collector = self.collector_class(patching_input, self.model, save_dir)
-        patching_index = patching_input.index
         collector.prepare()
-        patching_index = list(zip_fill(*patching_index))
 
-        for index in tqdm(
-            batch_generator(patching_index, self.batch_size),
-            total=(len(patching_index) + self.batch_size - 1) // self.batch_size,
-            disable=not verbose,
-        ):
-            fwd_hooks = [
-                HookedPatchProcessor.hook(idx.set_batch_index(i), patching_input)
-                for i, group in enumerate(index)
-                for idx in group
-            ]
-            patched_logits = self.model.run_with_hooks(
-                torch.cat([patching_input.target_tokens] * len(index), dim=0), fwd_hooks=fwd_hooks
-            ).detach()[:, -1, :]
-
-            for idx, logits in zip(index, patched_logits, strict=False):
-                metric_value = AbstractMetric.get(patching_input.config.metric).compute(patching_input, logits).item()
-                collector.collect(logits, idx[0].output, metric_value)
+        method = PatchingMethodFactory.create(patching_input.config, self.model, self.batch_size)
+        for output, metric_values in method.scores(patching_input, verbose):
+            collector.collect(output, metric_values)
 
         return collector
