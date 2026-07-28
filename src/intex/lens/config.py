@@ -28,7 +28,7 @@ class LensConfig(AbstractConfig):
     scale: float = 1.0
 
     def __post_init__(self):
-        if self.top_k < 1:
+        if not isinstance(self.top_k, int) or self.top_k < 1:
             raise ValueError(f"top_k must be at least 1, got {self.top_k}")
         if self.translators is not None and self.type is not LensType.TUNED_LENS:
             raise ValueError(f"'translators' is a tuned lens setting; it cannot be used with '{self.type.value}'")

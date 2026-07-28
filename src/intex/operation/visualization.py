@@ -327,7 +327,10 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
     def figures(self) -> list[go.Figure]:
         # An empty index carries no value column at all, so every panel would draw the same empty
         # plot; one says it once for the whole run.
-        return [self.figure(self.panels()[0])] if self.result.empty else super().figures()
+        panels = self.panels()
+        if self.result.empty:
+            return [self.figure(panels[0])] if panels else []
+        return super().figures()
 
     # Both axes are drawn against dense positions with the real values as tick text, so a duplicate
     # or non-printable label cannot merge two cells the way a categorical axis would.
