@@ -158,8 +158,17 @@ class Index(Generic[T]):
             )
 
     def source_activation_names(self) -> set[str]:
-        columns = self.source.df.columns.to_list()
-        elements = (IndexElement(self.source_config, columns, row) for row in dataframe_to_list(self.source.df))
+        return self._activation_names(self.source_config, self.source)
+
+    def target_activation_names(self) -> set[str]:
+        return self._activation_names(self.target_config, self.target)
+
+    @staticmethod
+    def _activation_names(config: T | None, index: ModelLocationIndex | None) -> set[str]:
+        if config is None or index is None:
+            return set()
+        columns = index.df.columns.to_list()
+        elements = (IndexElement(config, columns, row) for row in dataframe_to_list(index.df))
         return {element.transformer_activation() for element in elements if element.activation() is not None}
 
     def to_df(self) -> pd.DataFrame:

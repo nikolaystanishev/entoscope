@@ -104,10 +104,17 @@ only the cell payload (`value_column`, `hover`, `value_range`, ...).
 ### Dispatch
 
 Method selection is `match` on an enum in a `*MethodFactory` (`lens/method/factory.py`,
-`circuit/method/factory.py`), or an `AbstractX.get(enum)` static method (`patching/metric.py`,
-`patching/processor.py`'s source/target strategies, `probe/pool.py`, `model/slicer.py`). The one
-open registry is `DatasetFactory.register("name")`, since dataset implementations live outside the
-package — intex ships none.
+`circuit/method/factory.py`, `patching/method/factory.py`), or an `AbstractX.get(enum)` static
+method (`patching/metric.py`'s metrics and comparisons, `patching/processor.py`'s source/target
+strategies, `probe/pool.py`, `model/slicer.py`). The one open registry is
+`DatasetFactory.register("name")`, since dataset implementations live outside the package — intex
+ships none.
+
+Patching composes three of those: `PatchingMetric` picks the scalar read off a run, `MetricComparison`
+picks what the patched run is reported against, and `PatchingMethodType` picks how the change in the
+metric is obtained. Every method yields the same primitive — the patched run's metric minus the
+unpatched target run's — so adding one means implementing `AbstractPatchingMethod.scores` and
+nothing else; the collector and figure follow from the config's `metric_columns()`.
 
 ### Scripts
 

@@ -16,7 +16,7 @@ from intex.model import Model
 from intex.model.index import Index
 from intex.model.token import str_token_labels
 from intex.operation.visualization import DIVERGING, GridFigure, describe_row, diverging_range, format_value, titled
-from intex.patching.config import PatchingMetric
+from intex.patching.config import MetricComparison, PatchingMethodType
 from intex.patching.input import PatchingInput
 
 
@@ -33,40 +33,42 @@ class PatchingFigure(GridFigure[PatchingInput]):
     @property
     def title(self) -> str:
         config = self.operation_input.config
-        return titled(f"Patching — {config.metric.value}", config)
+        kind = self.value_column
+        if config.method is not PatchingMethodType.EXACT:
+            kind = f"{config.method.value} {kind}"
+        return titled(f"Patching — {kind}", config)
 
     @property
     def subtitle(self) -> str:
-        parts = [
-            f'source: "{escape(self.operation_input.source_prompt)}" →'
-            + f' target: "{escape(self.operation_input.target_prompt)}"'
-        ]
+        target = f'target: "{escape(self.operation_input.target_prompt)}"'
+        source = self.operation_input.source_prompt
+        parts = [f'source: "{escape(source)}" → {target}' if source is not None else target]
         if self.constant:
             parts.append(self.constant)
         return " · ".join(parts)
 
     @property
     def value_column(self) -> str:
-        return self.operation_input.config.metric.value
+        """The first metric the config asks for — the others are columns of ``result.csv`` only."""
+        return self.operation_input.config.metric_column(self.operation_input.config.metric[0])
 
     def value_range(self, values: Sequence[float]) -> tuple[float, float]:
-        # An ineffective patch reproduces the target's own logit diff; the normalized metric and the
-        # KL difference are both defined so that value is zero.
+        # An ineffective patch reproduces the target run, so that is where the diverging scale is
+        # centred: at the target's own metric when it is reported absolutely, and at zero once the
+        # comparison has already subtracted it.
+        config = self.operation_input.config
         midpoint = (
-            float(self.operation_input.target_baseline)
-            if self.operation_input.config.metric is PatchingMetric.LOGIT_DIFF
+            float(self.operation_input.target_baseline(config.metric[0]))
+            if config.comparison is MetricComparison.ABSOLUTE
             else 0.0
         )
         return diverging_range(values, midpoint)
 
     def str_tokens(self) -> dict[str, list[str]]:
-        return {
-            f"{prefix}position": str_token_labels(self.model, tokens)
-            for prefix, tokens in (
-                ("target_", self.operation_input.target_tokens),
-                ("source_", self.operation_input.source_tokens),
-            )
-        }
+        prompts = [("target_", self.operation_input.target_tokens)]
+        if self.operation_input.source_prompt is not None:
+            prompts.append(("source_", self.operation_input.source_tokens))
+        return {f"{prefix}position": str_token_labels(self.model, tokens) for prefix, tokens in prompts}
 
     def hover(self, position: int, coordinate: str) -> str:
         row = self.result.iloc[position]
