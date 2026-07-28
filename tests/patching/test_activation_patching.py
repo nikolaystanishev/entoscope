@@ -19,8 +19,10 @@ from intex.patching.config import (
     PatchingMetric,
     PatchingType,
     SinglePatchingConfig,
+    metric_column,
 )
 from intex.patching.input import PatchingInput
+from intex.patching.method.factory import PatchingMethodFactory
 from intex.patching.patcher import Patcher
 
 from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure
@@ -29,10 +31,19 @@ SOURCE_PROMPT = "The capital of France is"
 TARGET_PROMPT = "The capital of Spain is"
 
 
-def _metric(collector: PatchingCollector, metric: PatchingMetric | None = None) -> torch.Tensor:
-    """One of the result frame's metric columns, in index order — one value per patched run."""
+def _metric(
+    collector: PatchingCollector, metric: PatchingMetric | None = None, comparison: MetricComparison | None = None
+) -> torch.Tensor:
+    """One of the result frame's metric columns, in index order — one value per patched run.
+
+    Names nothing: the first column when neither argument is given, and a metric's own first
+    comparison when only the metric is.
+    """
     config = collector.operation_input.config
-    column = config.metric_column(metric if metric is not None else config.metric[0])
+    if metric is None:
+        column = config.metric_columns()[0]
+    else:
+        column = metric_column(metric, comparison if comparison is not None else config.metric[metric][0])
     return torch.tensor(collector.result[column].to_numpy(), dtype=torch.float32)
 
 
@@ -93,8 +104,7 @@ def _last_layer_resid_patch_config() -> PatchingConfig:
     element = _last_layer_resid_element()
     return PatchingConfig(
         config_id="last_layer_resid_patch",
-        metric=[PatchingMetric.LOGIT_DIFF],
-        comparison=MetricComparison.NORMALIZED,
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.NORMALIZED]},
         patch=[SinglePatchingConfig(source=element, target=element)],
     )
 
@@ -105,7 +115,7 @@ def _last_layer_resid_zero_ablation_config() -> PatchingConfig:
     target = _last_layer_resid_element()  # writes them into the activation
     return PatchingConfig(
         config_id="last_layer_resid_zero_ablation",
-        metric=[PatchingMetric.LOGIT_DIFF],
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
         patch=[SinglePatchingConfig(source=source, target=target)],
     )
 
@@ -133,7 +143,7 @@ def _resid_value_scale_config(scale: float, layer: int) -> PatchingConfig:
     )
     return PatchingConfig(
         config_id="resid_value_scale",
-        metric=[PatchingMetric.LOGIT_DIFF],
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
         patch=[SinglePatchingConfig(source=source, target=target)],
     )
 
@@ -170,7 +180,7 @@ def _patch_config(*elements: PatchingElementConfig, config_id: str = "patch") ->
     """Patches sharing one config are applied together, on a single forward pass."""
     return PatchingConfig(
         config_id=config_id,
-        metric=[PatchingMetric.LOGIT_DIFF],
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
         patch=[SinglePatchingConfig(source=element, target=element) for element in elements],
     )
 
@@ -349,11 +359,11 @@ def _metric_config(
     comparison: MetricComparison = MetricComparison.ABSOLUTE,
     element: PatchingElementConfig | None = None,
 ) -> PatchingConfig:
+    """Every named metric under the one comparison — the shape most of these tests want."""
     element = element if element is not None else _no_op_element()
     return PatchingConfig(
         config_id="metrics",
-        metric=list(metrics),
-        comparison=comparison,
+        metric={metric: [comparison] for metric in metrics},
         patch=[SinglePatchingConfig(source=element, target=element)],
     )
 
@@ -468,6 +478,78 @@ def test_a_patch_that_changes_nothing_has_no_indirect_effect(model: HookedTransf
     assert torch.allclose(result.squeeze(), torch.tensor(0.0), atol=1e-5)
 
 
+def test_each_metric_is_reported_under_its_own_comparison(model: HookedTransformer) -> None:
+    torch.manual_seed(42)
+
+    # The reason the comparison sits on the metric: a divergence is read as an effect, a logit
+    # difference as a fraction of the source run's own distance, and both off one patched run.
+    element = _last_layer_resid_element()
+    together = _collect(
+        model,
+        PatchingConfig(
+            config_id="mixed",
+            metric={
+                PatchingMetric.LOGIT_DIFF: [MetricComparison.NORMALIZED],
+                PatchingMetric.KL_DIVERGENCE: [MetricComparison.INDIRECT_EFFECT],
+            },
+            patch=[SinglePatchingConfig(source=element, target=element)],
+        ),
+    )
+
+    assert list(together.result.columns[-2:]) == ["normalized_logit_diff", "indirect_effect_kl_divergence"]
+    for metric, comparison in (
+        (PatchingMetric.LOGIT_DIFF, MetricComparison.NORMALIZED),
+        (PatchingMetric.KL_DIVERGENCE, MetricComparison.INDIRECT_EFFECT),
+    ):
+        alone = _run(model, _metric_config(metric, element=element, comparison=comparison))
+        assert torch.allclose(_metric(together, metric), alone, atol=1e-5), metric
+
+
+def test_one_metric_may_be_reported_under_several_comparisons(model: HookedTransformer) -> None:
+    torch.manual_seed(42)
+
+    element = _last_layer_resid_element()
+    comparisons = [MetricComparison.NORMALIZED, MetricComparison.ABSOLUTE, MetricComparison.INDIRECT_EFFECT]
+    together = _collect(
+        model,
+        PatchingConfig(
+            config_id="thrice",
+            metric={PatchingMetric.LOGIT_DIFF: comparisons},
+            patch=[SinglePatchingConfig(source=element, target=element)],
+        ),
+    )
+
+    # Three columns off one change in one metric, each agreeing with the run that asks for it alone.
+    assert list(together.result.columns[-3:]) == ["normalized_logit_diff", "logit_diff", "indirect_effect_logit_diff"]
+    for comparison in comparisons:
+        alone = _run(model, _metric_config(PatchingMetric.LOGIT_DIFF, element=element, comparison=comparison))
+        assert torch.allclose(_metric(together, PatchingMetric.LOGIT_DIFF, comparison), alone, atol=1e-5), comparison
+
+
+def test_a_second_comparison_costs_no_extra_backward_pass(model: HookedTransformer) -> None:
+    # The gradient methods differentiate once per metric, and a comparison only re-reads that
+    # gradient's delta — so naming three of them is free where naming a second metric is not.
+    element = _last_layer_resid_element()
+
+    def backward_passes(metric: dict) -> int:
+        config = PatchingConfig(
+            config_id="cost",
+            metric=metric,
+            method=PatchingMethodType.ATTRIBUTION,
+            patch=[SinglePatchingConfig(source=element, target=element)],
+        )
+        return PatchingMethodFactory.create(config, model).passes(runs=1, batches=1)[1]
+
+    assert backward_passes({PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]}) == 1
+    assert backward_passes({PatchingMetric.LOGIT_DIFF: list(MetricComparison)}) == 1
+    assert (
+        backward_passes(
+            dict.fromkeys((PatchingMetric.LOGIT_DIFF, PatchingMetric.PROBABILITY), [MetricComparison.ABSOLUTE])
+        )
+        == 2
+    )
+
+
 # --------------------------------------------------------------------------------------------------
 # The answer tokens the difference metrics compare
 # --------------------------------------------------------------------------------------------------
@@ -540,7 +622,7 @@ def test_zero_ablation_scores_its_effect_without_a_second_prompt(model: HookedTr
     # Nothing is read from another run, so the intervention needs no counterfactual prompt: the
     # effect is the metric under 'do(a = 0)' minus the metric of the prompt left alone.
     config = _last_layer_resid_zero_ablation_config()
-    config.comparison = MetricComparison.INDIRECT_EFFECT
+    config.metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]}
     patching_input = PatchingInput(config, None, TARGET_PROMPT, correct_token=" Madrid", distractor_token=" Barcelona")
 
     collector = Patcher(model, collector_class=PatchingCollector).apply(
@@ -572,8 +654,7 @@ def test_a_metric_that_needs_the_source_run_says_so(
     model: HookedTransformer, metric: PatchingMetric, comparison: MetricComparison
 ) -> None:
     config = _last_layer_resid_zero_ablation_config()
-    config.metric = [metric]
-    config.comparison = comparison
+    config.metric = {metric: [comparison]}
 
     with pytest.raises(ValueError, match="needs a source prompt"):
         Patcher(model).apply(
@@ -598,8 +679,7 @@ def _gradient_config(
     location, index_filter = [ModelLocation.LAYER], Filter(inclusion_terms=[{ModelLocation.LAYER: layer}])
     return PatchingConfig(
         config_id=method.value,
-        metric=[PatchingMetric.LOGIT_DIFF],
-        comparison=MetricComparison.INDIRECT_EFFECT,
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]},
         method=method,
         interpolation_steps=steps,
         patch=[
@@ -740,11 +820,8 @@ def test_a_gradient_method_runs_the_model_once_however_large_the_index(model: Ho
         (PatchingMethodType.INTEGRATED_GRADIENTS, 4),
     ):
         config = _patch_config(element, config_id=method.value)
-        config.method, config.interpolation_steps, config.comparison = (
-            method,
-            steps,
-            MetricComparison.INDIRECT_EFFECT,
-        )
+        config.method, config.interpolation_steps = method, steps
+        config.metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]}
         calls.clear()
         collector = _collect(model, config)
         passes[method] = len(calls)
@@ -760,7 +837,7 @@ def test_a_gradient_method_runs_the_model_once_however_large_the_index(model: Ho
 def test_integrated_gradients_needs_a_source_run_to_interpolate_towards(model: HookedTransformer) -> None:
     config = _last_layer_resid_zero_ablation_config()
     config.method = PatchingMethodType.INTEGRATED_GRADIENTS
-    config.comparison = MetricComparison.INDIRECT_EFFECT
+    config.metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]}
 
     with pytest.raises(ValueError, match="needs a source prompt"):
         Patcher(model).apply(
@@ -807,8 +884,7 @@ def _explicit_patch_config(
     target coordinate i of the target run (one patched run per pair)."""
     return PatchingConfig(
         config_id="explicit_patch",
-        metric=[PatchingMetric.LOGIT_DIFF],
-        comparison=MetricComparison.NORMALIZED,
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.NORMALIZED]},
         patch=[
             SinglePatchingConfig(
                 source=_explicit_element(source_coordinates, activation),
@@ -946,7 +1022,7 @@ def test_two_sources_differing_only_in_activation_keep_their_own_metric(model: H
     )
     config = PatchingConfig(
         config_id="same_coordinate_two_activations",
-        metric=[PatchingMetric.LOGIT_DIFF],
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
         patch=[SinglePatchingConfig(source=source, target=target)],
     )
     patching_input = PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT)
@@ -979,7 +1055,12 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
     config_yaml = tmp_path / "configs.yaml"
     config_yaml.write_text(
         yaml.safe_dump(
-            {"last_layer_resid_patch": {"metric": ["logit_diff"], "patch": [{"source": element, "target": element}]}}
+            {
+                "last_layer_resid_patch": {
+                    "metric": {"logit_diff": ["absolute"]},
+                    "patch": [{"source": element, "target": element}],
+                }
+            }
         )
     )
     config = ConfigFactory[PatchingConfig](str(config_yaml)).create("last_layer_resid_patch")
@@ -1009,8 +1090,7 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
     # config.json mirrors the patching config that produced the run.
     saved_config = json.loads(config_path.read_text())
     assert saved_config["config_id"] == "last_layer_resid_patch"
-    assert saved_config["metric"] == ["logit_diff"]
-    assert saved_config["comparison"] == "absolute"
+    assert saved_config["metric"] == {"logit_diff": ["absolute"]}
     assert saved_config["method"] == "exact"
     assert len(saved_config["patch"]) == 1
     assert saved_config["patch"][0]["source"]["type"] == "replace"
@@ -1039,7 +1119,7 @@ def _gaussian_noise_config() -> PatchingConfig:
     )
     return PatchingConfig(
         config_id="gaussian_noise",
-        metric=[PatchingMetric.LOGIT_DIFF],
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
         patch=[SinglePatchingConfig(source=source, target=target)],
     )
 
@@ -1071,7 +1151,7 @@ def test_a_patching_type_that_is_not_known_raises(model: HookedTransformer, elem
     (source if element == "source" else target).type = "bogus" if element == "source" else "value_replace"
     config = PatchingConfig(
         config_id="unknown_strategy",
-        metric=[PatchingMetric.LOGIT_DIFF],
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
         patch=[SinglePatchingConfig(source=source, target=target)],
     )
 
@@ -1081,7 +1161,7 @@ def test_a_patching_type_that_is_not_known_raises(model: HookedTransformer, elem
 
 def test_a_patching_metric_that_is_not_known_raises(model: HookedTransformer) -> None:
     config = _last_layer_resid_patch_config()
-    config.metric = ["accuracy"]
+    config.metric = {"accuracy": [MetricComparison.ABSOLUTE]}
 
     with pytest.raises(ValueError, match="Unknown patching metric"):
         Patcher(model).apply(PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), verbose=False)
@@ -1089,7 +1169,7 @@ def test_a_patching_metric_that_is_not_known_raises(model: HookedTransformer) ->
 
 def test_a_metric_comparison_that_is_not_known_raises(model: HookedTransformer) -> None:
     config = _last_layer_resid_patch_config()
-    config.comparison = "ratio"
+    config.metric = {PatchingMetric.LOGIT_DIFF: ["ratio"]}
 
     with pytest.raises(ValueError, match="Unknown metric comparison"):
         Patcher(model).apply(PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), verbose=False)
@@ -1098,12 +1178,22 @@ def test_a_metric_comparison_that_is_not_known_raises(model: HookedTransformer) 
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
-        ({"metric": []}, "At least one patching metric"),
+        ({"metric": {}}, "At least one patching metric"),
+        ({"metric": {PatchingMetric.LOGIT_DIFF: []}}, "logit_diff names no comparison"),
+        (
+            {"metric": {PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE, MetricComparison.ABSOLUTE]}},
+            "logit_diff names absolute more than once",
+        ),
         ({"interpolation_steps": 0}, "interpolation_steps"),
     ],
 )
 def test_a_config_that_asks_for_nothing_measurable_is_rejected(overrides: dict, message: str) -> None:
-    settings = {"config_id": "broken", "metric": [PatchingMetric.LOGIT_DIFF], "patch": [], **overrides}
+    settings = {
+        "config_id": "broken",
+        "metric": {PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        "patch": [],
+        **overrides,
+    }
 
     with pytest.raises(ValueError, match=message):
         PatchingConfig(**settings)
@@ -1169,18 +1259,22 @@ ELEMENT_YAML = {"activation": "resid.post", "location": ["layer"], "filter": [{"
 
 
 def _patch_yaml(**overrides) -> dict:
-    return {"metric": ["logit_diff"], "patch": [{"source": ELEMENT_YAML, "target": ELEMENT_YAML}], **overrides}
+    return {
+        "metric": {"logit_diff": ["absolute"]},
+        "patch": [{"source": ELEMENT_YAML, "target": ELEMENT_YAML}],
+        **overrides,
+    }
 
 
 def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model: HookedTransformer, config_from_yaml) -> None:
     from_file = config_from_yaml(PatchingConfig, "last_layer_resid_patch", _patch_yaml())
     element = _last_layer_resid_element()
     in_code = PatchingConfig(
-        metric=[PatchingMetric.LOGIT_DIFF], patch=[SinglePatchingConfig(source=element, target=element)]
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        patch=[SinglePatchingConfig(source=element, target=element)],
     )
 
-    assert from_file.metric == [PatchingMetric.LOGIT_DIFF]
-    assert from_file.comparison is MetricComparison.ABSOLUTE
+    assert from_file.metric == {PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]}
     assert from_file.method is PatchingMethodType.EXACT
     assert from_file.patch[0].source.activation is ModelLayerLocation.RESIDUAL_POST
     assert from_file.patch[0].source.location == [ModelLocation.LAYER]
@@ -1195,23 +1289,44 @@ def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model: HookedTran
     assert torch.equal(run(from_file), run(in_code))
 
 
-def test_a_yaml_config_can_name_a_comparison_and_a_gradient_method(config_from_yaml) -> None:
+def test_a_yaml_config_can_give_each_metric_its_own_comparisons(config_from_yaml) -> None:
     config = config_from_yaml(
         PatchingConfig,
         "attributed",
         _patch_yaml(
-            metric=["logit_diff", "kl_divergence"],
-            comparison="indirect_effect",
+            metric={"logit_diff": ["normalized", "absolute"], "kl_divergence": ["indirect_effect"]},
             method="integrated_gradients",
             interpolation_steps=4,
         ),
     )
 
-    assert config.metric == [PatchingMetric.LOGIT_DIFF, PatchingMetric.KL_DIVERGENCE]
-    assert config.comparison is MetricComparison.INDIRECT_EFFECT
+    assert config.metric == {
+        PatchingMetric.LOGIT_DIFF: [MetricComparison.NORMALIZED, MetricComparison.ABSOLUTE],
+        PatchingMetric.KL_DIVERGENCE: [MetricComparison.INDIRECT_EFFECT],
+    }
     assert config.method is PatchingMethodType.INTEGRATED_GRADIENTS
     assert config.interpolation_steps == 4
-    assert list(config.metric_columns().values()) == ["indirect_effect_logit_diff", "indirect_effect_kl_divergence"]
+    assert sorted(config.metric_columns()) == sorted(
+        ["normalized_logit_diff", "logit_diff", "indirect_effect_kl_divergence"]
+    )
+
+
+def test_the_columns_follow_the_order_the_yaml_names_them(tmp_path: Path) -> None:
+    # Written out rather than dumped through the fixture, which sorts the mapping's keys: the order
+    # of the columns -- and so which one the figure is drawn from -- is the file's own.
+    config_yaml = tmp_path / "configs.yaml"
+    config_yaml.write_text(
+        "ordered:\n"
+        "  metric:\n"
+        "    kl_divergence: [indirect_effect]\n"
+        "    logit_diff: [normalized, absolute]\n"
+        "  patch: []\n"
+    )
+
+    config = ConfigFactory[PatchingConfig](str(config_yaml)).create("ordered")
+
+    assert config.metric_columns() == ["indirect_effect_kl_divergence", "normalized_logit_diff", "logit_diff"]
+    assert config.primary() == (PatchingMetric.KL_DIVERGENCE, MetricComparison.INDIRECT_EFFECT)
 
 
 def test_a_source_and_a_target_may_alias_the_same_yaml_anchor(model: HookedTransformer, tmp_path: Path) -> None:
@@ -1219,7 +1334,7 @@ def test_a_source_and_a_target_may_alias_the_same_yaml_anchor(model: HookedTrans
     config_yaml = tmp_path / "configs.yaml"
     config_yaml.write_text(
         "anchored:\n"
-        "  metric: [logit_diff]\n"
+        "  metric: {logit_diff: [absolute]}\n"
         "  patch:\n"
         "    - source: &element\n"
         "        activation: resid.post\n"
@@ -1241,7 +1356,7 @@ def test_a_source_and_a_target_may_alias_the_same_yaml_anchor(model: HookedTrans
 def test_the_omitted_keys_of_an_element_fall_back_to_their_defaults(model: HookedTransformer, config_from_yaml) -> None:
     # A source that names nothing but its type produces zeros — the zero-ablation shape, from YAML.
     raw = {
-        "metric": ["logit_diff"],
+        "metric": {"logit_diff": ["absolute"]},
         "patch": [{"source": {"type": "value_replace"}, "target": ELEMENT_YAML}],
     }
     config = config_from_yaml(PatchingConfig, "zero_ablation", raw)
@@ -1259,7 +1374,9 @@ def test_the_omitted_keys_of_an_element_fall_back_to_their_defaults(model: Hooke
 def test_an_exclusion_term_is_deserialized_into_its_own_filter(model: HookedTransformer, config_from_yaml) -> None:
     element = {**ELEMENT_YAML, "filter": [{"layer": {"range": [0, 2]}}, {"not": {"layer": 1}}]}
     config = config_from_yaml(
-        PatchingConfig, "filtered", {"metric": ["logit_diff"], "patch": [{"source": element, "target": element}]}
+        PatchingConfig,
+        "filtered",
+        {"metric": {"logit_diff": ["absolute"]}, "patch": [{"source": element, "target": element}]},
     )
 
     assert config.patch[0].source.filter == Filter(
@@ -1278,17 +1395,20 @@ def test_an_exclusion_term_is_deserialized_into_its_own_filter(model: HookedTran
     [
         (_patch_yaml(typ="replace"), "Unknown keys for PatchingConfig.*typ"),
         (
-            {"metric": ["logit_diff"], "patch": [{"source": {"activation": "resid.post"}, "target": ELEMENT_YAML}]},
+            {
+                "metric": {"logit_diff": ["absolute"]},
+                "patch": [{"source": {"activation": "resid.post"}, "target": ELEMENT_YAML}],
+            },
             "Missing required keys for PatchingElementConfig.*type",
         ),
         (
-            {"metric": ["logit_diff"], "patch": [{"source": "replace", "target": ELEMENT_YAML}]},
+            {"metric": {"logit_diff": ["absolute"]}, "patch": [{"source": "replace", "target": ELEMENT_YAML}]},
             "Expected a mapping for PatchingElementConfig",
         ),
         ({"patch": []}, "Missing required keys for PatchingConfig.*metric"),
-        (_patch_yaml(metric=["accuracy"]), "accuracy"),
-        (_patch_yaml(metric="logit_diff"), "Expected a list"),
-        (_patch_yaml(comparison="ratio"), "ratio"),
+        (_patch_yaml(metric={"accuracy": ["absolute"]}), "accuracy"),
+        (_patch_yaml(metric={"logit_diff": ["ratio"]}), "ratio"),
+        (_patch_yaml(metric=["logit_diff"]), "Expected a mapping"),
         (_patch_yaml(method="guesswork"), "guesswork"),
     ],
 )
@@ -1361,7 +1481,7 @@ def test_a_plan_counts_a_gradient_runs_passes_instead_of_its_batches(
     model: HookedTransformer, monkeypatch, tmp_path: Path
 ) -> None:
     config = _every_layer_patch_config()
-    config.metric = [PatchingMetric.LOGIT_DIFF, PatchingMetric.PROBABILITY]
+    config.metric = dict.fromkeys((PatchingMetric.LOGIT_DIFF, PatchingMetric.PROBABILITY), [MetricComparison.ABSOLUTE])
     config.method = PatchingMethodType.INTEGRATED_GRADIENTS
     config.interpolation_steps = 3
     patching_input = PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT)
@@ -1382,7 +1502,7 @@ def test_a_plan_for_a_run_without_a_source_prompt_names_one_prompt(
     model: HookedTransformer, monkeypatch, tmp_path: Path
 ) -> None:
     config = _last_layer_resid_zero_ablation_config()
-    config.comparison = MetricComparison.INDIRECT_EFFECT
+    config.metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]}
     patching_input = PatchingInput(config, None, TARGET_PROMPT, correct_token=" Madrid", distractor_token=" Barcelona")
 
     forbid_model_runs(monkeypatch, model)
@@ -1432,8 +1552,7 @@ def _layer_position_config(
     )
     return PatchingConfig(
         config_id="sweep",
-        metric=[metric],
-        comparison=comparison,
+        metric={metric: [comparison]},
         patch=[SinglePatchingConfig(source=element, target=element)],
     )
 
@@ -1470,7 +1589,7 @@ def test_a_gradient_run_names_its_method_on_the_page(model: HookedTransformer, t
 def test_the_first_metric_is_the_one_that_is_drawn(model: HookedTransformer, tmp_path: Path) -> None:
     save_dir = tmp_path / "two_metrics"
     config = _layer_position_config()
-    config.metric = [PatchingMetric.PROBABILITY, PatchingMetric.LOGIT_DIFF]
+    config.metric = dict.fromkeys((PatchingMetric.PROBABILITY, PatchingMetric.LOGIT_DIFF), [MetricComparison.ABSOLUTE])
 
     figure = _draw(model, config, save_dir)
 
@@ -1613,7 +1732,7 @@ def test_a_page_for_a_run_without_a_source_prompt_names_only_the_target(
 ) -> None:
     save_dir = tmp_path / "ablated"
     config = _last_layer_resid_zero_ablation_config()
-    config.comparison = MetricComparison.INDIRECT_EFFECT
+    config.metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]}
     Patcher(model).apply(
         PatchingInput(config, None, TARGET_PROMPT, correct_token=" Madrid", distractor_token=" Barcelona"),
         save_dir=str(save_dir),
@@ -1636,7 +1755,8 @@ def test_a_grouped_location_does_not_break_the_page(model: HookedTransformer, tm
         type=PatchingType.REPLACE,
     )
     config = PatchingConfig(
-        metric=[PatchingMetric.LOGIT_DIFF], patch=[SinglePatchingConfig(source=element, target=element)]
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        patch=[SinglePatchingConfig(source=element, target=element)],
     )
 
     figure = _draw(model, config, tmp_path / "grouped")

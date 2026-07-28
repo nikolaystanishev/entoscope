@@ -4,7 +4,7 @@ from collections.abc import Iterator
 import torch
 
 from intex.model import Model
-from intex.patching.config import PatchingConfig, PatchingMetric
+from intex.patching.config import PatchingConfig, PatchingMetric, metric_column
 from intex.patching.input import PatchingInput
 from intex.patching.metric import AbstractComparison
 
@@ -13,9 +13,9 @@ class AbstractPatchingMethod(abc.ABC):
     """How a run turns its index into one number per row.
 
     Every method produces the same primitive for each row — ``delta``, the metric of the patched
-    run minus the metric of the unpatched target run — and ``_report`` converts it into whatever
-    the config's comparison asks for. What separates the methods is only how ``delta`` is reached:
-    by patching and running the model, or by estimating from gradients.
+    run minus the metric of the unpatched target run, one per metric — and ``_report`` fans it out
+    into the columns the config's comparisons ask for. What separates the methods is only how
+    ``delta`` is reached: by patching and running the model, or by estimating from gradients.
     """
 
     def __init__(self, model: Model, config: PatchingConfig, batch_size: int = 1):
@@ -34,8 +34,10 @@ class AbstractPatchingMethod(abc.ABC):
         raise NotImplementedError
 
     def _report(self, patching_input: PatchingInput, deltas: dict[PatchingMetric, torch.Tensor]) -> dict[str, float]:
-        comparison = AbstractComparison.get(self.config.comparison)
         return {
-            self.config.metric_column(metric): comparison.apply(metric, patching_input, delta).item()
-            for metric, delta in deltas.items()
+            metric_column(metric, comparison): AbstractComparison.get(comparison)
+            .apply(metric, patching_input, deltas[metric])
+            .item()
+            for metric, comparisons in self.config.metric.items()
+            for comparison in comparisons
         }

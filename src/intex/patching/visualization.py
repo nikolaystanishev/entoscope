@@ -16,7 +16,7 @@ from intex.model import Model
 from intex.model.index import Index
 from intex.model.token import str_token_labels
 from intex.operation.visualization import DIVERGING, GridFigure, describe_row, diverging_range, format_value, titled
-from intex.patching.config import MetricComparison, PatchingMethodType
+from intex.patching.config import MetricComparison, PatchingMethodType, metric_column
 from intex.patching.input import PatchingInput
 
 
@@ -49,18 +49,16 @@ class PatchingFigure(GridFigure[PatchingInput]):
 
     @property
     def value_column(self) -> str:
-        """The first metric the config asks for — the others are columns of ``result.csv`` only."""
-        return self.operation_input.config.metric_column(self.operation_input.config.metric[0])
+        """The first column the config asks for — the others are columns of ``result.csv`` only."""
+        return metric_column(*self.operation_input.config.primary())
 
     def value_range(self, values: Sequence[float]) -> tuple[float, float]:
         # An ineffective patch reproduces the target run, so that is where the diverging scale is
         # centred: at the target's own metric when it is reported absolutely, and at zero once the
         # comparison has already subtracted it.
-        config = self.operation_input.config
+        metric, comparison = self.operation_input.config.primary()
         midpoint = (
-            float(self.operation_input.target_baseline(config.metric[0]))
-            if config.comparison is MetricComparison.ABSOLUTE
-            else 0.0
+            float(self.operation_input.target_baseline(metric)) if comparison is MetricComparison.ABSOLUTE else 0.0
         )
         return diverging_range(values, midpoint)
 

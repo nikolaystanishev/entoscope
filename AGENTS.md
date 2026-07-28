@@ -112,9 +112,11 @@ ships none.
 
 Patching composes three of those: `PatchingMetric` picks the scalar read off a run, `MetricComparison`
 picks what the patched run is reported against, and `PatchingMethodType` picks how the change in the
-metric is obtained. Every method yields the same primitive — the patched run's metric minus the
-unpatched target run's — so adding one means implementing `AbstractPatchingMethod.scores` and
-nothing else; the collector and figure follow from the config's `metric_columns()`.
+metric is obtained. The config's `metric` maps the first onto a list of the second, one result column
+per pair, so the comparison is chosen per metric and a metric may carry several. Every method yields
+the same primitive — the patched run's metric minus the unpatched target run's, one per *metric* —
+so adding one means implementing `AbstractPatchingMethod.scores` and nothing else; `_report` fans
+that out into the columns, and the figure colours by `config.primary()`.
 
 ### Scripts
 

@@ -99,19 +99,26 @@ class PatchingInput(OperationInput):
         return sorted(set().union(*(idx.target_activation_names() for idx in self.index))) if self.index else []
 
     def _check_metrics_are_available(self) -> None:
-        """Name every metric and the comparison, then reject those that need a source run there is not.
+        """Name every metric and comparison, then reject those that need a source run there is not.
 
         Resolved up front rather than at the first cell, so a config naming something no metric
-        implements fails before the model is run.
+        implements fails before the model is run. Both are collected into dicts, so a comparison
+        named under several metrics is reported once.
         """
         metrics = {metric: AbstractMetric.get(metric) for metric in self.config.metric}
-        comparison = AbstractComparison.get(self.config.comparison)
+        comparisons = {
+            comparison: AbstractComparison.get(comparison)
+            for comparisons in self.config.metric.values()
+            for comparison in comparisons
+        }
         if self.source_prompt is not None:
             return
 
-        unavailable = [metric.value for metric, implementation in metrics.items() if implementation.needs_source_run]
-        if comparison.needs_source_run:
-            unavailable.append(self.config.comparison.value)
+        unavailable = [
+            named.value
+            for named, implementation in (*metrics.items(), *comparisons.items())
+            if implementation.needs_source_run
+        ]
         if unavailable:
             raise ValueError(
                 f"{', '.join(unavailable)} scores the patched run against the source run, which needs a source prompt"
