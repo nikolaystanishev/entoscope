@@ -219,3 +219,6 @@ __marimo__/
 
 # IDEs
 .idea/
+
+patch_result/
+patching_cache/

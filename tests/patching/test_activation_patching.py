@@ -1,4 +1,5 @@
 import json
+from html import escape
 from pathlib import Path
 
 import pandas as pd
@@ -45,6 +46,15 @@ def _metric(
     else:
         column = metric_column(metric, comparison if comparison is not None else config.metric[metric][0])
     return torch.tensor(collector.result[column].to_numpy(), dtype=torch.float32)
+
+
+def _cell_columns(collector: PatchingCollector) -> list[str]:
+    """The result's columns past the index's own: what each patched run reported, in order."""
+    return list(collector.result.columns[len(collector.operation_input.index[0].to_df().columns) :])
+
+
+# What the exact method records about the patched run besides its metrics.
+GENERATION_COLUMNS = ["generation", "str_generation"]
 
 
 def _run(model: HookedTransformer, config: PatchingConfig, **answers) -> torch.Tensor:
@@ -435,7 +445,7 @@ def test_several_metrics_come_off_one_run(model: HookedTransformer) -> None:
     together = _collect(model, _metric_config(*PatchingMetric, element=element))
 
     # One column per metric, named after it, in the order the config asked for them...
-    assert list(together.result.columns[-len(PatchingMetric) :]) == [metric.value for metric in PatchingMetric]
+    assert _cell_columns(together) == [*(metric.value for metric in PatchingMetric), *GENERATION_COLUMNS]
     # ...each holding what the same metric produces when it is the only one asked for.
     for metric in PatchingMetric:
         alone = _run(model, _metric_config(metric, element=element))
@@ -496,7 +506,7 @@ def test_each_metric_is_reported_under_its_own_comparison(model: HookedTransform
         ),
     )
 
-    assert list(together.result.columns[-2:]) == ["normalized_logit_diff", "indirect_effect_kl_divergence"]
+    assert _cell_columns(together) == ["normalized_logit_diff", "indirect_effect_kl_divergence", *GENERATION_COLUMNS]
     for metric, comparison in (
         (PatchingMetric.LOGIT_DIFF, MetricComparison.NORMALIZED),
         (PatchingMetric.KL_DIVERGENCE, MetricComparison.INDIRECT_EFFECT),
@@ -520,7 +530,12 @@ def test_one_metric_may_be_reported_under_several_comparisons(model: HookedTrans
     )
 
     # Three columns off one change in one metric, each agreeing with the run that asks for it alone.
-    assert list(together.result.columns[-3:]) == ["normalized_logit_diff", "logit_diff", "indirect_effect_logit_diff"]
+    assert _cell_columns(together) == [
+        "normalized_logit_diff",
+        "logit_diff",
+        "indirect_effect_logit_diff",
+        *GENERATION_COLUMNS,
+    ]
     for comparison in comparisons:
         alone = _run(model, _metric_config(PatchingMetric.LOGIT_DIFF, element=element, comparison=comparison))
         assert torch.allclose(_metric(together, PatchingMetric.LOGIT_DIFF, comparison), alone, atol=1e-5), comparison
@@ -611,6 +626,69 @@ def test_a_metric_that_needs_no_distractor_does_not_mind(model: HookedTransforme
     )
 
     assert len(result.result) == 1
+
+
+# --------------------------------------------------------------------------------------------------
+# The generation - the token each patched run predicts next
+# --------------------------------------------------------------------------------------------------
+def test_a_patch_that_reproduces_the_source_run_generates_what_the_source_does(model: HookedTransformer) -> None:
+    collector = _collect(model, _last_layer_resid_patch_config())
+    source_generation, target_generation = _generations(model)
+
+    # The two prompts predict different tokens, so this tells the patched run apart from the target run.
+    assert source_generation != target_generation
+    assert collector.result["generation"].tolist() == [source_generation]
+    assert collector.result["str_generation"].tolist() == [model.to_single_str_token(source_generation)]
+
+
+def test_a_patch_that_changes_nothing_generates_what_the_target_does(model: HookedTransformer) -> None:
+    collector = _collect(model, _metric_config(PatchingMetric.PROBABILITY))
+
+    assert collector.result["generation"].tolist() == [_generations(model)[1]]
+
+
+@pytest.mark.parametrize("batch_size", [1, 3])
+def test_each_row_generates_what_its_own_patched_run_predicts(model: HookedTransformer, batch_size: int) -> None:
+    # The country token, patched layer by layer: early on it still carries the source's answer to the
+    # last position, and by the last layers nothing reads it any more - so the rows differ, and a
+    # batch that mixed them up would show.
+    position = 4
+    element = PatchingElementConfig(
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        filter=Filter(inclusion_terms=[{ModelLocation.POSITION: position}]),
+        type=PatchingType.REPLACE,
+    )
+    collector = Patcher(model, batch_size=batch_size).apply(
+        PatchingInput(_metric_config(PatchingMetric.PROBABILITY, element=element), SOURCE_PROMPT, TARGET_PROMPT),
+        return_collector=True,
+        verbose=False,
+    )
+    assert collector is not None
+
+    expected = []
+    for layer in range(model.cfg.n_layers):
+        name = f"blocks.{layer}.hook_resid_post"
+        source = _source_activation(model, name)
+
+        def write(activation: torch.Tensor, hook, source: torch.Tensor = source) -> torch.Tensor:
+            activation[:, position] = source[:, position]
+            return activation
+
+        with torch.no_grad():
+            patched = model.run_with_hooks(model.to_tokens(TARGET_PROMPT), fwd_hooks=[(name, write)])
+        expected.append(int(patched[0, -1].argmax()))
+
+    assert len(set(expected)) > 1
+    assert collector.result["generation"].tolist() == expected
+
+
+@pytest.mark.parametrize("method", [PatchingMethodType.ATTRIBUTION, PatchingMethodType.INTEGRATED_GRADIENTS])
+def test_a_gradient_method_reports_no_generation(model: HookedTransformer, method: PatchingMethodType) -> None:
+    # A gradient method never runs the patched model, so there is no next token to read off it.
+    collector = _collect(model, _gradient_config(method))
+
+    assert _cell_columns(collector) == ["indirect_effect_logit_diff"]
 
 
 # --------------------------------------------------------------------------------------------------
@@ -1080,10 +1158,13 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
     assert not (save_dir / "result.pt").exists()
 
     # result.csv round-trips the in-memory frame: the source/target columns of the patched element,
-    # plus one column per metric, named after it.
+    # plus one column per metric, named after it...
     result_df = pd.read_csv(result_path)
     assert len(result_df) == len(collector.result) == 1
     assert result_df["logit_diff"].to_list() == pytest.approx(collector.result["logit_diff"].to_list())
+    # ...then the token the patched run predicts next, as its id and its string.
+    assert result_df["generation"].to_list() == collector.result["generation"].to_list()
+    assert result_df["str_generation"].to_list() == collector.result["str_generation"].to_list()
     assert any(col.startswith("source_") for col in result_df.columns)
     assert any(col.startswith("target_") for col in result_df.columns)
 
@@ -1135,6 +1216,32 @@ def test_gaussian_noise_patching(model: HookedTransformer) -> None:
     assert torch.equal(_run(model, _gaussian_noise_config()), noised)
     # ...and noising the activation is not the same as replacing it with the source's.
     assert not torch.allclose(noised, _run(model, _resid_value_scale_config(1.0, _VALUE_SCALE_LAYER)))
+
+
+@pytest.mark.parametrize("source_type", list(PatchingType))
+def test_a_batched_run_scores_what_an_unbatched_one_does(model: HookedTransformer, source_type: PatchingType) -> None:
+    # Only the patched run is batched, one copy of the target prompt per row; every row still reads
+    # its source from the one prompt each cache holds. Five rows a batch leaves a ragged last one.
+    def element(patching_type: PatchingType) -> PatchingElementConfig:
+        return PatchingElementConfig(
+            activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelLocation.LAYER], type=patching_type, value=2.0
+        )
+
+    config = PatchingConfig(
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        patch=[SinglePatchingConfig(source=element(source_type), target=element(PatchingType.REPLACE))],
+    )
+
+    def sweep(batch_size: int) -> torch.Tensor:
+        collector = Patcher(model, collector_class=PatchingCollector, batch_size=batch_size).apply(
+            PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
+        )
+        assert collector is not None
+        return _metric(collector)
+
+    unbatched = sweep(1)
+    assert len(unbatched) == model.cfg.n_layers
+    assert torch.allclose(sweep(5), unbatched, atol=1e-4)
 
 
 @pytest.mark.parametrize(
@@ -1584,6 +1691,8 @@ def test_a_gradient_run_names_its_method_on_the_page(model: HookedTransformer, t
     figure = _draw(model, config, tmp_path / "attributed")
 
     assert figure.title.startswith("Patching — attribution indirect_effect_logit_diff (config: sweep)")
+    # Nothing was run patched, so no cell has a generation to name.
+    assert not any("generation:" in hover for row in figure.trace["hovertext"] for hover in row)
 
 
 def test_every_column_the_config_names_is_drawn_as_its_own_plot(model: HookedTransformer, tmp_path: Path) -> None:
@@ -1646,6 +1755,31 @@ def test_the_position_axis_is_labelled_with_the_target_prompts_tokens(model: Hoo
 
     assert ticks[4] == '4: " Spain"'
     assert '4: " France"' not in ticks
+
+
+def test_the_subtitle_names_what_each_unpatched_prompt_generates(model: HookedTransformer, tmp_path: Path) -> None:
+    source_generation, target_generation = (model.to_single_str_token(token) for token in _generations(model))
+
+    figure = _draw(model, _layer_position_config(), tmp_path / "patch_run")
+
+    assert (
+        f'source: "{SOURCE_PROMPT}" generates "{source_generation}" → '
+        f'target: "{TARGET_PROMPT}" generates "{target_generation}"'
+    ) in figure.title
+
+
+def test_each_cell_names_what_its_patched_run_generates_on_hover(model: HookedTransformer, tmp_path: Path) -> None:
+    # One layer over every position is drawn as a bar, whose cells are the result's rows in order.
+    save_dir = tmp_path / "one_layer"
+    config = _layer_position_config(index_filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0}]))
+
+    figure = _draw(model, config, save_dir)
+    generations = pd.read_csv(save_dir / "result.csv")["str_generation"].tolist()
+
+    assert figure.kind == "bar"
+    assert len(figure.trace["hovertext"]) == len(generations)
+    for hover, generation in zip(figure.trace["hovertext"], generations, strict=True):
+        assert hover.split("<br>")[1] == f'generation: "{escape(generation)}"'
 
 
 def test_the_colour_is_centred_on_the_value_an_ineffective_patch_would_produce(
@@ -1770,8 +1904,9 @@ def test_a_page_for_a_run_without_a_source_prompt_names_only_the_target(
     )
 
     figure = rendered_figure(save_dir)
+    target_generation = model.to_single_str_token(_generations(model)[1])
 
-    assert f'target: "{TARGET_PROMPT}"' in figure.title
+    assert f'target: "{TARGET_PROMPT}" generates "{target_generation}"' in figure.title
     assert "source:" not in figure.title
 
 

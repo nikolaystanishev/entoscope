@@ -9,6 +9,15 @@ from intex.patching.config import PatchingElementConfig, PatchingType
 from intex.patching.input import PatchingInput
 
 
+def _cached_slices(index: IndexElement[PatchingElementConfig]) -> tuple[slice | int | list[int], ...]:
+    """``index``'s slices into a cached run, which holds one prompt.
+
+    Only the patched run is batched - one copy of the target prompt per row - so the batch index an
+    element carries addresses that run alone; every cache is read at batch 0.
+    """
+    return (0, *index.slices()[1:])
+
+
 class SourceStrategy(abc.ABC):
     @staticmethod
     @abc.abstractmethod
@@ -50,7 +59,7 @@ class TargetStrategy(abc.ABC):
 class ReplaceSourceStrategy(SourceStrategy):
     @staticmethod
     def extract(source_index: IndexElement[PatchingElementConfig], patching_input: PatchingInput) -> torch.Tensor:
-        return patching_input.source_cache[source_index.transformer_activation()][source_index.slices()]
+        return patching_input.source_cache[source_index.transformer_activation()][_cached_slices(source_index)]
 
 
 class ValueReplaceSourceStrategy(SourceStrategy):
@@ -63,7 +72,7 @@ class ValueScaleSourceStrategy(SourceStrategy):
     @staticmethod
     def extract(source_index: IndexElement[PatchingElementConfig], patching_input: PatchingInput) -> torch.Tensor:
         return (
-            patching_input.source_cache[source_index.transformer_activation()][(0, *source_index.slices()[1:])]
+            patching_input.source_cache[source_index.transformer_activation()][_cached_slices(source_index)]
             * source_index.config.value
         )
 
@@ -72,7 +81,9 @@ class GaussianNoiseSourceStrategy(SourceStrategy):
     @staticmethod
     def extract(source_index: IndexElement[PatchingElementConfig], patching_input: PatchingInput) -> torch.Tensor:
         noise_level = 3 * patching_input.target_cache[source_index.transformer_activation()].std()
-        target_activations = patching_input.target_cache[source_index.transformer_activation()][source_index.slices()]
+        target_activations = patching_input.target_cache[source_index.transformer_activation()][
+            _cached_slices(source_index)
+        ]
 
         return (
             target_activations

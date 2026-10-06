@@ -3,7 +3,8 @@
 The grid is the run's own index — layer down, position across for the canonical sweep — coloured by
 the metric on a diverging scale centred on the value an ineffective patch would produce, so warm
 cells are the locations that moved the model toward the source. One such grid is drawn per column
-the config names, each centred on its own comparison's ineffective value.
+the config names, each centred on its own comparison's ineffective value. A cell's hover names the
+token its patched run predicts next, and the subtitle the token each unpatched prompt does.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import pandas as pd
 
 from intex.model import Model
 from intex.model.index import Index
-from intex.model.token import str_token_labels
+from intex.model.token import str_token, str_token_labels
 from intex.operation.visualization import DIVERGING, GridFigure, describe_row, diverging_range, format_value, titled
 from intex.patching.config import MetricComparison, MetricPair, PatchingMethodType, metric_column
 from intex.patching.input import PatchingInput
@@ -46,9 +47,12 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
         return titled(f"Patching — {kind}", config)
 
     def subtitle(self, panel: MetricPair) -> str:
-        target = f'target: "{escape(self.operation_input.target_prompt)}"'
-        source = self.operation_input.source_prompt
-        parts = [f'source: "{escape(source)}" → {target}' if source is not None else target]
+        patching_input = self.operation_input
+        prompts = self._prompt("target", patching_input.target_prompt, patching_input.target_generation)
+        if patching_input.source_prompt is not None:
+            source = self._prompt("source", patching_input.source_prompt, patching_input.source_generation)
+            prompts = f"{source} → {prompts}"
+        parts = [prompts]
         if self.constant:
             parts.append(self.constant)
         return " · ".join(parts)
@@ -77,6 +81,9 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
         target = describe_row(row, "target_")
         column = self.value_column(panel)
         lines = [f"<b>{column} = {format_value(row[column])}</b>"]
+        # Only a method that runs the patched model has a generation to report.
+        if "str_generation" in row.index:
+            lines.append(f'generation: "{format_value(row["str_generation"])}"')
         if coordinate and coordinate != target:
             lines.append(coordinate)
         lines.append(f"source: {describe_row(row, 'source_')}")
@@ -84,6 +91,9 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
         if self.per_row[position]:
             lines.append(self.per_row[position])
         return "<br>".join(line for line in lines if line)
+
+    def _prompt(self, run: str, prompt: str, generation: int) -> str:
+        return f'{run}: "{escape(prompt)}" generates "{format_value(str_token(self.model, generation))}"'
 
     def _companions(self) -> tuple[str, list[str]]:
         """What the other patch elements did: a constant clause for the subtitle, a line per result row.

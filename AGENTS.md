@@ -119,7 +119,9 @@ metric is obtained. The config's `metric` maps the first onto a list of the seco
 per pair, so the comparison is chosen per metric and a metric may carry several. Every method yields
 the same primitive — the patched run's metric minus the unpatched target run's, one per *metric* —
 so adding one means implementing `AbstractPatchingMethod.scores` and nothing else; `_report` fans
-that out into the columns and the figure draws one plot per `config.metric_pairs()` entry.
+that out into the columns and the figure draws one plot per `config.metric_pairs()` entry. A method
+that actually runs the patched model (only `exact`) also reports that run's next token as the row's
+`generation`; the gradient methods have no such run and leave it out.
 
 ### Scripts
 

@@ -4,7 +4,7 @@ import torch
 from tqdm import tqdm
 
 from intex.patching.input import PatchingInput
-from intex.patching.method.patching import AbstractPatchingMethod
+from intex.patching.method.patching import AbstractPatchingMethod, RowResult
 from intex.patching.metric import AbstractMetric
 from intex.patching.processor import HookedPatchProcessor
 from intex.util.collections import batch_generator, zip_fill
@@ -17,7 +17,7 @@ class ExactPatchingMethod(AbstractPatchingMethod):
     to the intervention, at the price of a forward pass per row.
     """
 
-    def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[tuple[int, dict[str, float]]]:
+    def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[RowResult]:
         rows = list(zip_fill(*patching_input.index))
 
         for batch in tqdm(
@@ -35,7 +35,7 @@ class ExactPatchingMethod(AbstractPatchingMethod):
             ).detach()[:, -1, :]
 
             for group, logits in zip(batch, patched_logits, strict=False):
-                yield (
+                yield RowResult(
                     group[0].output,
                     self._report(
                         patching_input,
@@ -45,6 +45,7 @@ class ExactPatchingMethod(AbstractPatchingMethod):
                             for metric in self.config.metric
                         },
                     ),
+                    generation=int(logits.argmax()),
                 )
 
     def passes(self, runs: int, batches: int) -> tuple[int, int]:

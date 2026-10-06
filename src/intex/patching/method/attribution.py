@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from intex.patching.config import PatchingMetric
 from intex.patching.input import PatchingInput
-from intex.patching.method.patching import AbstractPatchingMethod
+from intex.patching.method.patching import AbstractPatchingMethod, RowResult
 from intex.patching.metric import AbstractMetric
 from intex.patching.processor import SourceStrategy
 from intex.util.collections import zip_fill
@@ -27,7 +27,7 @@ class AttributionPatchingMethod(AbstractPatchingMethod):
     all scored the same way.
     """
 
-    def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[tuple[int, dict[str, float]]]:
+    def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[RowResult]:
         self._check_available(patching_input)
         gradients = self._gradients(patching_input, verbose)
         rows = list(zip_fill(*patching_input.index))
@@ -46,7 +46,7 @@ class AttributionPatchingMethod(AbstractPatchingMethod):
                     contribution = (gradients[metric][name][slices] * change).sum()
                     deltas[metric] = deltas[metric] + contribution if metric in deltas else contribution
 
-            yield group[0].output, self._report(patching_input, deltas)
+            yield RowResult(group[0].output, self._report(patching_input, deltas))
 
     def passes(self, runs: int, batches: int) -> tuple[int, int]:
         steps = len(self._alphas())
