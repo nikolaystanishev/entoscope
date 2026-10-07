@@ -1,5 +1,6 @@
 import abc
 from collections.abc import Iterator
+from dataclasses import dataclass
 
 import torch
 
@@ -7,6 +8,19 @@ from intex.model import Model
 from intex.patching.config import PatchingConfig, PatchingMetric, metric_column
 from intex.patching.input import PatchingInput
 from intex.patching.metric import AbstractComparison
+
+
+@dataclass(frozen=True)
+class RowResult:
+    """What a method reports for one index row, filed by the collector under ``output``.
+
+    ``generation`` is the token the patched run predicts next. Only a method that actually runs the
+    patched model has one; the gradient methods estimate the metric without such a run and leave it unset.
+    """
+
+    output: int
+    metrics: dict[str, float]
+    generation: int | None = None
 
 
 class AbstractPatchingMethod(abc.ABC):
@@ -24,8 +38,8 @@ class AbstractPatchingMethod(abc.ABC):
         self.batch_size = batch_size
 
     @abc.abstractmethod
-    def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[tuple[int, dict[str, float]]]:
-        """One ``(output position, metric values keyed by result column)`` pair per index row."""
+    def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[RowResult]:
+        """One ``RowResult`` per index row, its metric values keyed by result column."""
         raise NotImplementedError
 
     @abc.abstractmethod

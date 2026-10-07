@@ -68,8 +68,8 @@ class CircuitCollector(AbstractCollector[CircuitInput]):
 class CircuitVisualizationCollector(CircuitCollector, FigureMixin[CircuitFigure]):
     """A ``CircuitCollector`` that also draws each prompt's circuit as ``circuit_{i}.html``.
 
-    Kept separate from the base collector so the base (and anything that only needs graph data) does
-    not pull in plotly, and so visualization is opt-in by collector choice rather than a config flag.
+    Kept separate from the base collector so that anything which only needs graph data draws no
+    figure, and so visualization is opt-in by collector choice rather than a config flag.
     """
 
     def _save_result(self, save_dir: str) -> None:

@@ -3,7 +3,7 @@ import torch
 from intex.lens.input import LensInput
 from intex.lens.visualization import LensFigure
 from intex.model.index import Index
-from intex.model.token import escape_token
+from intex.model.token import str_token
 from intex.operation.collector import FrameCollector, VisualizationCollector
 
 
@@ -16,7 +16,7 @@ class LensCollector(FrameCollector[LensInput]):
         cell: dict[str, int | str | float] = {}
         for i, (token, probability) in enumerate(zip(tokens.tolist(), probabilities.tolist(), strict=True)):
             cell[f"token_{i}"] = token
-            cell[f"str_token_{i}"] = escape_token(self.model.to_single_str_token(token))
+            cell[f"str_token_{i}"] = str_token(self.model, token)
             cell[f"probability_{i}"] = probability
         self._collect_cell(index, cell)
 

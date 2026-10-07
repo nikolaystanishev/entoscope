@@ -35,6 +35,7 @@ class PatchingInput(OperationInput):
     _baselines: dict[tuple[str, PatchingMetric], torch.Tensor] = field(init=False, default_factory=dict)
     _source_probabilities: torch.Tensor | None = field(init=False, default=None)
     _target_probabilities: torch.Tensor | None = field(init=False, default=None)
+    _noise_scales: dict[str, torch.Tensor] = field(init=False, default_factory=dict)
 
     def prepare_index(self, model: Model) -> "PatchingInput":
         if self._index is not None:
@@ -229,6 +230,16 @@ class PatchingInput(OperationInput):
             self._target_probabilities = self.target_logits[0, -1].softmax(dim=-1)
         return self._target_probabilities
 
+    def noise_scale(self, name: str) -> torch.Tensor:
+        """The standard deviation ``gaussian_noise`` draws at for activation ``name``.
+
+        Three times the target run's own spread there, as in causal tracing (Meng et al. 2022), and
+        measured once per activation rather than once per row that noises it.
+        """
+        if name not in self._noise_scales:
+            self._noise_scales[name] = 3 * self.target_cache[name].std()
+        return self._noise_scales[name]
+
     def to(self, device: str | torch.device = "cpu") -> "PatchingInput":
         if self._source_tokens is not None:
             self._source_tokens = self._source_tokens.to(device)
@@ -247,5 +258,6 @@ class PatchingInput(OperationInput):
         if self._target_probabilities is not None:
             self._target_probabilities = self._target_probabilities.to(device)
         self._baselines = {key: baseline.to(device) for key, baseline in self._baselines.items()}
+        self._noise_scales = {name: scale.to(device) for name, scale in self._noise_scales.items()}
 
         return self

@@ -4,7 +4,7 @@ import torch
 from tqdm import tqdm
 
 from intex.patching.input import PatchingInput
-from intex.patching.method.patching import AbstractPatchingMethod
+from intex.patching.method.patching import AbstractPatchingMethod, RowResult
 from intex.patching.metric import AbstractMetric
 from intex.patching.processor import HookedPatchProcessor
 from intex.util.collections import batch_generator, zip_fill
@@ -17,7 +17,7 @@ class ExactPatchingMethod(AbstractPatchingMethod):
     to the intervention, at the price of a forward pass per row.
     """
 
-    def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[tuple[int, dict[str, float]]]:
+    def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[RowResult]:
         rows = list(zip_fill(*patching_input.index))
 
         for batch in tqdm(
@@ -26,16 +26,16 @@ class ExactPatchingMethod(AbstractPatchingMethod):
             disable=not verbose,
         ):
             fwd_hooks = [
-                HookedPatchProcessor.hook(idx.set_batch_index(i), patching_input)
-                for i, group in enumerate(batch)
-                for idx in group
+                HookedPatchProcessor.hook(idx, patching_input, row) for row, group in enumerate(batch) for idx in group
             ]
             patched_logits = self.model.run_with_hooks(
                 torch.cat([patching_input.target_tokens] * len(batch), dim=0), fwd_hooks=fwd_hooks
             ).detach()[:, -1, :]
+            # One transfer for the whole batch rather than one per row.
+            generations = patched_logits.argmax(dim=-1).tolist()
 
-            for group, logits in zip(batch, patched_logits, strict=False):
-                yield (
+            for group, logits, generation in zip(batch, patched_logits, generations, strict=True):
+                yield RowResult(
                     group[0].output,
                     self._report(
                         patching_input,
@@ -45,6 +45,7 @@ class ExactPatchingMethod(AbstractPatchingMethod):
                             for metric in self.config.metric
                         },
                     ),
+                    generation=generation,
                 )
 
     def passes(self, runs: int, batches: int) -> tuple[int, int]:

@@ -71,7 +71,7 @@ class Patcher(Operator):
         collector.prepare()
 
         method = PatchingMethodFactory.create(patching_input.config, self.model, self.batch_size)
-        for output, metric_values in method.scores(patching_input, verbose):
-            collector.collect(output, metric_values)
+        for row in method.scores(patching_input, verbose):
+            collector.collect(row)
 
         return collector

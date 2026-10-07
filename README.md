@@ -170,7 +170,7 @@ What each encodes:
   printed in the cell and the whole top-k in hover.
 
 Visualization is chosen by the collector rather than by a config flag, so a run that only needs the
-CSV opts out by naming the base collector — and only then does the operation avoid importing plotly:
+CSV opts out by naming the base collector:
 
 ```python
 Patcher(model, collector_class=PatchingCollector)
