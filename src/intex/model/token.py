@@ -10,7 +10,12 @@ def escape_token(token: str) -> str:
 
 
 def str_token(model: Model, token: int) -> str:
-    """One token's string, CSV/XML-safe."""
+    """One token's string, CSV/XML-safe.
+
+    Safe to write, not to read back blindly: pandas' default ``read_csv`` takes real tokens such as
+    "null", "None" or "NA" for missing values. Read string columns with ``keep_default_na=False`` to
+    keep them verbatim, or go by the token id every collector writes beside its string.
+    """
     return escape_token(model.to_single_str_token(token))
 
 

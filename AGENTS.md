@@ -94,11 +94,11 @@ supplied `hf_model` cannot collide with the base model.
 
 ### Visualization is a collector choice, not a config flag
 
-Passing `collector_class=LensCollector` / `PatchingCollector` / `CircuitCollector` opts out of HTML
-— and only then does the operation avoid importing plotly, which is why `operation/collector.py`
-imports `Figure` under `TYPE_CHECKING` only. A `Figure` is a page of *panels* — `panels()` names
-them and `figure(panel)` draws one plot each, which is how a patching page gets a plot per metric
-column, a lens page one per top-k rank and a circuit page its routes and its full graph.
+Passing `collector_class=LensCollector` / `PatchingCollector` / `CircuitCollector` opts out of HTML;
+each HTML collector lives beside the base one it extends, in `<op>/collector.py`. A `Figure` is a
+page of *panels* — `panels()` names them and `figure(panel)` draws one plot each, which is how a
+patching page gets a plot per metric column, a lens page one per top-k rank and a circuit page its
+routes and its full graph.
 `GridFigure` (`operation/visualization.py`) derives the whole layout from the `Index`: position on x
 and layer on y when both vary, otherwise `AXIS_ORDER` with the last varying axis across; a
 one-dimensional index becomes a bar chart. That layout is shared by every panel, so a subclass

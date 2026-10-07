@@ -10,7 +10,7 @@ class PatchingCollector(FrameCollector[PatchingInput]):
     """Persists the metrics of every patch run as ``result.csv``, plus one index file per element.
 
     A run that patched the model also records what it then predicts next, as ``generation`` (the
-    token id) and ``str_generation`` (its string).
+    token id, exact) and ``str_generation`` (its string, see ``str_token`` on reading it back).
 
     This base collector writes the CSVs only. Use ``PatchingVisualizationCollector`` to also render
     an interactive HTML.

@@ -48,21 +48,23 @@ class IndexElement(Generic[T]):
         self.config = config
         self.index_names = deepcopy(index_names)
         self.index = index
-        self.batch_index = None
 
-    def _index_by_name(self) -> defaultdict[str, int | list[int] | slice]:
+    def _index_by_name(self, batch: int | slice = slice(None)) -> defaultdict[str, int | list[int] | slice]:
         index: defaultdict[str, int | list[int] | slice] = defaultdict(lambda: slice(None))
         index.update(
             {name: idx for name, idx in zip(self.index_names, self.index, strict=True) if isinstance(idx, str) is False}
         )
-
-        if self.batch_index is not None:
-            index["batch"] = self.batch_index
+        index["batch"] = batch
 
         return index
 
-    def slices(self) -> tuple[slice | int | list[int], ...]:
-        return ActivationSlicer.get(self.activation()).extract(self._index_by_name())
+    def slices(self, batch: int | slice = slice(None)) -> tuple[slice | int | list[int], ...]:
+        """The element's slices into an activation, at ``batch`` along its batch axis.
+
+        The batch row is an argument rather than state on the element: ``zip_fill`` hands the same
+        element to every row a one-row index is paired with, so a row stored on it would be shared.
+        """
+        return ActivationSlicer.get(self.activation()).extract(self._index_by_name(batch))
 
     def remaining_axes(self) -> list[ModelLocation | str]:
         """Names of the activation axes that survive ``slices()``, batch excluded.
@@ -90,9 +92,6 @@ class IndexElement(Generic[T]):
         if not isinstance(layer, str) and not isinstance(layer, Sequence):
             return layer
         return None
-
-    def set_batch_index(self, batch_index: int):
-        self.batch_index = batch_index
 
     def get(self, location: ModelLocation | str) -> int | list[int] | str | None:
         return self[location] if location in self.index_names else None
@@ -122,13 +121,6 @@ class SingleIndex(Generic[T]):
     def target(self) -> IndexElement[T]:
         assert self._target is not None
         return self._target
-
-    def set_batch_index(self, batch_index: int) -> SingleIndex[T]:
-        self.source.set_batch_index(batch_index)
-        if self._target is not None:
-            self._target.set_batch_index(batch_index)
-
-        return self
 
 
 class Index(Generic[T]):

@@ -25,6 +25,7 @@ from intex.patching.config import (
 from intex.patching.input import PatchingInput
 from intex.patching.method.factory import PatchingMethodFactory
 from intex.patching.patcher import Patcher
+from intex.patching.processor import GaussianNoiseSourceStrategy
 
 from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
 
@@ -1159,7 +1160,7 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
 
     # result.csv round-trips the in-memory frame: the source/target columns of the patched element,
     # plus one column per metric, named after it...
-    result_df = pd.read_csv(result_path)
+    result_df = pd.read_csv(result_path, keep_default_na=False)
     assert len(result_df) == len(collector.result) == 1
     assert result_df["logit_diff"].to_list() == pytest.approx(collector.result["logit_diff"].to_list())
     # ...then the token the patched run predicts next, as its id and its string.
@@ -1185,7 +1186,7 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
 
 
 def _gaussian_noise_config() -> PatchingConfig:
-    """Scale the target's own residual by seeded noise, then write it back over itself."""
+    """Add seeded Gaussian noise to the target's own residual, then write it back over itself."""
     source = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
         location=[ModelLocation.LAYER],
@@ -1218,6 +1219,22 @@ def test_gaussian_noise_patching(model: HookedTransformer) -> None:
     assert not torch.allclose(noised, _run(model, _resid_value_scale_config(1.0, _VALUE_SCALE_LAYER)))
 
 
+def test_gaussian_noise_is_added_at_three_standard_deviations_of_the_activation(model: HookedTransformer) -> None:
+    patching_input = PatchingInput(_gaussian_noise_config(), SOURCE_PROMPT, TARGET_PROMPT).prepare(model)
+    index = next(iter(patching_input.index[0]))
+    activation = patching_input.target_cache[index.source.transformer_activation()]
+    clean = activation[0]
+
+    noise = GaussianNoiseSourceStrategy.extract(index.source, patching_input) - clean
+    scale = 3 * float(activation.std())
+
+    # Zero-mean, at the scale the corruption is defined by, and drawn independently of the
+    # activation it lands on - not a rescaled copy of it.
+    assert abs(float(noise.mean())) < 0.05 * scale
+    assert float(noise.std()) == pytest.approx(scale, rel=0.05)
+    assert abs(float(torch.corrcoef(torch.stack([noise.flatten(), clean.flatten()]))[0, 1])) < 0.1
+
+
 @pytest.mark.parametrize("source_type", list(PatchingType))
 def test_a_batched_run_scores_what_an_unbatched_one_does(model: HookedTransformer, source_type: PatchingType) -> None:
     # Only the patched run is batched, one copy of the target prompt per row; every row still reads
@@ -1232,16 +1249,60 @@ def test_a_batched_run_scores_what_an_unbatched_one_does(model: HookedTransforme
         patch=[SinglePatchingConfig(source=element(source_type), target=element(PatchingType.REPLACE))],
     )
 
-    def sweep(batch_size: int) -> torch.Tensor:
-        collector = Patcher(model, collector_class=PatchingCollector, batch_size=batch_size).apply(
-            PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
-        )
-        assert collector is not None
-        return _metric(collector)
+    unbatched = _batched(model, config, batch_size=1)
+    batched = _batched(model, config, batch_size=5)
 
-    unbatched = sweep(1)
-    assert len(unbatched) == model.cfg.n_layers
-    assert torch.allclose(sweep(5), unbatched, atol=1e-4)
+    assert len(unbatched.result) == model.cfg.n_layers
+    assert torch.allclose(_metric(batched), _metric(unbatched), atol=1e-4)
+    assert batched.result["generation"].tolist() == unbatched.result["generation"].tolist()
+
+
+@pytest.mark.parametrize("batch_size", [1, 3])
+def test_a_one_row_element_is_patched_into_every_row_of_a_batch(model: HookedTransformer, batch_size: int) -> None:
+    # The sweep patches the BOS position, which both prompts share, so on its own it changes nothing;
+    # the one-row companion swaps the country token in on every run. Every row is then the
+    # companion's effect alone - in each row of a batch, not only the one whose hooks were built last.
+    sweep = PatchingElementConfig(
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        filter=Filter(inclusion_terms=[{ModelLocation.POSITION: 0}]),
+        type=PatchingType.REPLACE,
+    )
+    companion = PatchingElementConfig(
+        activation=ModelLayerLocation.RESIDUAL_PRE,
+        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0, ModelLocation.POSITION: 4}]),
+        type=PatchingType.REPLACE,
+    )
+    metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]}
+    alone = _collect(
+        model, PatchingConfig(metric=metric, patch=[SinglePatchingConfig(source=companion, target=companion)])
+    )
+    together = _batched(
+        model,
+        PatchingConfig(
+            metric=metric,
+            patch=[
+                SinglePatchingConfig(source=sweep, target=sweep),
+                SinglePatchingConfig(source=companion, target=companion),
+            ],
+        ),
+        batch_size=batch_size,
+    )
+
+    # The companion moves the prediction, so a row it missed would show.
+    assert alone.result["generation"].tolist() != [_generations(model)[1]]
+    assert len(together.result) == model.cfg.n_layers
+    assert torch.allclose(_metric(together), _metric(alone).expand(model.cfg.n_layers), atol=1e-4)
+    assert together.result["generation"].tolist() == alone.result["generation"].tolist() * model.cfg.n_layers
+
+
+def _batched(model: HookedTransformer, config: PatchingConfig, batch_size: int) -> PatchingCollector:
+    collector = Patcher(model, collector_class=PatchingCollector, batch_size=batch_size).apply(
+        PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
+    )
+    assert collector is not None
+    return collector
 
 
 @pytest.mark.parametrize(
@@ -1355,7 +1416,8 @@ def test_a_run_without_a_collector_still_writes_its_artifacts(model: HookedTrans
 
     # Nothing comes back, but the run did all of its work and left it on disk.
     assert returned is None
-    pd.testing.assert_frame_equal(pd.read_csv(save_dir / "result.csv"), collector.result)
+    # keep_default_na=False: a generated token such as "null" is a string, not a missing value.
+    pd.testing.assert_frame_equal(pd.read_csv(save_dir / "result.csv", keep_default_na=False), collector.result)
     assert (save_dir / "index-0.csv").exists()
 
 
@@ -1774,7 +1836,7 @@ def test_each_cell_names_what_its_patched_run_generates_on_hover(model: HookedTr
     config = _layer_position_config(index_filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0}]))
 
     figure = _draw(model, config, save_dir)
-    generations = pd.read_csv(save_dir / "result.csv")["str_generation"].tolist()
+    generations = pd.read_csv(save_dir / "result.csv", keep_default_na=False)["str_generation"].tolist()
 
     assert figure.kind == "bar"
     assert len(figure.trace["hovertext"]) == len(generations)
