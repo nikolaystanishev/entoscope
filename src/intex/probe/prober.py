@@ -23,14 +23,19 @@ class Prober(Operator):
         return_collector: bool = False,
         verbose: bool = True,
     ) -> ProbeCollector | None:
+        probe_input.prepare_index(self.model)
+        # A probe per location, all built before the forward passes, so a probe that cannot be built fails
+        # before the run does any work.
+        probes = [ProbeMethodFactory.create(probe_input.config, self.model) for _ in range(len(probe_input.index))]
         probe_input.prepare(self.model)
         collector = self.collector_class(probe_input, self.model, save_dir)
         collector.prepare()
         labels = probe_input.labels.detach().cpu().numpy()
 
-        for single_index in tqdm(probe_input.index, total=len(probe_input.index), disable=not verbose):
+        for single_index, probe in tqdm(
+            zip(probe_input.index, probes, strict=True), total=len(probes), disable=not verbose
+        ):
             features = probe_input.features[single_index.output]
-            probe = ProbeMethodFactory.create(probe_input.config, self.model)
             probe.fit(features, probe_input.labels)
             predictions = probe.predict(features)
             probabilities = probe.predict_proba(features)
@@ -47,6 +52,8 @@ class Prober(Operator):
         return None
 
     def plan(self, probe_input: ProbeInput, save_dir: str | None = None, verbose: bool = True) -> OperationPlan:
+        # Built as the run builds them, so a plan fails wherever its run would.
+        ProbeMethodFactory.create(probe_input.config, self.model)
         probe_input.prepare_index(self.model)
 
         prompts = [("positive", prompt) for prompt in probe_input.positive_prompts]
@@ -54,6 +61,7 @@ class Prober(Operator):
 
         plan = OperationPlan(
             operation="Prober",
+            method=probe_input.config.method,
             config=probe_input.config,
             steps=len(probe_input.index),
             steps_label="probe",

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 from intex.model.config import ModelLocatorConfig
 from intex.operation.config import AbstractConfig
+from intex.util.data import from_dict, to_dict
 
 
 class PatchingType(str, Enum):
@@ -44,18 +46,6 @@ class MetricComparison(str, Enum):
     NORMALIZED = "normalized"  # (m(patched) - m(target)) / (m(source) - m(target))
 
 
-class PatchingMethodType(str, Enum):
-    """How the change in the metric is obtained.
-
-    ``exact`` patches and runs the model once per index row. The other two estimate every row from
-    gradients instead, trading a linearity assumption for a cost that does not grow with the index.
-    """
-
-    EXACT = "exact"
-    ATTRIBUTION = "attribution"
-    INTEGRATED_GRADIENTS = "integrated_gradients"
-
-
 @dataclass(kw_only=True)
 class PatchingElementConfig(ModelLocatorConfig):
     type: PatchingType
@@ -78,6 +68,11 @@ def metric_column(metric: PatchingMetric, comparison: MetricComparison) -> str:
 
 
 @dataclass(kw_only=True)
+class PatchingSettings:
+    """The settings of a method that takes none; a method with settings names a dataclass extending this one."""
+
+
+@dataclass(kw_only=True)
 class PatchingConfig(AbstractConfig):
     """``metric`` maps each metric to the comparisons it is reported under, one result column each.
 
@@ -85,14 +80,17 @@ class PatchingConfig(AbstractConfig):
     forward pass and a second comparison of a metric already asked for costs nothing at all — it
     re-reads that metric's change. Each column is drawn as its own plot on the result page.
 
-    ``interpolation_steps`` is the number of points the integrated-gradients method averages its
-    gradient over and is ignored by the other two.
+    ``method`` names how that change is obtained: ``exact`` patches and runs the model once per index
+    row, while ``attribution`` and ``integrated_gradients`` estimate every row from gradients instead,
+    trading a linearity assumption for a cost that does not grow with the index. ``settings`` are the
+    method's own, given as an instance of its ``settings_class`` or as the mapping a YAML file gives, and
+    read strictly into that class as the config is built.
     """
 
     metric: dict[PatchingMetric, list[MetricComparison]]
-    method: PatchingMethodType = PatchingMethodType.EXACT
-    interpolation_steps: int = 10
+    method: str = "exact"
     patch: list[SinglePatchingConfig] = field(default_factory=list)
+    settings: PatchingSettings | dict[str, Any] = field(default_factory=PatchingSettings)
 
     def __post_init__(self):
         if not self.metric:
@@ -103,8 +101,13 @@ class PatchingConfig(AbstractConfig):
             repeated = sorted({c.value for c in comparisons if comparisons.count(c) > 1})
             if repeated:
                 raise ValueError(f"{metric.value} names {', '.join(repeated)} more than once")
-        if self.interpolation_steps < 1:
-            raise ValueError(f"interpolation_steps must be at least 1, got {self.interpolation_steps}")
+        # Imported here: the factory imports the methods, which import this module.
+        from intex.patching.method.factory import PatchingMethodFactory
+
+        settings_class = PatchingMethodFactory.get(self.method).settings_class
+        # Read through its raw shape, so the empty default takes the method's defaults and another method's
+        # settings - which also extend PatchingSettings - cannot pass as this method's.
+        self.settings = from_dict(settings_class, to_dict(self.settings))
 
     def metric_pairs(self) -> list[MetricPair]:
         """Every metric with each comparison it is reported under, in the order the config names them."""

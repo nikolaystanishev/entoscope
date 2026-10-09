@@ -10,10 +10,11 @@ import torch
 import yaml
 
 from intex.lens.collector import LensCollector
-from intex.lens.config import LensConfig, LensType
+from intex.lens.config import LensConfig
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.lens.method.logit_lens import _attention_scale
+from intex.lens.method.tuned_lens import TunedLensSettings
 from intex.model.cache import CachedModel
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.operation.config import ConfigFactory
@@ -40,7 +41,7 @@ LAYER_POSITION_GRID = dict(
 
 LENS_YAML = {
     "my_lens": {
-        "type": "logit_lens",
+        "method": "logit_lens",
         "source": {"activation": "resid.post", "location": ["layer", "position"]},
         "top_k": 2,
     }
@@ -346,7 +347,7 @@ def test_artifacts_are_saved_to_disk(model, config_from_yaml, tmp_path):
 
     with open(save_dir / "config.json", encoding="utf-8") as f:
         saved_config = json.load(f)
-    assert saved_config["type"] == "logit_lens"
+    assert (saved_config["method"], saved_config["settings"]) == ("logit_lens", {})
     assert saved_config["config_id"] == "my_lens"
     assert saved_config["top_k"] == 2
 
@@ -371,7 +372,7 @@ def test_a_run_without_a_collector_still_writes_its_artifacts(model, config_from
 def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model, config_from_yaml):
     from_file = config_from_yaml(LensConfig, "my_lens", LENS_YAML["my_lens"])
     in_code = LensConfig(
-        type=LensType.LOGIT_LENS,
+        method="logit_lens",
         top_k=2,
         source=ModelLocatorConfig(
             activation=ModelLayerLocation.RESIDUAL_POST,
@@ -459,17 +460,20 @@ def test_the_lens_runs_from_an_experiment_script(tmp_path):
 @pytest.mark.parametrize(
     ("raw", "message"),
     [
-        ({"source": {"activation": "resid.post", "location": ["layer"]}}, "Missing required keys for LensConfig.*type"),
-        ({"type": "logit_lens"}, "Missing required keys for LensConfig.*source"),
-        ({"type": "attention_lens", "source": {"activation": "resid.post"}}, "attention_lens"),
         (
-            {"type": "logit_lens", "source": {"activation": "resid.post"}, "target": {}},
+            {"source": {"activation": "resid.post", "location": ["layer"]}},
+            "Missing required keys for LensConfig.*method",
+        ),
+        ({"method": "logit_lens"}, "Missing required keys for LensConfig.*source"),
+        (
+            {"method": "logit_lens", "source": {"activation": "resid.post"}, "target": {}},
             "Unknown keys for LensConfig.*target",
         ),
         (
-            {"type": "logit_lens", "top_k": 0, "source": {"activation": "resid.post"}},
+            {"method": "logit_lens", "top_k": 0, "source": {"activation": "resid.post"}},
             "top_k must be at least 1",
         ),
+        ({"method": "attention_lens", "source": {"activation": "resid.post"}}, "Unknown lens method: attention_lens"),
     ],
 )
 def test_a_malformed_lens_config_is_rejected_when_it_is_loaded(config_from_yaml, raw, message):
@@ -477,13 +481,10 @@ def test_a_malformed_lens_config_is_rejected_when_it_is_loaded(config_from_yaml,
         config_from_yaml(LensConfig, "broken", raw)
 
 
-def test_a_lens_type_that_is_not_known_raises(model):
-    # A config built in code can name a type the factory has no lens for.
-    config = declarative_config(**LAYER_POSITION_GRID)
-    config.type = "attention_lens"
-
-    with pytest.raises(ValueError, match="Unknown lens type"):
-        Lens(model).apply(LensInput(config, PROMPT), verbose=False)
+def test_settings_of_another_lens_are_rejected_as_the_config_is_built():
+    # The tuned lens's settings class extends the logit lens's, which takes none.
+    with pytest.raises(ValueError, match=r"Unknown keys for LensSettings: \['translators'\]"):
+        declarative_config(**LAYER_POSITION_GRID, settings=TunedLensSettings(translators="gpt2"))
 
 
 def test_an_activation_without_a_vocabulary_projection_raises(model):

@@ -6,10 +6,11 @@ import yaml
 from transformer_lens import HookedTransformer
 
 from intex.circuit.collector import CircuitCollector, CircuitVisualizationCollector
-from intex.circuit.config import CircuitConfig, CircuitMethodType
+from intex.circuit.config import CircuitConfig
 from intex.circuit.discoverer import CircuitDiscoverer
 from intex.circuit.input import CircuitInput
 from intex.circuit.method.circuit import PromptCircuit
+from intex.circuit.method.information_flow_routes import InformationFlowRoutesSettings
 from intex.operation.config import ConfigFactory
 
 from ..conftest import forbid_model_runs, rendered_figures
@@ -18,7 +19,9 @@ PROMPTS = ["The capital of France is", "The Eiffel Tower is in"]
 
 
 def _config(**kwargs) -> CircuitConfig:
-    return CircuitConfig(config_id="ifr", type=CircuitMethodType.INFORMATION_FLOW_ROUTES, **kwargs)
+    return CircuitConfig(
+        config_id="ifr", method="information_flow_routes", settings=InformationFlowRoutesSettings(**kwargs)
+    )
 
 
 def test_one_circuit_per_prompt(model: HookedTransformer):
@@ -33,7 +36,9 @@ def test_one_circuit_per_prompt(model: HookedTransformer):
 def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path):
     # Build the config through ConfigFactory (YAML round-trip), mirroring how configs are sourced.
     config_yaml = tmp_path / "configs.yaml"
-    config_yaml.write_text(yaml.safe_dump({"my_circuit": {"type": "information_flow_routes", "threshold": 0.05}}))
+    config_yaml.write_text(
+        yaml.safe_dump({"my_circuit": {"method": "information_flow_routes", "settings": {"threshold": 0.05}}})
+    )
     config = ConfigFactory[CircuitConfig](str(config_yaml)).create("my_circuit")
 
     save_dir = tmp_path / "circuit_run"
@@ -68,7 +73,7 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path):
     html = (save_dir / "circuit_0.html").read_text()
     assert "Plotly.newPlot" in html or "plotly" in html.lower()
     routes, graph = rendered_figures(save_dir, "circuit_0.html")
-    assert routes.layout["title"]["text"].startswith("Information Flow Routes")
+    assert routes.layout["title"]["text"].startswith("Routes to the prediction · information_flow_routes")
     assert graph.layout["title"]["text"].startswith("Full contribution graph")
 
     prompts = json.loads((save_dir / "prompts.json").read_text())
@@ -77,8 +82,8 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path):
 
     saved_config = json.loads((save_dir / "config.json").read_text())
     assert saved_config["config_id"] == "my_circuit"
-    assert saved_config["type"] == "information_flow_routes"
-    assert saved_config["threshold"] == 0.05
+    assert saved_config["method"] == "information_flow_routes"
+    assert saved_config["settings"] == {"threshold": 0.05, "path_threshold": None, "prediction_positions": [-1]}
 
 
 def test_a_prepared_input_moves_to_a_device(model: HookedTransformer):

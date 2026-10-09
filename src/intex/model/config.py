@@ -125,6 +125,10 @@ class Filter:
 
         return cls(inclusion_terms=inclusion_terms, exclusion_terms=exclusion_terms)
 
+    def to_config(self) -> list:
+        """The config file's list of terms, which ``from_config`` reads back."""
+        return [*self.inclusion_terms, *({"not": term} for term in self.exclusion_terms)]
+
     def included(self, location: ModelLocation, max_value: int | None) -> set[int]:
         if not self.inclusion_terms or any(location not in term for term in self.inclusion_terms):
             if max_value is None:

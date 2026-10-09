@@ -2,8 +2,7 @@ import dataclasses
 import os
 from typing import Generic, TypeVar, get_args
 
-from intex.util.collections import to_dict
-from intex.util.data import from_dict, read_yaml, write_json
+from intex.util.data import from_dict, read_yaml, to_dict, write_json
 
 CONFIG_FILE = "config.json"
 

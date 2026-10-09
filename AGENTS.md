@@ -36,8 +36,10 @@ follows the same four-part shape, and adding one means writing the same four pie
 - **Config** (`<op>/config.py`) — a `kw_only` dataclass extending `AbstractConfig`, validating in
   `__post_init__`. Loadable from YAML through `ConfigFactory[TheConfig](path).create("id")`, which
   deserializes strictly via `intex.util.data.from_dict` (unknown/missing keys raise; a
-  `from_config` classmethod on a field's type overrides the default handling). A config saves
-  itself as `config.json` beside the run's results.
+  `from_config` classmethod on a field's type overrides the default handling). It names its method
+  in its `method` field and holds that method's settings in `settings`, read into the method's
+  settings class as the config is built. It is saved as `config.json` beside the run's results,
+  which `from_dict` reads back.
 - **Input** (`<op>/input.py`) — a dataclass extending `OperationInput` that holds prompts and the
   lazily-filled tensors. `prepare_index(model)` resolves everything that needs no forward pass;
   `prepare(model)` calls it and then gathers activations. Both are idempotent, guarded on the
@@ -106,16 +108,24 @@ supplies only the per-panel payload (`value_column`, `hover`, `value_range`, ...
 
 ### Dispatch
 
-Method selection is `match` on an enum in a `*MethodFactory` (`lens/method/factory.py`,
-`circuit/method/factory.py`, `patching/method/factory.py`), or an `AbstractX.get(enum)` static
-method (`patching/metric.py`'s metrics and comparisons, `patching/processor.py`'s source/target
-strategies, `probe/pool.py`, `model/slicer.py`). The one open registry is
-`DatasetFactory.register("name")`, since dataset implementations live outside the package — intex
-ships none.
+An operation's methods are an open registry: each `<op>/method/factory.py` is a `RegistryFactory`
+(`operation/registry.py`), which knows its methods only by name, the built-ins registered through the same
+`register` users call. The config's `method` name picks one, and a method is built from
+`(model, config)`. A method names the dataclass of its settings as `settings_class`, extending its
+op's empty settings base (`LensSettings`, ...), which a method naming none takes. The config's
+`__post_init__` looks its method up in the factory (imported there, as the factory imports the
+methods, which import the config) and reads `settings` into that class, so a bad name or setting fails
+as the config is built. Each `<op>/__init__.py` imports its factory so the built-ins are registered
+whatever is imported first. A lens is a single class that tells activations apart by
+`index.activation()` itself. `DatasetFactory` is the same plain name registry; intex ships no datasets.
+
+Everything else dispatches by `match` on an enum in an `AbstractX.get(enum)` static method
+(`patching/metric.py`'s metrics and comparisons, `patching/processor.py`'s source/target strategies,
+`probe/metric.py`, `probe/pool.py`, `model/slicer.py`).
 
 Patching composes three of those: `PatchingMetric` picks the scalar read off a run, `MetricComparison`
-picks what the patched run is reported against, and `PatchingMethodType` picks how the change in the
-metric is obtained. The config's `metric` maps the first onto a list of the second, one result column
+picks what the patched run is reported against, and the config's `method` picks how the change in
+the metric is obtained. The config's `metric` maps the first onto a list of the second, one result column
 per pair, so the comparison is chosen per metric and a metric may carry several. Every method yields
 the same primitive — the patched run's metric minus the unpatched target run's, one per *metric* —
 so adding one means implementing `AbstractPatchingMethod.scores` and nothing else; `_report` fans
@@ -149,4 +159,5 @@ session-scoped `backend` fixture, so each test runs once per backend (`bridge`, 
 taking several model fixtures gets them all on the same one — a test reaching a fixture through
 `request.getfixturevalue` must also name `backend`. Other shared helpers: `forbid_model_runs` (asserts
 a `plan()` never runs the model), `rendered_figure` (parses the plotly JSON back out of
-`result.html`), and `config_from_yaml` (sources a config the way a run does, through `ConfigFactory`).
+`result.html`), `config_from_yaml` (sources a config the way a run does, through `ConfigFactory`) and
+`registries` (undoes the registrations a test makes).

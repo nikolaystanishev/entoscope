@@ -17,6 +17,8 @@ class ExactPatchingMethod(AbstractPatchingMethod):
     to the intervention, at the price of a forward pass per row.
     """
 
+    batched = True
+
     def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[RowResult]:
         rows = list(zip_fill(*patching_input.index))
 

@@ -8,11 +8,13 @@ the translated residual stays hand-checkable — the documented ``translators: <
 import pytest
 import torch
 from tuned_lens.nn.lenses import TunedLens as PretrainedTunedLens
-from tuned_lens.nn.lenses import TunedLensConfig
+from tuned_lens.nn.lenses import TunedLensConfig as PretrainedTunedLensConfig
 
-from intex.lens.config import LensConfig, LensType
+from intex.lens.config import LensConfig
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
+from intex.lens.method.factory import LensMethodFactory
+from intex.lens.method.tuned_lens import TunedLensSettings
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.model.unembed import build_unembed
 
@@ -39,7 +41,7 @@ def _write_translators(model, directory, *, scale: float = 0.0, bias: float = 0.
         "num_hidden_layers": model.cfg.n_layers,
         **config_overrides,
     }
-    lens = PretrainedTunedLens(build_unembed(model), TunedLensConfig(**settings))
+    lens = PretrainedTunedLens(build_unembed(model), PretrainedTunedLensConfig(**settings))
     with torch.no_grad():
         for i, translator in enumerate(lens.layer_translators):
             translator.weight.copy_(i * scale * torch.eye(settings["d_model"]))
@@ -62,9 +64,9 @@ def translators(model, tmp_path_factory):
 
 
 def tuned_config(*coordinates: dict, resource: str | None = None, top_k: int = 1) -> LensConfig:
-    config = coordinates_config(*coordinates, lens_type=LensType.TUNED_LENS, top_k=top_k)
-    config.translators = resource
-    return config
+    return coordinates_config(
+        *coordinates, method="tuned_lens", settings=TunedLensSettings(translators=resource), top_k=top_k
+    )
 
 
 # --------------------------------------------------------------------------------------------------
@@ -178,10 +180,10 @@ def test_a_declarative_run_reads_every_layer_through_its_own_translator(model, a
     config = declarative_config(
         ModelLayerLocation.RESIDUAL_POST,
         [ModelLocation.LAYER, ModelLocation.POSITION],
-        lens_type=LensType.TUNED_LENS,
+        method="tuned_lens",
+        settings=TunedLensSettings(translators="gpt2"),
         filter=Filter.from_config([{"position": -1}]),
     )
-    config.translators = "gpt2"
 
     result = lens_rows(model, config)
 
@@ -229,7 +231,7 @@ def test_queries_and_keys_have_no_tuned_projection(model, translators, activatio
         {"activation": activation_name, "layer": 0, "head": 0, "position": -1}, resource=translators["zero"]
     )
 
-    with pytest.raises(ValueError, match="Tuned lens cannot project.*use the logit lens"):
+    with pytest.raises(ValueError, match="TunedLens cannot project.*use the logit lens"):
         Lens(model).apply(LensInput(config, PROMPT), verbose=False)
 
 
@@ -238,29 +240,33 @@ def test_an_activation_without_a_vocabulary_projection_raises(model, translators
         {"activation": "attn.pattern", "layer": 0, "head": 0, "position": -1}, resource=translators["zero"]
     )
 
-    with pytest.raises(ValueError, match="Tuned lens cannot project.*map onto the vocabulary"):
+    with pytest.raises(ValueError, match="TunedLens cannot project.*map onto the vocabulary"):
         Lens(model).apply(LensInput(config, PROMPT), verbose=False)
 
 
-def test_translators_on_another_lens_type_raise(config_from_yaml):
-    raw = {"type": "logit_lens", "translators": "gpt2", "source": {"activation": "resid.post", "location": ["layer"]}}
+def test_translators_on_another_lens_are_an_unknown_setting(config_from_yaml):
+    raw = {
+        "method": "logit_lens",
+        "settings": {"translators": "gpt2"},
+        "source": {"activation": "resid.post", "location": ["layer"]},
+    }
 
-    with pytest.raises(ValueError, match="'translators' is a tuned lens setting"):
+    with pytest.raises(ValueError, match=r"Unknown keys for LensSettings: \['translators'\]"):
         config_from_yaml(LensConfig, "tuned", raw)
 
 
 def test_a_yaml_tuned_lens_config_runs(model, config_from_yaml):
     raw = {
-        "type": "tuned_lens",
-        "translators": "gpt2",
+        "method": "tuned_lens",
+        "settings": {"translators": "gpt2"},
         "top_k": 2,
         "source": {"coordinates": [{"activation": "resid.post", "layer": -1, "position": -1}]},
     }
     config = config_from_yaml(LensConfig, "my_tuned_lens", raw)
 
     assert config == LensConfig(
-        type=LensType.TUNED_LENS,
-        translators="gpt2",
+        method="tuned_lens",
+        settings={"translators": "gpt2"},
         top_k=2,
         source=ModelLocatorConfig(
             coordinates=[
@@ -276,7 +282,9 @@ def test_a_yaml_tuned_lens_config_runs(model, config_from_yaml):
     assert len(lens_rows(model, config)) == 1
 
 
-def test_translators_default_to_none(config_from_yaml):
-    raw = {"type": "tuned_lens", "source": {"activation": "resid.post", "location": ["layer"]}}
+def test_translators_default_to_none(model, config_from_yaml):
+    raw = {"method": "tuned_lens", "source": {"activation": "resid.post", "location": ["layer"]}}
+    config = config_from_yaml(LensConfig, "my_tuned_lens", raw)
 
-    assert config_from_yaml(LensConfig, "my_tuned_lens", raw).translators is None
+    # Left out, the settings are the tuned lens's defaults, filled in as the lens is built.
+    assert LensMethodFactory.create(config, model).settings == TunedLensSettings(translators=None)

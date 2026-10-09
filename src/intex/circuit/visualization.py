@@ -14,9 +14,10 @@ from html import escape
 import networkx as nx
 import plotly.graph_objects as go
 
+from intex.circuit.config import CircuitConfig
 from intex.circuit.method.circuit import PromptCircuit
 from intex.model import Model
-from intex.operation.visualization import Figure
+from intex.operation.visualization import Figure, titled
 
 _KIND_COLOR = {
     "input": "#111827",
@@ -63,19 +64,21 @@ def _line_trace(segments: list[tuple[float, float]], color: str, name: str, dash
 
 
 class CircuitFigure(Figure[tuple[nx.MultiDiGraph, str]]):
-    def __init__(self, circuit: PromptCircuit, model: Model) -> None:
+    def __init__(self, circuit: PromptCircuit, model: Model, config: CircuitConfig) -> None:
         self.circuit = circuit
         self.n_layers = model.cfg.n_layers
+        self.config = config
 
     @property
     def title(self) -> str:
-        return f"Circuit — {self.circuit.prompt}"
+        return titled(f"Circuit · {self.config.method} · {self.circuit.prompt}", self.config)
 
     def panels(self) -> list[tuple[nx.MultiDiGraph, str]]:
-        prompt = escape(self.circuit.prompt)
+        # Named after the run's method: a registered one draws through this page as well.
+        method, prompt = escape(self.config.method), escape(self.circuit.prompt)
         return [
-            (self.circuit.routes, f'Information Flow Routes — "{prompt}"'),
-            (self.circuit.graph, f'Full contribution graph — "{prompt}"'),
+            (self.circuit.routes, titled(f'Routes to the prediction · {method} · "{prompt}"', self.config)),
+            (self.circuit.graph, titled(f'Full contribution graph · {method} · "{prompt}"', self.config)),
         ]
 
     def figure(self, panel: tuple[nx.MultiDiGraph, str]) -> go.Figure:

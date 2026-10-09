@@ -20,7 +20,7 @@ def test_a_registered_type_resolves_to_its_implementation(jsonl_dataset_class, p
 
 
 def test_an_unknown_type_lists_what_is_registered(jsonl_dataset_class):
-    with pytest.raises(ValueError, match=r"Unknown dataset type: csv\. Registered types: \['jsonl'\]"):
+    with pytest.raises(ValueError, match=r"Unknown dataset type: csv\. Registered dataset types: \['jsonl'\]"):
         DatasetFactory.get("csv")
 
     with pytest.raises(ValueError, match="Unknown dataset type: csv"):

@@ -18,7 +18,7 @@ from intex.model import Model
 from intex.model.index import Index
 from intex.model.token import str_token, str_token_labels
 from intex.operation.visualization import DIVERGING, GridFigure, describe_row, diverging_range, format_value, titled
-from intex.patching.config import MetricComparison, MetricPair, PatchingMethodType, metric_column
+from intex.patching.config import MetricComparison, MetricPair, metric_column
 from intex.patching.input import PatchingInput
 
 
@@ -42,8 +42,8 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
     def heading(self, panel: MetricPair) -> str:
         config = self.operation_input.config
         kind = self.value_column(panel)
-        if config.method is not PatchingMethodType.EXACT:
-            kind = f"{config.method.value} {kind}"
+        if config.method != "exact":
+            kind = f"{config.method} {kind}"
         return titled(f"Patching — {kind}", config)
 
     def subtitle(self, panel: MetricPair) -> str:

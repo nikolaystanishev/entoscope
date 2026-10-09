@@ -1,45 +1,36 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
+from dataclasses import dataclass, field
+from typing import Any
 
-from intex.model.config import ModelLocation, ModelLocatorConfig
+from intex.model.config import ModelLocatorConfig
 from intex.operation.config import AbstractConfig
+from intex.util.data import from_dict, to_dict
 
 
-class LensType(str, Enum):
-    LOGIT_LENS = "logit_lens"
-    TUNED_LENS = "tuned_lens"
-    PARAMETER_LENS = "parameter_lens"
-
-
-class ProjectionSpace(str, Enum):
-    EMBEDDING = "embedding"
-    UNEMBEDDING = "unembedding"
+@dataclass(kw_only=True)
+class LensSettings:
+    """The settings of a lens that takes none; a lens with settings names a dataclass extending this one."""
 
 
 @dataclass(kw_only=True)
 class LensConfig(AbstractConfig):
-    type: LensType
+    """``method`` names the lens and ``settings`` are its own, given as an instance of its ``settings_class``
+    or as the mapping a YAML file gives, and read strictly into that class as the config is built, so a lens
+    nothing registered or a setting the lens does not have fails right away."""
+
+    method: str
     top_k: int = 1
     source: ModelLocatorConfig
-    translators: str | None = None
-    projection: ProjectionSpace | None = None
-    scale: float = 1.0
+    settings: LensSettings | dict[str, Any] = field(default_factory=LensSettings)
 
     def __post_init__(self):
         if not isinstance(self.top_k, int) or self.top_k < 1:
             raise ValueError(f"top_k must be at least 1, got {self.top_k}")
-        if self.translators is not None and self.type is not LensType.TUNED_LENS:
-            raise ValueError(f"'translators' is a tuned lens setting; it cannot be used with '{self.type.value}'")
-        if self.projection is not None and self.type is not LensType.PARAMETER_LENS:
-            raise ValueError(f"'projection' is a parameter lens setting; it cannot be used with '{self.type.value}'")
-        if self.scale != 1.0 and self.type is not LensType.PARAMETER_LENS:
-            raise ValueError(f"'scale' is a parameter lens setting; it cannot be used with '{self.type.value}'")
-        if self.type is LensType.PARAMETER_LENS and (
-            ModelLocation.POSITION in self.source.location
-            or any(ModelLocation.POSITION in coordinate for coordinate in self.source.coordinates or [])
-        ):
-            raise ValueError(
-                "'position' is not a parameter lens location: it reads the model's weights, which have no position axis"
-            )
+        # Imported here: the factory imports the lenses, which import this module.
+        from intex.lens.method.factory import LensMethodFactory
+
+        settings_class = LensMethodFactory.get(self.method).settings_class
+        # Read through its raw shape, so the empty default takes the lens's defaults and another lens's
+        # settings - which also extend LensSettings - cannot pass as this lens's.
+        self.settings = from_dict(settings_class, to_dict(self.settings))

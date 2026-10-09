@@ -3,9 +3,10 @@ import pytest
 import torch
 
 from intex.lens.collector import LensCollector
-from intex.lens.config import LensConfig, LensType, ProjectionSpace
+from intex.lens.config import LensConfig, LensSettings
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
+from intex.lens.method.factory import LensMethodFactory
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.model.token import escape_token
 
@@ -16,17 +17,12 @@ LAYER = 8
 
 
 def coordinates_config(
-    *coordinates: dict,
-    lens_type: LensType = LensType.LOGIT_LENS,
-    top_k: int = 1,
-    projection: ProjectionSpace | None = None,
-    scale: float = 1.0,
+    *coordinates: dict, method: str = "logit_lens", settings: LensSettings | dict | None = None, top_k: int = 1
 ) -> LensConfig:
     return LensConfig(
-        type=lens_type,
+        method=method,
+        settings=settings or LensSettings(),
         top_k=top_k,
-        projection=projection,
-        scale=scale,
         source=ModelLocatorConfig(coordinates=list(coordinates)),
     )
 
@@ -34,19 +30,21 @@ def coordinates_config(
 def declarative_config(
     activation: ModelLayerLocation,
     location: list[ModelLocation],
-    lens_type: LensType = LensType.LOGIT_LENS,
+    method: str = "logit_lens",
+    settings: LensSettings | dict | None = None,
     top_k: int = 1,
     **source,
 ) -> LensConfig:
     return LensConfig(
-        type=lens_type,
+        method=method,
+        settings=settings or LensSettings(),
         top_k=top_k,
         source=ModelLocatorConfig(activation=activation, location=location, **source),
     )
 
 
 def run_lens(model, config: LensConfig, prompt: str | None = PROMPT, save_dir=None) -> LensCollector:
-    prompt = None if config.type is LensType.PARAMETER_LENS else prompt
+    prompt = prompt if LensMethodFactory.get(config.method).reads_activations else None
     lens_input = LensInput(config, prompt)
     collector = Lens(model).apply(
         lens_input, save_dir=None if save_dir is None else str(save_dir), return_collector=True, verbose=False

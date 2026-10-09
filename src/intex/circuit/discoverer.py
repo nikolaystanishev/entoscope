@@ -24,8 +24,9 @@ class CircuitDiscoverer(Operator):
         return_collector: bool = False,
         verbose: bool = True,
     ) -> CircuitCollector | None:
-        circuit_input.prepare(self.model)
+        # Built before the prompts are prepared, so a method that cannot be built fails before the run does any work.
         method = CircuitMethodFactory.create(circuit_input.config, self.model)
+        circuit_input.prepare(self.model)
         collector = self.collector_class(circuit_input, self.model, save_dir)
         collector.prepare()
 
@@ -40,10 +41,13 @@ class CircuitDiscoverer(Operator):
         return None
 
     def plan(self, circuit_input: CircuitInput, save_dir: str | None = None, verbose: bool = True) -> OperationPlan:
+        # Built as the run builds it, so a plan fails wherever its run would.
+        CircuitMethodFactory.create(circuit_input.config, self.model)
         circuit_input.prepare_index(self.model)
 
         plan = OperationPlan(
             operation="CircuitDiscoverer",
+            method=circuit_input.config.method,
             config=circuit_input.config,
             steps=len(circuit_input.prompts),
             steps_label="prompt",

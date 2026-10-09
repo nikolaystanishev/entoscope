@@ -1,11 +1,12 @@
 import abc
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import ClassVar
 
 import torch
 
 from intex.model import Model
-from intex.patching.config import PatchingConfig, PatchingMetric, metric_column
+from intex.patching.config import PatchingConfig, PatchingMetric, PatchingSettings, metric_column
 from intex.patching.input import PatchingInput
 from intex.patching.metric import AbstractComparison
 
@@ -30,12 +31,21 @@ class AbstractPatchingMethod(abc.ABC):
     run minus the metric of the unpatched target run, one per metric — and ``_report`` fans it out
     into the columns the config's comparisons ask for. What separates the methods is only how
     ``delta`` is reached: by patching and running the model, or by estimating from gradients.
+
+    A method is built once per run. ``settings_class`` names the dataclass of its settings, extending
+    ``PatchingSettings``, which the config reads its ``settings`` into as it is built; a method naming none
+    takes ``PatchingSettings`` itself, which no setting fits. ``batched`` says whether it runs the patched
+    model ``batch_size`` rows at a time, so a plan reports its batches.
     """
+
+    batched: ClassVar[bool] = False
+    settings_class: ClassVar[type[PatchingSettings]] = PatchingSettings
 
     def __init__(self, model: Model, config: PatchingConfig, batch_size: int = 1):
         self.model = model
         self.config = config
         self.batch_size = batch_size
+        self.settings = config.settings
 
     @abc.abstractmethod
     def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[RowResult]:

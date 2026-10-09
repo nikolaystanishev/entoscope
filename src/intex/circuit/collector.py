@@ -75,7 +75,9 @@ class CircuitVisualizationCollector(CircuitCollector, FigureMixin[CircuitFigure]
     def _save_result(self, save_dir: str) -> None:
         super()._save_result(save_dir)
         for i, circuit in enumerate(self.result):
-            self.figure_class(circuit, self.model).render(os.path.join(save_dir, f"circuit_{i}.html"))
+            self.figure_class(circuit, self.model, self.operation_input.config).render(
+                os.path.join(save_dir, f"circuit_{i}.html")
+            )
 
     def output_files(self) -> list[str]:
         pages = [f"circuit_{i}.html" for i in range(len(self.operation_input.prompts))]

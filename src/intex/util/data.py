@@ -58,6 +58,7 @@ def from_dict(cls: type, value: Any) -> Any:
     recurse into their elements (keys and values for dicts), ``dict`` subclasses construct
     through the key/value types of their generic base, ``X | None`` unwraps to ``X``, and
     anything else is returned as-is. The input is never mutated (YAML anchors may alias sub-mappings).
+    ``to_dict`` writes each of these shapes back, a ``to_config`` method standing in for ``from_config``.
     """
     if cls is Any:
         return value
@@ -94,6 +95,15 @@ def from_dict(cls: type, value: Any) -> Any:
     if dataclasses.is_dataclass(cls):
         return _dataclass_from_dict(cls, value)
     return value
+
+
+def to_dict(value: Any) -> Any:
+    """The raw JSON shape of ``value``, which ``from_dict`` reads back."""
+    return json.loads(json.dumps(value, default=_raw))
+
+
+def _raw(value: Any) -> Any:
+    return value.to_config() if hasattr(value, "to_config") else vars(value)
 
 
 def _dataclass_from_dict(cls: type, value: Any) -> Any:

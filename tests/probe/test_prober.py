@@ -2,6 +2,7 @@
 
 import json
 import pickle
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -24,7 +25,7 @@ METRICS = [ProbeMetric.ACCURACY, ProbeMetric.F1, ProbeMetric.PRECISION, ProbeMet
 METRIC_COLUMNS = ["accuracy", "f1", "precision", "recall", "auroc"]
 
 PROBE_YAML = {
-    "type": "linear",
+    "method": "linear",
     "pool": {"position": "mean"},
     "metric": METRIC_COLUMNS,
     "source": {"activation": "resid.post", "location": ["layer"]},
@@ -146,7 +147,6 @@ def test_the_default_training_settings_apply_when_the_config_omits_them(model, c
 
     collector = run_probe(model, config)
 
-    assert (config.max_iter, config.seed) == (1000, 42)
     for probe in collector.probes.values():
         assert (probe.max_iter, probe.random_state) == (1000, 42)
 
@@ -182,7 +182,8 @@ def test_artifacts_are_saved_to_disk(model, config_from_yaml, tmp_path):
 
     with open(save_dir / "config.json", encoding="utf-8") as f:
         saved_config = json.load(f)
-    assert saved_config["type"] == "linear"
+    # Left out of the YAML, the settings are written down as the probe's defaults.
+    assert (saved_config["method"], saved_config["settings"]) == ("linear", {"max_iter": 1000, "seed": 42})
     assert saved_config["pool"] == {"position": "mean"}
     assert saved_config["metric"] == METRIC_COLUMNS
     assert saved_config["config_id"] == "my_probe"
@@ -214,11 +215,16 @@ def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model, config_fro
         ({**PROBE_YAML, "pool": {"neuron": "mean"}}, "cannot be pooled"),
         ({**PROBE_YAML, "pool": {"position": "median"}}, "median"),
         ({**PROBE_YAML, "pool": {"attention": "mean"}}, "attention"),
-        ({**PROBE_YAML, "type": "mlp"}, "mlp"),
+        ({**PROBE_YAML, "max_iter": 250}, "Unknown keys for ProbeConfig.*max_iter"),
         ({**PROBE_YAML, "metric": ["accuracy", "mse"]}, "mse"),
         ({**PROBE_YAML, "metric": "accuracy"}, "Expected a list"),
-        ({"pool": {"position": "mean"}}, "Missing required keys for ProbeConfig.*metric.*source.*type"),
+        ({"pool": {"position": "mean"}}, "Missing required keys for ProbeConfig.*method.*metric.*source"),
         ({**PROBE_YAML, "target": {}}, "Unknown keys for ProbeConfig.*target"),
+        ({**PROBE_YAML, "method": "mlp"}, "Unknown probe method: mlp"),
+        (
+            {**PROBE_YAML, "settings": {"max_iter": 250, "solver": "lbfgs"}},
+            r"Unknown keys for LinearProbeSettings: \['solver'\]",
+        ),
     ],
 )
 def test_a_malformed_probe_config_is_rejected_when_it_is_loaded(config_from_yaml, raw, message):
@@ -232,20 +238,10 @@ def test_pooling_defaults_to_nothing_pooled(config_from_yaml):
     assert config_from_yaml(ProbeConfig, "my_probe", raw).pool == {}
 
 
-@pytest.mark.parametrize(
-    ("field", "value", "message"),
-    [
-        ("type", "mlp", "Unknown probe type"),
-        ("metric", ["mse"], "Unknown probe metric"),
-    ],
-)
-def test_a_probe_setting_that_is_not_known_raises(model, field, value, message):
-    # A config built in code can name something the dispatch has no implementation for.
-    config = probe_config()
-    setattr(config, field, value)
-
-    with pytest.raises(ValueError, match=message):
-        Prober(model).apply(ProbeInput(config, POSITIVE, NEGATIVE), verbose=False)
+def test_a_probe_metric_that_is_not_known_raises(model):
+    # A config built in code can hold a metric the dispatch has no implementation for.
+    with pytest.raises(ValueError, match="Unknown probe metric"):
+        Prober(model).apply(ProbeInput(replace(probe_config(), metric=["mse"]), POSITIVE, NEGATIVE), verbose=False)
 
 
 def test_both_classes_are_required(model):

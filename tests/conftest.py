@@ -18,7 +18,12 @@ from transformers import (
     LlamaForCausalLM,
 )
 
+from intex.circuit.method.factory import CircuitMethodFactory
+from intex.dataset.factory import DatasetFactory
+from intex.lens.method.factory import LensMethodFactory
 from intex.operation.config import AbstractConfig, ConfigFactory
+from intex.patching.method.factory import PatchingMethodFactory
+from intex.probe.method.factory import ProbeMethodFactory
 
 try:
     from transformer_lens.model_bridge import TransformerBridge
@@ -221,6 +226,17 @@ def rendered_figures(save_dir, name: str = "result.html") -> list[RenderedFigure
 def rendered_figure(save_dir, name: str = "result.html") -> RenderedFigure:
     """The first plot on the page — what a run drawing a single one wrote."""
     return rendered_figures(save_dir, name)[0]
+
+
+@pytest.fixture
+def registries():
+    """Registering is global, so every factory's registry is put back as it was once the test is done."""
+    factories = (CircuitMethodFactory, DatasetFactory, LensMethodFactory, PatchingMethodFactory, ProbeMethodFactory)
+    snapshots = {factory: dict(factory._registry) for factory in factories}
+    yield
+    for factory, snapshot in snapshots.items():
+        factory._registry.clear()
+        factory._registry.update(snapshot)
 
 
 @pytest.fixture

@@ -45,7 +45,7 @@ the same `LensInput`, with `prompt=None`.
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.lens.config import LensConfig, LensType
+from intex.lens.config import LensConfig
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
@@ -54,7 +54,7 @@ model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
 
 config = LensConfig(
-    type=LensType.PARAMETER_LENS,
+    method="parameter_lens",
     top_k=5,
     source=ModelLocatorConfig(
         activation=ModelLayerLocation.MLP_POST,
@@ -85,8 +85,10 @@ location out sums all of them, exactly as grouped neurons and heads work in the 
 | `attn.q` / `attn.k` / `attn.v` | column of `W_Q` / `W_K` / `W_V`            | what the subhead reads               |
 | `attn.z`                       | row of `W_O`                               | what the subhead writes              |
 
-`projection` picks the vocabulary space: `unembedding` (the default) multiplies by `W_U`,
-`embedding` by the embedding matrix `E`, as in the paper. The two differ whenever a model does not
+The lens has two settings, passed as `ParameterLensSettings` (`settings=ParameterLensSettings(scale=-1.0)`,
+from `intex.lens.method.parameter_lens`). `projection` picks the
+vocabulary space: `unembedding` (the default) multiplies by `W_U`, `embedding` by the embedding
+matrix `E`, as in the paper. The two differ whenever a model does not
 tie them — GPT-2 does tie them, so on HuggingFace's weights the two spaces agree exactly and only
 come apart once `enable_compatibility_mode` has folded LayerNorm in and centered the unembedding.
 The collector's `probability_*` columns are a softmax over the projected weight
@@ -94,12 +96,11 @@ vector: a ranking score over the vocabulary, not a probability the model ever pr
 
 `scale` multiplies the weight vector before projecting it (default `1.0`). A negative scale such as
 `-1.0` inverts the direction, surfacing the tokens a weight writes *against* rather than *toward*;
-the magnitude acts as a temperature on the `probability_*` ranking. It applies only to the
-parameter lens.
+the magnitude acts as a temperature on the `probability_*` ranking.
 
-Configs can also be loaded from YAML via `intex.operation.config.ConfigFactory[LensConfig]` (see
-`example_config.yaml`), and the operation can be run from an `@intex.script.experiment.experiment`
-script (see `example_lens_script.py`).
+Configs can also be loaded from YAML via `intex.operation.config.ConfigFactory[LensConfig]`, the
+lens's settings under `settings` (see [Custom methods](#custom-methods) for the shape), and the
+operation can be run from an `@intex.script.experiment.experiment` script.
 
 ## Circuit Discovery
 
@@ -110,14 +111,15 @@ routes that lead to the model's prediction.
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.circuit.config import CircuitConfig, CircuitMethodType
+from intex.circuit.config import CircuitConfig
 from intex.circuit.discoverer import CircuitDiscoverer
 from intex.circuit.input import CircuitInput
+from intex.circuit.method.information_flow_routes import InformationFlowRoutesSettings
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
 
-config = CircuitConfig(type=CircuitMethodType.INFORMATION_FLOW_ROUTES, threshold=0.04)
+config = CircuitConfig(method="information_flow_routes", settings=InformationFlowRoutesSettings(threshold=0.04))
 prompts = ["The capital of France is", "The Eiffel Tower is in"]
 
 collector = CircuitDiscoverer(model).apply(
@@ -282,6 +284,106 @@ those settings typed and validated instead; unknown keys still land in `properti
 `load` is called once, lazily, by `prepare()`; `len`, iteration and indexing read the cached rows.
 Operations do not consume datasets yet — `LensInput`, `ProbeInput`, `CircuitInput` and
 `PatchingInput` still take prompts directly.
+
+Registering a dataset follows the same rules as registering a method; see
+[Custom methods](#custom-methods).
+
+## Custom methods
+
+Every operation runs a method, named in its config's `method` field, with the method's own settings
+beside it in `settings`: an instance of the method's settings class in code, or a mapping in YAML. A
+setting left out takes the method's default.
+
+| operation         | built-in methods (their settings)                                                    |
+|-------------------|--------------------------------------------------------------------------------------|
+| Lens              | `logit_lens`, `tuned_lens` (`translators`), `parameter_lens` (`projection`, `scale`) |
+| Probing           | `linear` (`max_iter`, `seed`)                                                        |
+| Patching          | `exact` (the default), `attribution`, `integrated_gradients` (`interpolation_steps`) |
+| Circuit Discovery | `information_flow_routes` (`threshold`, `path_threshold`, `prediction_positions`)    |
+
+A method you register is named the same way, and runs through the same operator, collector, plan
+and result page as the built-in ones:
+
+```python
+from dataclasses import dataclass
+
+from intex.lens.config import LensConfig, LensSettings
+from intex.lens.input import LensInput
+from intex.lens.lens import Lens
+from intex.lens.method.factory import LensMethodFactory
+from intex.lens.method.logit_lens import LogitLens
+from intex.operation.config import ConfigFactory
+
+
+@dataclass(kw_only=True)
+class TemperatureLensSettings(LensSettings):
+    temperature: float = 1.0
+
+
+@LensMethodFactory.register("temperature_lens")
+class TemperatureLens(LogitLens):
+    settings_class = TemperatureLensSettings
+
+    def project(self, activation, index):
+        return super().project(activation, index) / self.settings.temperature
+
+
+config = LensConfig(method="temperature_lens", settings=TemperatureLensSettings(temperature=2.0), source=...)
+# or from YAML
+config = ConfigFactory[LensConfig]("configs.yaml").create("warm")
+
+Lens(model).apply(LensInput(config, "The capital of France is"), save_dir="runs/warm")
+```
+
+```yaml
+warm:
+  method: temperature_lens
+  top_k: 5
+  settings:
+    temperature: 2.0
+  source:
+    activation: resid.post
+    location: [layer, position]
+```
+
+The name picks the method, and the method names the dataclass of its settings as `settings_class`,
+extending its operation's empty settings base. The config looks the method up as it is built and
+reads `settings` into that class, strictly: a setting the method does not have, another method's
+settings, or a setting without a default left out raises right there. A method naming none, such as
+`logit_lens`, takes the empty base itself, which no setting fits, and a method extending another takes
+that method's `settings_class` unless it names its own. `config.json` records every setting, defaults
+included, and `dataclasses.replace(config, method="tuned_lens", settings=TunedLensSettings())` switches
+a built config to another method.
+
+| operation         | factory                 | subclass                 | settings base      | implement                                  | built              |
+|-------------------|-------------------------|--------------------------|--------------------|--------------------------------------------|--------------------|
+| Lens              | `LensMethodFactory`     | `AbstractLensMethod`     | `LensSettings`     | `extract`, `project`                       | once per run       |
+| Probing           | `ProbeMethodFactory`    | `AbstractProbeMethod`    | `ProbeSettings`    | `fit`, `predict`, `predict_proba`, `probe` | once per index row |
+| Patching          | `PatchingMethodFactory` | `AbstractPatchingMethod` | `PatchingSettings` | `scores`, `passes`                         | once per run       |
+| Circuit Discovery | `CircuitMethodFactory`  | `AbstractCircuitMethod`  | `CircuitSettings`  | `build`                                    | once per run       |
+
+- **Lens** - one class serves every activation the lens reads, telling them apart by
+  `index.activation()`, and `project` returns one element's logits over the vocabulary. Extending
+  `LogitLens` (as above) keeps its read-out of residual-stream, MLP and attention head activations.
+  A lens that reads only the weights sets `reads_activations = False`: it then takes no prompt and
+  has no `position` axis, like `ParameterLens`.
+- **Probing** - `probe` is the fitted estimator the collector pickles into `probes.pkl`.
+- **Patching** - `scores` yields a `RowResult` per index row from the change it measured in each
+  metric, which `self._report` turns into the columns of the comparisons the config names; `passes`
+  is what `plan` reports, and `batched = True` says the method runs the model `batch_size` rows at a
+  time.
+- **Circuit Discovery** - the result page draws graphs whose nodes carry `kind`, `layer`,
+  `position` and `token` and whose edges carry `kind`, `weight` and `head`, the schema
+  `PromptCircuit` documents; a method writing other attributes runs with
+  `collector_class=CircuitCollector`.
+
+A method is registered when the module defining it is imported, so import it before building or
+loading a config that names it: the config looks its method up as it is built, so a name nothing
+registered (listing the names that are) or a setting that does not fit fails right there, before any
+run. The built-in methods register with their operation's package, so they are always known. In an `@experiment` script, define the method above `main`. A name
+belongs to one method: registering another under it raises, so a built-in cannot be shadowed by
+accident, while defining the same classes again (re-running a notebook cell) replaces them. A method
+that leaves an abstract method out is rejected when it is registered.
 
 ## Attribution & licensing
 

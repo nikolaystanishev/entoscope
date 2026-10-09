@@ -1,9 +1,10 @@
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 
 import torch
 from tqdm import tqdm
 
-from intex.patching.config import PatchingMetric
+from intex.patching.config import PatchingMetric, PatchingSettings
 from intex.patching.input import PatchingInput
 from intex.patching.method.patching import AbstractPatchingMethod, RowResult
 from intex.patching.metric import AbstractMetric
@@ -115,6 +116,17 @@ class AttributionPatchingMethod(AbstractPatchingMethod):
         return interpolate
 
 
+@dataclass(kw_only=True)
+class IntegratedGradientsSettings(PatchingSettings):
+    """``interpolation_steps`` is the number of points the gradient is averaged over."""
+
+    interpolation_steps: int = 10
+
+    def __post_init__(self):
+        if self.interpolation_steps < 1:
+            raise ValueError(f"interpolation_steps must be at least 1, got {self.interpolation_steps}")
+
+
 class IntegratedGradientsMethod(AttributionPatchingMethod):
     """Integrated gradients in activation space (Marks et al. 2024, Eq. 4).
 
@@ -133,6 +145,8 @@ class IntegratedGradientsMethod(AttributionPatchingMethod):
     point does not depend on a path at all, is the estimate to reach for there.
     """
 
+    settings_class = IntegratedGradientsSettings
+
     def _check_available(self, patching_input: PatchingInput) -> None:
         if patching_input.source_prompt is None:
             raise ValueError(
@@ -146,5 +160,5 @@ class IntegratedGradientsMethod(AttributionPatchingMethod):
             )
 
     def _alphas(self) -> list[float]:
-        steps = self.config.interpolation_steps
+        steps = self.settings.interpolation_steps
         return [(step + 1) / steps for step in range(steps)]

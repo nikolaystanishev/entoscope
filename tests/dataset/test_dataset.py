@@ -61,14 +61,14 @@ def test_a_property_the_config_does_not_have_raises(jsonl_dataset_class, tmp_pat
         dataset.prepare()
 
 
-def test_a_class_without_a_load_cannot_be_created(registry):
+def test_a_class_without_a_load_cannot_be_registered(registry):
     class Incomplete(AbstractDataset):
         pass
 
-    DatasetFactory.register("incomplete")(Incomplete)
+    with pytest.raises(TypeError, match="Incomplete cannot be registered as dataset type 'incomplete'.*load"):
+        DatasetFactory.register("incomplete")(Incomplete)
 
-    with pytest.raises(TypeError):
-        DatasetFactory.create(DatasetConfig(type="incomplete"))
+    assert DatasetFactory.registered() == []
 
 
 # --------------------------------------------------------------------------------------------------
