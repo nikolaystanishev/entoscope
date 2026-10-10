@@ -4,7 +4,8 @@ import torch
 from jaxtyping import Float, Int
 from transformer_lens import ActivationCache
 
-from intex.lens.config import LensConfig, LensType
+from intex.lens.config import LensConfig
+from intex.lens.method.factory import LensMethodFactory
 from intex.model import Model
 from intex.model.config import ModelLocatorConfig
 from intex.model.index import Index
@@ -23,10 +24,12 @@ class LensInput(OperationInput):
     _index: Index[ModelLocatorConfig] | None = field(init=False, default=None)
 
     def __post_init__(self):
-        if self.config.type is LensType.PARAMETER_LENS and self.prompt is not None:
-            raise ValueError("The parameter lens reads the model's weights, not its activations, so it takes no prompt")
-        if self.config.type is not LensType.PARAMETER_LENS and self.prompt is None:
-            raise ValueError(f"A '{self.config.type.value}' reads activations, so it needs a prompt")
+        name = self.config.method.type
+        reads_activations = LensMethodFactory.get(name).reads_activations
+        if reads_activations and self.prompt is None:
+            raise ValueError(f"A '{name}' reads activations, so it needs a prompt")
+        if not reads_activations and self.prompt is not None:
+            raise ValueError(f"A '{name}' reads the model's weights, not its activations, so it takes no prompt")
 
     def prepare_index(self, model: Model) -> "LensInput":
         if self._index is not None:

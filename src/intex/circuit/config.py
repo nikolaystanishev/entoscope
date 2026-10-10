@@ -1,13 +1,26 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from intex.operation.config import AbstractConfig
+from intex.operation.method import MethodConfig
+
+if TYPE_CHECKING:
+    from intex.circuit.method.factory import CircuitMethodFactory
 
 
-class CircuitMethodType(str, Enum):
-    INFORMATION_FLOW_ROUTES = "information_flow_routes"
+@dataclass(kw_only=True)
+class CircuitMethodConfig(MethodConfig):
+    """The method config of a method that takes no fields; a method with fields names a dataclass extending this
+    one."""
+
+    @classmethod
+    def factory(cls) -> type[CircuitMethodFactory]:
+        # Imported here: the factory imports the methods, which import this module.
+        from intex.circuit.method.factory import CircuitMethodFactory
+
+        return CircuitMethodFactory
 
 
 @dataclass(kw_only=True)
@@ -16,26 +29,12 @@ class CircuitConfig(AbstractConfig):
 
     Unlike the per-location operations (Lens, Probing, Patching), circuit discovery is
     global: a method builds a graph spanning every layer, token and head, so there is no
-    ``ModelLocatorConfig``/``Index`` here.
-
-    threshold: Renormalizing edge threshold applied to contributions while building the
-        full graph. Contributions below it are dropped and the rest renormalized so the
-        incoming weights of each representation still sum to 1 (see the Information Flow
-        Routes paper). ``0.0`` keeps every edge.
-    path_threshold: Threshold used when pruning the routes-to-prediction subgraph. Defaults
-        to ``threshold`` when ``None``.
-    prediction_positions: Token positions whose prediction the routes are traced back from.
-        Negative indices count from the end of each prompt. Defaults to ``[-1]`` (the
-        next-token prediction).
+    ``ModelLocatorConfig``/``Index`` here - only ``method``, the method config, ``type`` naming the
+    method: an instance of its method config class, or in a YAML file the mapping read strictly into that class, or
+    just the method's type for its defaults.
 
     Whether an interactive visualization is written is chosen by the collector, not here:
     ``CircuitVisualizationCollector`` renders HTML, the base ``CircuitCollector`` does not.
     """
 
-    type: CircuitMethodType
-    threshold: float = 0.04
-    path_threshold: float | None = None
-    prediction_positions: list[int] = field(default_factory=lambda: [-1])
-
-    def resolved_path_threshold(self) -> float:
-        return self.threshold if self.path_threshold is None else self.path_threshold
+    method: CircuitMethodConfig

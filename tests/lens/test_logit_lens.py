@@ -10,7 +10,7 @@ import torch
 import yaml
 
 from intex.lens.collector import LensCollector
-from intex.lens.config import LensConfig, LensType
+from intex.lens.config import LensConfig, LensMethodConfig
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.lens.method.logit_lens import _attention_scale
@@ -40,7 +40,7 @@ LAYER_POSITION_GRID = dict(
 
 LENS_YAML = {
     "my_lens": {
-        "type": "logit_lens",
+        "method": "logit_lens",
         "source": {"activation": "resid.post", "location": ["layer", "position"]},
         "top_k": 2,
     }
@@ -346,7 +346,7 @@ def test_artifacts_are_saved_to_disk(model, config_from_yaml, tmp_path):
 
     with open(save_dir / "config.json", encoding="utf-8") as f:
         saved_config = json.load(f)
-    assert saved_config["type"] == "logit_lens"
+    assert saved_config["method"] == {"type": "logit_lens"}
     assert saved_config["config_id"] == "my_lens"
     assert saved_config["top_k"] == 2
 
@@ -371,7 +371,7 @@ def test_a_run_without_a_collector_still_writes_its_artifacts(model, config_from
 def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model, config_from_yaml):
     from_file = config_from_yaml(LensConfig, "my_lens", LENS_YAML["my_lens"])
     in_code = LensConfig(
-        type=LensType.LOGIT_LENS,
+        method=LensMethodConfig(type="logit_lens"),
         top_k=2,
         source=ModelLocatorConfig(
             activation=ModelLayerLocation.RESIDUAL_POST,
@@ -459,31 +459,25 @@ def test_the_lens_runs_from_an_experiment_script(tmp_path):
 @pytest.mark.parametrize(
     ("raw", "message"),
     [
-        ({"source": {"activation": "resid.post", "location": ["layer"]}}, "Missing required keys for LensConfig.*type"),
-        ({"type": "logit_lens"}, "Missing required keys for LensConfig.*source"),
-        ({"type": "attention_lens", "source": {"activation": "resid.post"}}, "attention_lens"),
         (
-            {"type": "logit_lens", "source": {"activation": "resid.post"}, "target": {}},
+            {"source": {"activation": "resid.post", "location": ["layer"]}},
+            "Missing required keys for LensConfig.*method",
+        ),
+        ({"method": "logit_lens"}, "Missing required keys for LensConfig.*source"),
+        (
+            {"method": "logit_lens", "source": {"activation": "resid.post"}, "target": {}},
             "Unknown keys for LensConfig.*target",
         ),
         (
-            {"type": "logit_lens", "top_k": 0, "source": {"activation": "resid.post"}},
+            {"method": "logit_lens", "top_k": 0, "source": {"activation": "resid.post"}},
             "top_k must be at least 1",
         ),
+        ({"method": "attention_lens", "source": {"activation": "resid.post"}}, "Unknown lens method: attention_lens"),
     ],
 )
 def test_a_malformed_lens_config_is_rejected_when_it_is_loaded(config_from_yaml, raw, message):
     with pytest.raises(ValueError, match=message):
         config_from_yaml(LensConfig, "broken", raw)
-
-
-def test_a_lens_type_that_is_not_known_raises(model):
-    # A config built in code can name a type the factory has no lens for.
-    config = declarative_config(**LAYER_POSITION_GRID)
-    config.type = "attention_lens"
-
-    with pytest.raises(ValueError, match="Unknown lens type"):
-        Lens(model).apply(LensInput(config, PROMPT), verbose=False)
 
 
 def test_an_activation_without_a_vocabulary_projection_raises(model):
@@ -559,7 +553,7 @@ def test_a_plan_prints_its_summary_and_its_index(model, config_from_yaml):
 
     described = str(Lens(model).plan(LensInput(config, PROMPT), verbose=False))
 
-    assert described.splitlines()[0] == "Lens plan — logit_lens (config: my_lens)"
+    assert described.splitlines()[0] == "Lens plan - logit_lens (config: my_lens)"
     assert f"{model.cfg.n_layers * model.to_tokens(PROMPT).shape[1]} elements" in described
     assert "1 forward pass" in described
     assert "writes: nothing (no save_dir)" in described
@@ -603,7 +597,7 @@ def test_a_lens_run_writes_an_interactive_result_page(model, tmp_path):
     figure = _draw(model, config, save_dir)
 
     assert "Plotly.newPlot" in (save_dir / "result.html").read_text(encoding="utf-8")
-    assert figure.title.startswith("Lens — logit_lens")
+    assert figure.title.startswith("Lens - logit_lens")
     assert figure.kind == "heatmap"
     # Probabilities are absolute, so the scale is pinned and two runs stay comparable at a glance.
     assert (figure.trace["zmin"], figure.trace["zmax"]) == (0.0, 1.0)
@@ -622,7 +616,7 @@ def test_every_rank_of_the_top_k_gets_its_own_plot(model, tmp_path):
 
     assert len(figures) == config.top_k
     for rank, figure in enumerate(figures):
-        assert figure.title.startswith(f"Lens — logit_lens · top-{rank + 1}")
+        assert figure.title.startswith(f"Lens - logit_lens · top-{rank + 1}")
         # Each plot reads its own rank's probability, and prints that rank's token in the cell.
         assert figure.trace["z"][0][0] == pytest.approx(expected[f"probability_{rank}"].iloc[0])
         assert figure.trace["text"][0][0] == format_value(expected[f"str_token_{rank}"].iloc[0])

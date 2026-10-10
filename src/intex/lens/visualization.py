@@ -17,14 +17,14 @@ from intex.operation.visualization import GridFigure, describe_row, format_value
 class LensFigure(GridFigure[LensInput, int]):
     @property
     def title(self) -> str:
-        return titled(f"Lens — {self.operation_input.config.type.value}", self.operation_input.config)
+        return titled(f"Lens - {self.operation_input.config.method.type}", self.operation_input.config)
 
     def panels(self) -> list[int]:
         return list(range(self.operation_input.config.top_k))
 
     def heading(self, rank: int) -> str:
         config = self.operation_input.config
-        return titled(f"Lens — {config.type.value} · top-{rank + 1}", config)
+        return titled(f"Lens - {config.method.type} · top-{rank + 1}", config)
 
     def subtitle(self, rank: int) -> str:
         prompt = self.operation_input.prompt

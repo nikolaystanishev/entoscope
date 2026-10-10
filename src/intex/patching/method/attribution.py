@@ -1,11 +1,12 @@
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 
 import torch
 from tqdm import tqdm
 
-from intex.patching.config import PatchingMetric
+from intex.patching.config import PatchingMethodConfig, PatchingMetric
 from intex.patching.input import PatchingInput
-from intex.patching.method.patching import AbstractPatchingMethod, RowResult
+from intex.patching.method.patching import AbstractPatchingMethod, PatchingMethodConfigT, RowResult
 from intex.patching.metric import AbstractMetric
 from intex.patching.processor import SourceStrategy
 from intex.util.collections import zip_fill
@@ -13,7 +14,7 @@ from intex.util.collections import zip_fill
 Gradients = dict[PatchingMetric, dict[str, torch.Tensor]]
 
 
-class AttributionPatchingMethod(AbstractPatchingMethod):
+class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
     """Attribution patching — the first-order Taylor expansion of the true indirect effect.
 
     ``IE ~= grad(m) . (a_patch - a_clean)``, with the gradient taken on the target run at the
@@ -115,7 +116,18 @@ class AttributionPatchingMethod(AbstractPatchingMethod):
         return interpolate
 
 
-class IntegratedGradientsMethod(AttributionPatchingMethod):
+@dataclass(kw_only=True)
+class IntegratedGradientsConfig(PatchingMethodConfig):
+    """``interpolation_steps`` is the number of points the gradient is averaged over."""
+
+    interpolation_steps: int = 10
+
+    def __post_init__(self):
+        if self.interpolation_steps < 1:
+            raise ValueError(f"interpolation_steps must be at least 1, got {self.interpolation_steps}")
+
+
+class IntegratedGradientsMethod(AttributionPatchingMethod[IntegratedGradientsConfig]):
     """Integrated gradients in activation space (Marks et al. 2024, Eq. 4).
 
     Averages the gradient over ``interpolation_steps`` points on the straight path from the source
@@ -146,5 +158,5 @@ class IntegratedGradientsMethod(AttributionPatchingMethod):
             )
 
     def _alphas(self) -> list[float]:
-        steps = self.config.interpolation_steps
+        steps = self.method_config.interpolation_steps
         return [(step + 1) / steps for step in range(steps)]

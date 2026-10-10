@@ -15,13 +15,8 @@ ROWS = [
 
 
 @pytest.fixture(autouse=True)
-def registry():
-    """The registry is class state; snapshot it so registrations don't leak between tests."""
-    snapshot = dict(DatasetFactory._registry)
-    DatasetFactory._registry.clear()
-    yield DatasetFactory._registry
-    DatasetFactory._registry.clear()
-    DatasetFactory._registry.update(snapshot)
+def _registries(registries):
+    """Every dataset test registers its own types, so each one's registrations are undone after it."""
 
 
 class JsonlDataset(AbstractDataset):
@@ -34,7 +29,7 @@ class JsonlDataset(AbstractDataset):
 
 
 @pytest.fixture
-def jsonl_dataset_class(registry):
+def jsonl_dataset_class():
     return DatasetFactory.register("jsonl")(JsonlDataset)
 
 

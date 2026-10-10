@@ -61,14 +61,14 @@ def test_a_property_the_config_does_not_have_raises(jsonl_dataset_class, tmp_pat
         dataset.prepare()
 
 
-def test_a_class_without_a_load_cannot_be_created(registry):
+def test_a_class_without_a_load_cannot_be_registered():
     class Incomplete(AbstractDataset):
         pass
 
-    DatasetFactory.register("incomplete")(Incomplete)
+    with pytest.raises(TypeError, match="Incomplete cannot be registered as dataset type 'incomplete'.*load"):
+        DatasetFactory.register("incomplete")(Incomplete)
 
-    with pytest.raises(TypeError):
-        DatasetFactory.create(DatasetConfig(type="incomplete"))
+    assert DatasetFactory.registered() == []
 
 
 # --------------------------------------------------------------------------------------------------
@@ -140,7 +140,7 @@ class SplitDataset(AbstractDataset):
             return [json.loads(line) for line in f if line.strip()]
 
 
-def test_a_subclass_field_is_typed_while_the_extras_stay_dynamic(registry, config_from_yaml, prompts_file, tmp_path):
+def test_a_subclass_field_is_typed_while_the_extras_stay_dynamic(config_from_yaml, prompts_file, tmp_path):
     DatasetFactory.register("split")(SplitDataset)
     prompts_file(ROWS[:2], name="prompts.test.jsonl")
     raw = {"type": "split", "split": "test", "path": str(tmp_path / "prompts")}

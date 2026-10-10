@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from intex.model.config import ModelLocatorConfig
 from intex.operation.config import AbstractConfig
+from intex.operation.method import MethodConfig
+
+if TYPE_CHECKING:
+    from intex.patching.method.factory import PatchingMethodFactory
 
 
 class PatchingType(str, Enum):
@@ -44,18 +49,6 @@ class MetricComparison(str, Enum):
     NORMALIZED = "normalized"  # (m(patched) - m(target)) / (m(source) - m(target))
 
 
-class PatchingMethodType(str, Enum):
-    """How the change in the metric is obtained.
-
-    ``exact`` patches and runs the model once per index row. The other two estimate every row from
-    gradients instead, trading a linearity assumption for a cost that does not grow with the index.
-    """
-
-    EXACT = "exact"
-    ATTRIBUTION = "attribution"
-    INTEGRATED_GRADIENTS = "integrated_gradients"
-
-
 @dataclass(kw_only=True)
 class PatchingElementConfig(ModelLocatorConfig):
     type: PatchingType
@@ -78,6 +71,19 @@ def metric_column(metric: PatchingMetric, comparison: MetricComparison) -> str:
 
 
 @dataclass(kw_only=True)
+class PatchingMethodConfig(MethodConfig):
+    """The method config of a method that takes no fields, such as ``exact``; a method with fields names a
+    dataclass extending this one."""
+
+    @classmethod
+    def factory(cls) -> type[PatchingMethodFactory]:
+        # Imported here: the factory imports the methods, which import this module.
+        from intex.patching.method.factory import PatchingMethodFactory
+
+        return PatchingMethodFactory
+
+
+@dataclass(kw_only=True)
 class PatchingConfig(AbstractConfig):
     """``metric`` maps each metric to the comparisons it is reported under, one result column each.
 
@@ -85,13 +91,15 @@ class PatchingConfig(AbstractConfig):
     forward pass and a second comparison of a metric already asked for costs nothing at all — it
     re-reads that metric's change. Each column is drawn as its own plot on the result page.
 
-    ``interpolation_steps`` is the number of points the integrated-gradients method averages its
-    gradient over and is ignored by the other two.
+    ``method`` is how that change is obtained, ``type`` naming it: ``exact`` patches and runs the model once
+    per index row, while ``attribution`` and ``integrated_gradients`` estimate every row from gradients
+    instead, trading a linearity assumption for a cost that does not grow with the index. It is an instance of
+    its method config class, or in a YAML file the mapping read strictly into that class, or just the
+    method's type for its defaults.
     """
 
     metric: dict[PatchingMetric, list[MetricComparison]]
-    method: PatchingMethodType = PatchingMethodType.EXACT
-    interpolation_steps: int = 10
+    method: PatchingMethodConfig
     patch: list[SinglePatchingConfig] = field(default_factory=list)
 
     def __post_init__(self):
@@ -103,8 +111,6 @@ class PatchingConfig(AbstractConfig):
             repeated = sorted({c.value for c in comparisons if comparisons.count(c) > 1})
             if repeated:
                 raise ValueError(f"{metric.value} names {', '.join(repeated)} more than once")
-        if self.interpolation_steps < 1:
-            raise ValueError(f"interpolation_steps must be at least 1, got {self.interpolation_steps}")
 
     def metric_pairs(self) -> list[MetricPair]:
         """Every metric with each comparison it is reported under, in the order the config names them."""

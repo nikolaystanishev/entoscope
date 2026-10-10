@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from html import escape
 from pathlib import Path
 
@@ -16,13 +17,14 @@ from intex.patching.config import (
     MetricComparison,
     PatchingConfig,
     PatchingElementConfig,
-    PatchingMethodType,
+    PatchingMethodConfig,
     PatchingMetric,
     PatchingType,
     SinglePatchingConfig,
     metric_column,
 )
 from intex.patching.input import PatchingInput
+from intex.patching.method.attribution import IntegratedGradientsConfig
 from intex.patching.method.factory import PatchingMethodFactory
 from intex.patching.patcher import Patcher
 from intex.patching.processor import GaussianNoiseSourceStrategy
@@ -31,6 +33,7 @@ from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rende
 
 SOURCE_PROMPT = "The capital of France is"
 TARGET_PROMPT = "The capital of Spain is"
+EXACT = PatchingMethodConfig(type="exact")
 
 
 def _metric(
@@ -116,6 +119,7 @@ def _last_layer_resid_patch_config() -> PatchingConfig:
     return PatchingConfig(
         config_id="last_layer_resid_patch",
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.NORMALIZED]},
+        method=EXACT,
         patch=[SinglePatchingConfig(source=element, target=element)],
     )
 
@@ -127,6 +131,7 @@ def _last_layer_resid_zero_ablation_config() -> PatchingConfig:
     return PatchingConfig(
         config_id="last_layer_resid_zero_ablation",
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        method=EXACT,
         patch=[SinglePatchingConfig(source=source, target=target)],
     )
 
@@ -155,6 +160,7 @@ def _resid_value_scale_config(scale: float, layer: int) -> PatchingConfig:
     return PatchingConfig(
         config_id="resid_value_scale",
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        method=EXACT,
         patch=[SinglePatchingConfig(source=source, target=target)],
     )
 
@@ -192,6 +198,7 @@ def _patch_config(*elements: PatchingElementConfig, config_id: str = "patch") ->
     return PatchingConfig(
         config_id=config_id,
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        method=EXACT,
         patch=[SinglePatchingConfig(source=element, target=element) for element in elements],
     )
 
@@ -375,6 +382,7 @@ def _metric_config(
     return PatchingConfig(
         config_id="metrics",
         metric={metric: [comparison] for metric in metrics},
+        method=EXACT,
         patch=[SinglePatchingConfig(source=element, target=element)],
     )
 
@@ -503,6 +511,7 @@ def test_each_metric_is_reported_under_its_own_comparison(model: HookedTransform
                 PatchingMetric.LOGIT_DIFF: [MetricComparison.NORMALIZED],
                 PatchingMetric.KL_DIVERGENCE: [MetricComparison.INDIRECT_EFFECT],
             },
+            method=EXACT,
             patch=[SinglePatchingConfig(source=element, target=element)],
         ),
     )
@@ -526,6 +535,7 @@ def test_one_metric_may_be_reported_under_several_comparisons(model: HookedTrans
         PatchingConfig(
             config_id="thrice",
             metric={PatchingMetric.LOGIT_DIFF: comparisons},
+            method=EXACT,
             patch=[SinglePatchingConfig(source=element, target=element)],
         ),
     )
@@ -551,7 +561,7 @@ def test_a_second_comparison_costs_no_extra_backward_pass(model: HookedTransform
         config = PatchingConfig(
             config_id="cost",
             metric=metric,
-            method=PatchingMethodType.ATTRIBUTION,
+            method=PatchingMethodConfig(type="attribution"),
             patch=[SinglePatchingConfig(source=element, target=element)],
         )
         return PatchingMethodFactory.create(config, model).passes(runs=1, batches=1)[1]
@@ -684,8 +694,8 @@ def test_each_row_generates_what_its_own_patched_run_predicts(model: HookedTrans
     assert collector.result["generation"].tolist() == expected
 
 
-@pytest.mark.parametrize("method", [PatchingMethodType.ATTRIBUTION, PatchingMethodType.INTEGRATED_GRADIENTS])
-def test_a_gradient_method_reports_no_generation(model: HookedTransformer, method: PatchingMethodType) -> None:
+@pytest.mark.parametrize("method", ["attribution", "integrated_gradients"])
+def test_a_gradient_method_reports_no_generation(model: HookedTransformer, method: str) -> None:
     # A gradient method never runs the patched model, so there is no next token to read off it.
     collector = _collect(model, _gradient_config(method))
 
@@ -749,18 +759,18 @@ _GRADIENT_LAYER = 6
 
 
 def _gradient_config(
-    method: PatchingMethodType,
+    method: str | PatchingMethodConfig,
     source_type: PatchingType = PatchingType.REPLACE,
     value: float = 0.0,
     layer: int = _GRADIENT_LAYER,
-    steps: int = 10,
 ) -> PatchingConfig:
+    """A method named by its type alone takes its defaults, the way a YAML file names it."""
+    method = method if isinstance(method, PatchingMethodConfig) else PatchingMethodConfig.from_config(method)
     location, index_filter = [ModelLocation.LAYER], Filter(inclusion_terms=[{ModelLocation.LAYER: layer}])
     return PatchingConfig(
-        config_id=method.value,
+        config_id=method.type,
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]},
         method=method,
-        interpolation_steps=steps,
         patch=[
             SinglePatchingConfig(
                 source=PatchingElementConfig(
@@ -781,7 +791,7 @@ def _gradient_config(
     )
 
 
-def _self_scale(model: HookedTransformer, method: PatchingMethodType, scale: float, layer: int = _GRADIENT_LAYER):
+def _self_scale(model: HookedTransformer, method: str, scale: float, layer: int = _GRADIENT_LAYER):
     """Scale one layer's residual by ``scale`` and write it back over itself.
 
     Both prompts are the target one, so the source activation the scale multiplies is the target's
@@ -803,14 +813,14 @@ def test_attribution_patching_is_a_directional_derivative(model: HookedTransform
     # The gradient is read once, at the target's own activation, so ten times the perturbation is
     # ten times the score exactly. The exact method reruns the model and is under no such obligation.
     small, large = (
-        _self_scale(model, PatchingMethodType.ATTRIBUTION, 1.1),
-        _self_scale(model, PatchingMethodType.ATTRIBUTION, 2.0),
+        _self_scale(model, "attribution", 1.1),
+        _self_scale(model, "attribution", 2.0),
     )
     assert torch.allclose(large, 10 * small, rtol=1e-3)
 
     exact_small, exact_large = (
-        _self_scale(model, PatchingMethodType.EXACT, 1.1),
-        _self_scale(model, PatchingMethodType.EXACT, 2.0),
+        _self_scale(model, "exact", 1.1),
+        _self_scale(model, "exact", 2.0),
     )
     assert not torch.allclose(exact_large, 10 * exact_small, rtol=1e-2)
 
@@ -823,9 +833,9 @@ def test_attribution_patching_reads_the_models_own_gradient(model: HookedTransfo
     # sides cancels the curvature that makes a one-sided difference disagree, leaving a comparison
     # the first-order estimate has to pass to within the step's cube.
     step = 0.05
-    up = _self_scale(model, PatchingMethodType.EXACT, 1 + step)
-    down = _self_scale(model, PatchingMethodType.EXACT, 1 - step)
-    estimated = _self_scale(model, PatchingMethodType.ATTRIBUTION, 1 + step)
+    up = _self_scale(model, "exact", 1 + step)
+    down = _self_scale(model, "exact", 1 - step)
+    estimated = _self_scale(model, "attribution", 1 + step)
 
     assert torch.allclose(estimated, (up - down) / 2, rtol=0.05)
 
@@ -836,7 +846,7 @@ def test_scaling_the_final_residual_moves_neither_the_run_nor_its_estimate(model
     # ``ln_final`` normalizes a uniform scaling of the last layer's residual away, so doubling it is
     # exactly a no-op -- and the derivative along the residual itself vanishes for the same reason.
     # The two methods have to agree here for reasons that have nothing to do with either's numerics.
-    for method in (PatchingMethodType.EXACT, PatchingMethodType.ATTRIBUTION):
+    for method in ("exact", "attribution"):
         assert torch.allclose(_self_scale(model, method, 2.0, layer=-1), torch.tensor(0.0), atol=1e-4), method
 
 
@@ -845,7 +855,7 @@ def test_a_patch_writing_back_what_was_there_scores_zero(model: HookedTransforme
 
     # The perturbation is identically zero, so every method reports nothing -- the exact one because
     # the run is unchanged, the gradient ones because they dot their gradient with it.
-    for method in PatchingMethodType:
+    for method in ("exact", "attribution", "integrated_gradients"):
         result = _run(
             model,
             _gradient_config(method),
@@ -861,9 +871,11 @@ def test_integrated_gradients_of_one_step_is_attribution_patching(model: HookedT
 
     # A single step puts the only interpolation point at the clean activation, which is exactly
     # where attribution patching reads its gradient.
-    estimated = _run(model, _gradient_config(PatchingMethodType.INTEGRATED_GRADIENTS, steps=1))
+    estimated = _run(
+        model, _gradient_config(IntegratedGradientsConfig(type="integrated_gradients", interpolation_steps=1))
+    )
 
-    assert torch.equal(estimated, _run(model, _gradient_config(PatchingMethodType.ATTRIBUTION)))
+    assert torch.equal(estimated, _run(model, _gradient_config("attribution")))
 
 
 def test_integrated_gradients_beats_a_single_gradient_on_a_full_resample(model: HookedTransformer) -> None:
@@ -871,9 +883,9 @@ def test_integrated_gradients_beats_a_single_gradient_on_a_full_resample(model: 
 
     # Resampling a whole layer's residual is far outside the range a gradient at the clean point
     # describes; averaging along the path back to it is what recovers the effect.
-    exact = _run(model, _gradient_config(PatchingMethodType.EXACT))
-    attribution = _run(model, _gradient_config(PatchingMethodType.ATTRIBUTION))
-    integrated = _run(model, _gradient_config(PatchingMethodType.INTEGRATED_GRADIENTS))
+    exact = _run(model, _gradient_config("exact"))
+    attribution = _run(model, _gradient_config("attribution"))
+    integrated = _run(model, _gradient_config("integrated_gradients"))
 
     assert abs(integrated - exact) < abs(attribution - exact)
 
@@ -893,30 +905,32 @@ def test_a_gradient_method_runs_the_model_once_however_large_the_index(model: Ho
     )
 
     passes = {}
-    for method, steps in (
-        (PatchingMethodType.EXACT, 10),
-        (PatchingMethodType.ATTRIBUTION, 10),
-        (PatchingMethodType.INTEGRATED_GRADIENTS, 4),
+    for method in (
+        EXACT,
+        PatchingMethodConfig(type="attribution"),
+        IntegratedGradientsConfig(type="integrated_gradients", interpolation_steps=4),
     ):
-        config = _patch_config(element, config_id=method.value)
-        config.method, config.interpolation_steps = method, steps
-        config.metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]}
+        config = replace(
+            _patch_config(element, config_id=method.type),
+            method=method,
+            metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]},
+        )
         calls.clear()
         collector = _collect(model, config)
-        passes[method] = len(calls)
+        passes[method.type] = len(calls)
         assert len(collector.result) == model.cfg.n_layers
 
     # One patched run per row for the exact method; one pass whatever the index holds for a single
     # gradient, and one per interpolation step for the integrated one.
-    assert passes[PatchingMethodType.EXACT] == model.cfg.n_layers
-    assert passes[PatchingMethodType.ATTRIBUTION] == 1
-    assert passes[PatchingMethodType.INTEGRATED_GRADIENTS] == 4
+    assert passes == {"exact": model.cfg.n_layers, "attribution": 1, "integrated_gradients": 4}
 
 
 def test_integrated_gradients_needs_a_source_run_to_interpolate_towards(model: HookedTransformer) -> None:
-    config = _last_layer_resid_zero_ablation_config()
-    config.method = PatchingMethodType.INTEGRATED_GRADIENTS
-    config.metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]}
+    config = replace(
+        _last_layer_resid_zero_ablation_config(),
+        method=IntegratedGradientsConfig(type="integrated_gradients"),
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]},
+    )
 
     with pytest.raises(ValueError, match="needs a source prompt"):
         Patcher(model).apply(
@@ -927,18 +941,30 @@ def test_integrated_gradients_needs_a_source_run_to_interpolate_towards(model: H
 
 def test_integrated_gradients_needs_the_two_prompts_to_line_up(model: HookedTransformer) -> None:
     # The interpolation runs position by position, so a shorter source prompt has nowhere to land.
-    config = _gradient_config(PatchingMethodType.INTEGRATED_GRADIENTS)
+    config = _gradient_config("integrated_gradients")
 
     with pytest.raises(ValueError, match="same length"):
         Patcher(model).apply(PatchingInput(config, "Paris", TARGET_PROMPT), verbose=False)
 
 
-def test_a_patching_method_that_is_not_known_raises(model: HookedTransformer) -> None:
-    config = _last_layer_resid_patch_config()
-    config.method = "guesswork"
-
-    with pytest.raises(ValueError, match="Unknown patching method"):
-        Patcher(model).apply(PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), verbose=False)
+@pytest.mark.parametrize(
+    ("method", "message"),
+    [
+        ("guesswork", "Unknown patching method: guesswork"),
+        # The interpolation steps are the integrated gradients' field; attribution takes none.
+        (
+            {"type": "attribution", "interpolation_steps": 4},
+            r"Unknown keys for PatchingMethodConfig: \['interpolation_steps'\]",
+        ),
+        ({"type": "integrated_gradients", "interpolation_steps": 0}, "interpolation_steps must be at least 1, got 0"),
+        ({"interpolation_steps": 4}, r"Missing required keys for PatchingMethodConfig: \['type'\]"),
+    ],
+)
+def test_a_method_or_method_config_that_does_not_fit_is_rejected_as_the_config_is_read(
+    config_from_yaml, method: str | dict, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        config_from_yaml(PatchingConfig, "unfit", _patch_yaml(method=method))
 
 
 # --------------------------------------------------------------------------------------------------
@@ -964,6 +990,7 @@ def _explicit_patch_config(
     return PatchingConfig(
         config_id="explicit_patch",
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.NORMALIZED]},
+        method=EXACT,
         patch=[
             SinglePatchingConfig(
                 source=_explicit_element(source_coordinates, activation),
@@ -1102,6 +1129,7 @@ def test_two_sources_differing_only_in_activation_keep_their_own_metric(model: H
     config = PatchingConfig(
         config_id="same_coordinate_two_activations",
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        method=EXACT,
         patch=[SinglePatchingConfig(source=source, target=target)],
     )
     patching_input = PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT)
@@ -1137,6 +1165,7 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
             {
                 "last_layer_resid_patch": {
                     "metric": {"logit_diff": ["absolute"]},
+                    "method": "exact",
                     "patch": [{"source": element, "target": element}],
                 }
             }
@@ -1173,7 +1202,7 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> No
     saved_config = json.loads(config_path.read_text())
     assert saved_config["config_id"] == "last_layer_resid_patch"
     assert saved_config["metric"] == {"logit_diff": ["absolute"]}
-    assert saved_config["method"] == "exact"
+    assert saved_config["method"] == {"type": "exact"}
     assert len(saved_config["patch"]) == 1
     assert saved_config["patch"][0]["source"]["type"] == "replace"
     assert saved_config["patch"][0]["target"]["type"] == "replace"
@@ -1202,6 +1231,7 @@ def _gaussian_noise_config() -> PatchingConfig:
     return PatchingConfig(
         config_id="gaussian_noise",
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        method=EXACT,
         patch=[SinglePatchingConfig(source=source, target=target)],
     )
 
@@ -1246,6 +1276,7 @@ def test_a_batched_run_scores_what_an_unbatched_one_does(model: HookedTransforme
 
     config = PatchingConfig(
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        method=EXACT,
         patch=[SinglePatchingConfig(source=element(source_type), target=element(PatchingType.REPLACE))],
     )
 
@@ -1276,12 +1307,14 @@ def test_a_one_row_element_is_patched_into_every_row_of_a_batch(model: HookedTra
     )
     metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]}
     alone = _collect(
-        model, PatchingConfig(metric=metric, patch=[SinglePatchingConfig(source=companion, target=companion)])
+        model,
+        PatchingConfig(metric=metric, method=EXACT, patch=[SinglePatchingConfig(source=companion, target=companion)]),
     )
     together = _batched(
         model,
         PatchingConfig(
             metric=metric,
+            method=EXACT,
             patch=[
                 SinglePatchingConfig(source=sweep, target=sweep),
                 SinglePatchingConfig(source=companion, target=companion),
@@ -1320,6 +1353,7 @@ def test_a_patching_type_that_is_not_known_raises(model: HookedTransformer, elem
     config = PatchingConfig(
         config_id="unknown_strategy",
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        method=EXACT,
         patch=[SinglePatchingConfig(source=source, target=target)],
     )
 
@@ -1352,19 +1386,24 @@ def test_a_metric_comparison_that_is_not_known_raises(model: HookedTransformer) 
             {"metric": {PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE, MetricComparison.ABSOLUTE]}},
             "logit_diff names absolute more than once",
         ),
-        ({"interpolation_steps": 0}, "interpolation_steps"),
     ],
 )
 def test_a_config_that_asks_for_nothing_measurable_is_rejected(overrides: dict, message: str) -> None:
     settings = {
         "config_id": "broken",
         "metric": {PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        "method": EXACT,
         "patch": [],
         **overrides,
     }
 
     with pytest.raises(ValueError, match=message):
         PatchingConfig(**settings)
+
+
+def test_integrated_gradients_takes_at_least_one_step() -> None:
+    with pytest.raises(ValueError, match="interpolation_steps must be at least 1, got 0"):
+        IntegratedGradientsConfig(type="integrated_gradients", interpolation_steps=0)
 
 
 def test_a_prepared_input_moves_to_a_device(model: HookedTransformer) -> None:
@@ -1430,6 +1469,7 @@ ELEMENT_YAML = {"activation": "resid.post", "location": ["layer"], "filter": [{"
 def _patch_yaml(**overrides) -> dict:
     return {
         "metric": {"logit_diff": ["absolute"]},
+        "method": "exact",
         "patch": [{"source": ELEMENT_YAML, "target": ELEMENT_YAML}],
         **overrides,
     }
@@ -1440,11 +1480,12 @@ def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model: HookedTran
     element = _last_layer_resid_element()
     in_code = PatchingConfig(
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        method=EXACT,
         patch=[SinglePatchingConfig(source=element, target=element)],
     )
 
     assert from_file.metric == {PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]}
-    assert from_file.method is PatchingMethodType.EXACT
+    assert from_file.method == EXACT
     assert from_file.patch[0].source.activation is ModelLayerLocation.RESIDUAL_POST
     assert from_file.patch[0].source.location == [ModelLocation.LAYER]
     assert from_file.patch[0].source.type is PatchingType.REPLACE
@@ -1464,8 +1505,7 @@ def test_a_yaml_config_can_give_each_metric_its_own_comparisons(config_from_yaml
         "attributed",
         _patch_yaml(
             metric={"logit_diff": ["normalized", "absolute"], "kl_divergence": ["indirect_effect"]},
-            method="integrated_gradients",
-            interpolation_steps=4,
+            method={"type": "integrated_gradients", "interpolation_steps": 4},
         ),
     )
 
@@ -1473,8 +1513,7 @@ def test_a_yaml_config_can_give_each_metric_its_own_comparisons(config_from_yaml
         PatchingMetric.LOGIT_DIFF: [MetricComparison.NORMALIZED, MetricComparison.ABSOLUTE],
         PatchingMetric.KL_DIVERGENCE: [MetricComparison.INDIRECT_EFFECT],
     }
-    assert config.method is PatchingMethodType.INTEGRATED_GRADIENTS
-    assert config.interpolation_steps == 4
+    assert config.method == IntegratedGradientsConfig(type="integrated_gradients", interpolation_steps=4)
     assert sorted(config.metric_columns()) == sorted(
         ["normalized_logit_diff", "logit_diff", "indirect_effect_kl_divergence"]
     )
@@ -1489,6 +1528,7 @@ def test_the_columns_follow_the_order_the_yaml_names_them(tmp_path: Path) -> Non
         "  metric:\n"
         "    kl_divergence: [indirect_effect]\n"
         "    logit_diff: [normalized, absolute]\n"
+        "  method: exact\n"
         "  patch: []\n"
     )
 
@@ -1504,6 +1544,7 @@ def test_a_source_and_a_target_may_alias_the_same_yaml_anchor(model: HookedTrans
     config_yaml.write_text(
         "anchored:\n"
         "  metric: {logit_diff: [absolute]}\n"
+        "  method: exact\n"
         "  patch:\n"
         "    - source: &element\n"
         "        activation: resid.post\n"
@@ -1526,6 +1567,7 @@ def test_the_omitted_keys_of_an_element_fall_back_to_their_defaults(model: Hooke
     # A source that names nothing but its type produces zeros — the zero-ablation shape, from YAML.
     raw = {
         "metric": {"logit_diff": ["absolute"]},
+        "method": "exact",
         "patch": [{"source": {"type": "value_replace"}, "target": ELEMENT_YAML}],
     }
     config = config_from_yaml(PatchingConfig, "zero_ablation", raw)
@@ -1545,7 +1587,7 @@ def test_an_exclusion_term_is_deserialized_into_its_own_filter(model: HookedTran
     config = config_from_yaml(
         PatchingConfig,
         "filtered",
-        {"metric": {"logit_diff": ["absolute"]}, "patch": [{"source": element, "target": element}]},
+        _patch_yaml(patch=[{"source": element, "target": element}]),
     )
 
     assert config.patch[0].source.filter == Filter(
@@ -1564,21 +1606,22 @@ def test_an_exclusion_term_is_deserialized_into_its_own_filter(model: HookedTran
     [
         (_patch_yaml(typ="replace"), "Unknown keys for PatchingConfig.*typ"),
         (
-            {
-                "metric": {"logit_diff": ["absolute"]},
-                "patch": [{"source": {"activation": "resid.post"}, "target": ELEMENT_YAML}],
-            },
+            _patch_yaml(patch=[{"source": {"activation": "resid.post"}, "target": ELEMENT_YAML}]),
             "Missing required keys for PatchingElementConfig.*type",
         ),
         (
-            {"metric": {"logit_diff": ["absolute"]}, "patch": [{"source": "replace", "target": ELEMENT_YAML}]},
+            _patch_yaml(patch=[{"source": "replace", "target": ELEMENT_YAML}]),
             "Expected a mapping for PatchingElementConfig",
         ),
-        ({"patch": []}, "Missing required keys for PatchingConfig.*metric"),
+        ({"method": "exact", "patch": []}, r"Missing required keys for PatchingConfig: \['metric'\]"),
+        (
+            {"metric": {"logit_diff": ["absolute"]}, "patch": []},
+            r"Missing required keys for PatchingConfig: \['method'\]",
+        ),
         (_patch_yaml(metric={"accuracy": ["absolute"]}), "accuracy"),
         (_patch_yaml(metric={"logit_diff": ["ratio"]}), "ratio"),
         (_patch_yaml(metric=["logit_diff"]), "Expected a mapping"),
-        (_patch_yaml(method="guesswork"), "guesswork"),
+        (_patch_yaml(interpolation_steps=4), "Unknown keys for PatchingConfig.*interpolation_steps"),
     ],
 )
 def test_a_malformed_patching_config_is_rejected_when_it_is_loaded(config_from_yaml, raw, message) -> None:
@@ -1649,10 +1692,11 @@ def test_a_plan_counts_the_patch_runs_and_their_batches(model: HookedTransformer
 def test_a_plan_counts_a_gradient_runs_passes_instead_of_its_batches(
     model: HookedTransformer, monkeypatch, tmp_path: Path
 ) -> None:
-    config = _every_layer_patch_config()
-    config.metric = dict.fromkeys((PatchingMetric.LOGIT_DIFF, PatchingMetric.PROBABILITY), [MetricComparison.ABSOLUTE])
-    config.method = PatchingMethodType.INTEGRATED_GRADIENTS
-    config.interpolation_steps = 3
+    config = replace(
+        _every_layer_patch_config(),
+        metric=dict.fromkeys((PatchingMetric.LOGIT_DIFF, PatchingMetric.PROBABILITY), [MetricComparison.ABSOLUTE]),
+        method=IntegratedGradientsConfig(type="integrated_gradients", interpolation_steps=3),
+    )
     patching_input = PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT)
 
     forbid_model_runs(monkeypatch, model)
@@ -1722,6 +1766,7 @@ def _layer_position_config(
     return PatchingConfig(
         config_id="sweep",
         metric={metric: [comparison]},
+        method=EXACT,
         patch=[SinglePatchingConfig(source=element, target=element)],
     )
 
@@ -1743,16 +1788,18 @@ def test_a_patching_run_writes_an_interactive_result_page(model: HookedTransform
     figure = _draw(model, _layer_position_config(), save_dir)
 
     assert "Plotly.newPlot" in (save_dir / "result.html").read_text(encoding="utf-8")
-    assert figure.title.startswith("Patching — logit_diff (config: sweep)")
+    assert figure.title.startswith("Patching - exact · logit_diff (config: sweep)")
 
 
 def test_a_gradient_run_names_its_method_on_the_page(model: HookedTransformer, tmp_path: Path) -> None:
-    config = _layer_position_config(comparison=MetricComparison.INDIRECT_EFFECT)
-    config.method = PatchingMethodType.ATTRIBUTION
+    config = replace(
+        _layer_position_config(comparison=MetricComparison.INDIRECT_EFFECT),
+        method=PatchingMethodConfig(type="attribution"),
+    )
 
     figure = _draw(model, config, tmp_path / "attributed")
 
-    assert figure.title.startswith("Patching — attribution indirect_effect_logit_diff (config: sweep)")
+    assert figure.title.startswith("Patching - attribution · indirect_effect_logit_diff (config: sweep)")
     # Nothing was run patched, so no cell has a generation to name.
     assert not any("generation:" in hover for row in figure.trace["hovertext"] for hover in row)
 
@@ -1777,7 +1824,7 @@ def test_every_column_the_config_names_is_drawn_as_its_own_plot(model: HookedTra
     assert len(figures) == len(config.metric_columns())
     for figure, column in zip(figures, config.metric_columns(), strict=True):
         assert figure.trace["colorbar"]["title"]["text"] == column
-        assert figure.title.startswith(f"Patching — {column} (config: sweep)")
+        assert figure.title.startswith(f"Patching - exact · {column} (config: sweep)")
         assert [value for row in figure.trace["z"] for value in row] == pytest.approx(result[column].tolist())
 
 
@@ -1950,7 +1997,7 @@ def test_a_single_coordinate_run_still_writes_a_page(model: HookedTransformer, t
 
     assert figure.kind == "bar"
     assert len(figure.trace["y"]) == 1
-    assert figure.title.startswith("Patching — normalized_logit_diff")
+    assert figure.title.startswith("Patching - exact · normalized_logit_diff")
 
 
 def test_a_page_for_a_run_without_a_source_prompt_names_only_the_target(
@@ -1983,6 +2030,7 @@ def test_a_grouped_location_does_not_break_the_page(model: HookedTransformer, tm
     )
     config = PatchingConfig(
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        method=EXACT,
         patch=[SinglePatchingConfig(source=element, target=element)],
     )
 

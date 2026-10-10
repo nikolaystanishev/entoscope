@@ -4,18 +4,20 @@ import torch
 from tqdm import tqdm
 
 from intex.patching.input import PatchingInput
-from intex.patching.method.patching import AbstractPatchingMethod, RowResult
+from intex.patching.method.patching import AbstractPatchingMethod, PatchingMethodConfigT, RowResult
 from intex.patching.metric import AbstractMetric
 from intex.patching.processor import HookedPatchProcessor
 from intex.util.collections import batch_generator, zip_fill
 
 
-class ExactPatchingMethod(AbstractPatchingMethod):
+class ExactPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
     """Patch and run the model, once per index row.
 
     The reference the other methods approximate: nothing is assumed about how the model responds
     to the intervention, at the price of a forward pass per row.
     """
+
+    batched = True
 
     def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[RowResult]:
         rows = list(zip_fill(*patching_input.index))

@@ -1,4 +1,3 @@
-import json
 from collections.abc import Iterable, Iterator
 from itertools import combinations, repeat
 from typing import Any, TypeVar
@@ -26,10 +25,6 @@ def zip_fill(*args: Any) -> Iterable:
         *[arg if len(arg) == max_len else repeat(list(arg)[0] if len(arg) != 0 else None, max_len) for arg in args],
         strict=True,
     )
-
-
-def to_dict(obj):
-    return json.loads(json.dumps(obj, default=lambda o: o.__dict__))
 
 
 T = TypeVar("T")

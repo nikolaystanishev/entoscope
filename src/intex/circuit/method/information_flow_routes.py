@@ -19,6 +19,7 @@ non-commercial purposes only.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from enum import Enum
 
 import einops
@@ -27,6 +28,7 @@ import torch
 from jaxtyping import Float, Int
 from transformer_lens import ActivationCache
 
+from intex.circuit.config import CircuitMethodConfig
 from intex.circuit.method.circuit import AbstractCircuitMethod, PromptCircuit
 from intex.circuit.vendor import contributions
 from intex.model import Model
@@ -271,7 +273,30 @@ def prune_routes_to_predictions(
     return nx.MultiDiGraph(search.edge_subgraph(edges).reverse(copy=True))
 
 
-class InformationFlowRoutes(AbstractCircuitMethod):
+@dataclass(kw_only=True)
+class InformationFlowRoutesConfig(CircuitMethodConfig):
+    """The method config of Information Flow Routes.
+
+    threshold: Renormalizing edge threshold applied to contributions while building the
+        full graph. Contributions below it are dropped and the rest renormalized so the
+        incoming weights of each representation still sum to 1 (see the Information Flow
+        Routes paper). ``0.0`` keeps every edge.
+    path_threshold: Threshold used when pruning the routes-to-prediction subgraph. Defaults
+        to ``threshold`` when ``None``.
+    prediction_positions: Token positions whose prediction the routes are traced back from.
+        Negative indices count from the end of each prompt. Defaults to ``[-1]`` (the
+        next-token prediction).
+    """
+
+    threshold: float = 0.04
+    path_threshold: float | None = None
+    prediction_positions: list[int] = field(default_factory=lambda: [-1])
+
+    def resolved_path_threshold(self) -> float:
+        return self.threshold if self.path_threshold is None else self.path_threshold
+
+
+class InformationFlowRoutes(AbstractCircuitMethod[InformationFlowRoutesConfig]):
     @torch.no_grad()
     def build(self, prompt: str, tokens: Int[torch.Tensor, "batch pos"]) -> PromptCircuit:
         _, cache = self.model.run_with_cache(tokens)
@@ -279,12 +304,12 @@ class InformationFlowRoutes(AbstractCircuitMethod):
         n_tokens = tokens.shape[1]
         str_tokens = str_token_labels(self.model, tokens)
 
-        graph = build_information_flow_graph(self.model, cache, n_tokens, str_tokens, self.config.threshold)
+        graph = build_information_flow_graph(self.model, cache, n_tokens, str_tokens, self.method_config.threshold)
         routes = prune_routes_to_predictions(
             graph,
             self.model.cfg.n_layers,
-            resolve_positions(self.config.prediction_positions, n_tokens),
-            self.config.resolved_path_threshold(),
+            resolve_positions(self.method_config.prediction_positions, n_tokens),
+            self.method_config.resolved_path_threshold(),
         )
 
         return PromptCircuit(prompt=prompt, str_tokens=str_tokens, graph=graph, routes=routes)

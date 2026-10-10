@@ -1,17 +1,21 @@
 import math
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import torch
 from jaxtyping import Float
 
-from intex.lens.input import LensInput
-from intex.lens.method.lens import AbstractLensMethod
+from intex.lens.method.lens import AbstractLensMethod, LensMethodConfigT
 from intex.model import Model
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.model.index import IndexElement
 from intex.model.weight import attention_out_weight, mlp_weight
 
+if TYPE_CHECKING:  # ``intex.lens.input`` looks the lens up through the factory, which imports this module.
+    from intex.lens.input import LensInput
+
 _KEY_VALUE_ACTIVATIONS = (ModelLayerLocation.ATTENTION_K, ModelLayerLocation.ATTENTION_V)
+_QUERY_KEY_ACTIVATIONS = (ModelLayerLocation.ATTENTION_Q, ModelLayerLocation.ATTENTION_K)
 
 
 def _attention_scale(model: Model) -> float:
@@ -60,10 +64,17 @@ def _head_lift(
     return torch.tensordot(activation, weight, dims=weight.ndim - 1)
 
 
-class LogitLens(AbstractLensMethod):
+class LogitLens(AbstractLensMethod[LensMethodConfigT]):
+    """Reads an element out the way the model reads out its final residual stream.
+
+    A residual-stream state is unembedded as it is. An MLP-hidden or attention head activation is
+    first written into the residual stream through the weight that writes it there, and a query or
+    key is read against the embedding through the other side of its head.
+    """
+
     def extract(
         self,
-        lens_input: LensInput,
+        lens_input: "LensInput",
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "..."]:
         return lens_input.cache[index.transformer_activation()][index.slices()]
@@ -74,6 +85,8 @@ class LogitLens(AbstractLensMethod):
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_vocab"]:
         with torch.no_grad():
+            if index.activation() in _QUERY_KEY_ACTIVATIONS:
+                return self._query_key_logits(activation, index)
             residual = self._to_final_residual(self._to_residual(activation, index), index)
             return self.model.ln_final(residual) @ self.model.W_U + self.model.b_U
 
@@ -82,18 +95,36 @@ class LogitLens(AbstractLensMethod):
         activation: Float[torch.Tensor, "..."],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_model"]:
-        return activation
+        match index.activation():
+            case (
+                ModelLayerLocation.EMBEDDING
+                | ModelLayerLocation.RESIDUAL_PRE
+                | ModelLayerLocation.RESIDUAL_MID
+                | ModelLayerLocation.RESIDUAL_POST
+                | ModelLayerLocation.ATTENTION_OUT
+                | ModelLayerLocation.MLP_OUT
+            ):
+                return activation
+            case ModelLayerLocation.MLP_PRE | ModelLayerLocation.MLP_PRE_LINEAR | ModelLayerLocation.MLP_POST:
+                return self._mlp_to_residual(activation, index)
+            case ModelLayerLocation.ATTENTION_V | ModelLayerLocation.ATTENTION_Z:
+                layer = _attention_layer(self.model, index)
+                return _head_lift(activation, attention_out_weight(self.model, layer), index)
+            case unprojectable:
+                raise ValueError(
+                    f"{type(self).__name__} cannot project {unprojectable.value}: only residual-stream, MLP-hidden "
+                    "and attention head activations map onto the vocabulary"
+                )
 
     def _to_final_residual(
         self,
         residual: Float[torch.Tensor, "... d_model"],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_model"]:
+        """Where a lens moves the residual stream before the model's own read-out (the tuned lens translates it)."""
         return residual
 
-
-class MLPLogitLens(LogitLens):
-    def _to_residual(
+    def _mlp_to_residual(
         self,
         activation: Float[torch.Tensor, "..."],
         index: IndexElement[ModelLocatorConfig],
@@ -108,26 +139,13 @@ class MLPLogitLens(LogitLens):
             return activation @ w_out[list(neuron)]
         return activation.unsqueeze(-1) * w_out[neuron]
 
-
-class AttentionLogitLens(LogitLens):
-    def _to_residual(
-        self,
-        activation: Float[torch.Tensor, "..."],
-        index: IndexElement[ModelLocatorConfig],
-    ) -> Float[torch.Tensor, "... d_model"]:
-        layer = _attention_layer(self.model, index)
-        return _head_lift(activation, attention_out_weight(self.model, layer), index)
-
-
-class AttentionQKLogitLens(LogitLens):
-    def project(
+    def _query_key_logits(
         self,
         activation: Float[torch.Tensor, "..."],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_vocab"]:
-        with torch.no_grad():
-            layer = _attention_layer(self.model, index)
-            attention = self.model.blocks[layer].attn
-            weight = attention.W_K if index.activation() is ModelLayerLocation.ATTENTION_Q else attention.W_Q
-            embedding = _head_lift(activation, weight.transpose(-1, -2), index)
-            return embedding @ self.model.W_E.T / _attention_scale(self.model)
+        layer = _attention_layer(self.model, index)
+        attention = self.model.blocks[layer].attn
+        weight = attention.W_K if index.activation() is ModelLayerLocation.ATTENTION_Q else attention.W_Q
+        embedding = _head_lift(activation, weight.transpose(-1, -2), index)
+        return embedding @ self.model.W_E.T / _attention_scale(self.model)

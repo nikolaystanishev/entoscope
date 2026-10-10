@@ -23,6 +23,8 @@ class Prober(Operator):
         return_collector: bool = False,
         verbose: bool = True,
     ) -> ProbeCollector | None:
+        # Built as every location builds its own, so a probe that cannot be built fails before the forward passes.
+        ProbeMethodFactory.create(probe_input.config, self.model)
         probe_input.prepare(self.model)
         collector = self.collector_class(probe_input, self.model, save_dir)
         collector.prepare()
@@ -47,6 +49,8 @@ class Prober(Operator):
         return None
 
     def plan(self, probe_input: ProbeInput, save_dir: str | None = None, verbose: bool = True) -> OperationPlan:
+        # Built as the run builds them, so a plan fails wherever its run would.
+        ProbeMethodFactory.create(probe_input.config, self.model)
         probe_input.prepare_index(self.model)
 
         prompts = [("positive", prompt) for prompt in probe_input.positive_prompts]
@@ -54,6 +58,7 @@ class Prober(Operator):
 
         plan = OperationPlan(
             operation="Prober",
+            method=probe_input.config.method.type,
             config=probe_input.config,
             steps=len(probe_input.index),
             steps_label="probe",

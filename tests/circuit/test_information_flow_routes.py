@@ -7,18 +7,21 @@ import pytest
 import torch
 
 from intex.circuit.collector import CircuitCollector
-from intex.circuit.config import CircuitConfig, CircuitMethodType
+from intex.circuit.config import CircuitConfig
 from intex.circuit.discoverer import CircuitDiscoverer
 from intex.circuit.input import CircuitInput
 from intex.circuit.method.circuit import PromptCircuit
-from intex.circuit.method.information_flow_routes import decomposed_attn
+from intex.circuit.method.factory import CircuitMethodFactory
+from intex.circuit.method.information_flow_routes import InformationFlowRoutesConfig, decomposed_attn
 from intex.model.cache import CachedModel
 
 PROMPT = "The capital of France is"
 
 
 def circuit_config(**overrides) -> CircuitConfig:
-    return CircuitConfig(config_id="ifr", type=CircuitMethodType.INFORMATION_FLOW_ROUTES, **overrides)
+    return CircuitConfig(
+        config_id="ifr", method=InformationFlowRoutesConfig(type="information_flow_routes", **overrides)
+    )
 
 
 def discover(model, prompts=(PROMPT,), config: CircuitConfig | None = None) -> list[PromptCircuit]:
@@ -166,14 +169,6 @@ def test_a_circuit_without_edges_is_still_rendered(model, tmp_path):
     assert "No edges above threshold" in (save_dir / "circuit_0.html").read_text()
 
 
-def test_a_circuit_method_that_is_not_known_raises(model):
-    config = circuit_config()
-    config.type = "acdc"
-
-    with pytest.raises(ValueError, match="Unknown circuit method type"):
-        discover(model, config=config)
-
-
 def test_grouped_query_attention_gets_an_edge_per_query_head(gqa_model):
     # Fewer value heads than query heads, and an architecture that carries no attention bias at all:
     # the cached values are shared by a group of heads, and each of those heads is still its own edge.
@@ -204,18 +199,26 @@ def test_parallel_attention_and_mlp_is_rejected(parallel_model):
 # Configuration
 # --------------------------------------------------------------------------------------------------
 def test_a_yaml_config_runs_with_its_defaults(model, config_from_yaml):
-    config = config_from_yaml(CircuitConfig, "my_circuit", {"type": "information_flow_routes"})
+    config = config_from_yaml(CircuitConfig, "my_circuit", {"method": "information_flow_routes"})
+    method_config = CircuitMethodFactory.create(config, model).method_config
 
-    assert (config.threshold, config.path_threshold, config.prediction_positions) == (0.04, None, [-1])
-    assert config.resolved_path_threshold() == 0.04  # the routes fall back to the graph's threshold
+    assert method_config == InformationFlowRoutesConfig(
+        type="information_flow_routes", threshold=0.04, path_threshold=None, prediction_positions=[-1]
+    )
+    assert method_config.resolved_path_threshold() == 0.04  # the routes fall back to the graph's threshold
     assert discover(model, config=config)[0].graph.number_of_edges() > 0
 
 
 def test_a_yaml_config_carries_its_explicit_values_into_the_run(model, config_from_yaml):
-    raw = {"type": "information_flow_routes", "threshold": 0.1, "path_threshold": 0.2, "prediction_positions": [-1, 0]}
-    config = config_from_yaml(CircuitConfig, "my_circuit", raw)
+    method = {
+        "type": "information_flow_routes",
+        "threshold": 0.1,
+        "path_threshold": 0.2,
+        "prediction_positions": [-1, 0],
+    }
+    config = config_from_yaml(CircuitConfig, "my_circuit", {"method": method})
 
-    assert config.resolved_path_threshold() == 0.2
+    assert CircuitMethodFactory.create(config, model).method_config.resolved_path_threshold() == 0.2
     loaded = discover(model, config=config)[0]
     without_path_pruning = discover(model, config=circuit_config(threshold=0.1, prediction_positions=[-1, 0]))[0]
 
@@ -225,18 +228,23 @@ def test_a_yaml_config_carries_its_explicit_values_into_the_run(model, config_fr
 
 def test_a_whole_number_threshold_is_taken_as_it_is_written(model, config_from_yaml):
     # YAML has no float literal here: the 1 lands in a float field unconverted, and the run uses it.
-    config = config_from_yaml(CircuitConfig, "my_circuit", {"type": "information_flow_routes", "threshold": 1})
+    raw = {"method": {"type": "information_flow_routes", "threshold": 1}}
+    config = config_from_yaml(CircuitConfig, "my_circuit", raw)
 
-    assert config.threshold == 1
+    assert CircuitMethodFactory.create(config, model).method_config.threshold == 1
     assert discover(model, config=config)[0].graph.number_of_edges() == 0
 
 
 @pytest.mark.parametrize(
     ("raw", "message"),
     [
-        ({"type": "acdc"}, "acdc"),
-        ({"threshold": 0.04}, "Missing required keys for CircuitConfig.*type"),
-        ({"type": "information_flow_routes", "bogus": 1}, "Unknown keys for CircuitConfig.*bogus"),
+        ({}, "Missing required keys for CircuitConfig.*method"),
+        ({"method": "information_flow_routes", "threshold": 0.04}, "Unknown keys for CircuitConfig.*threshold"),
+        ({"method": "acdc"}, "Unknown circuit method: acdc"),
+        (
+            {"method": {"type": "information_flow_routes", "bogus": 1}},
+            r"Unknown keys for InformationFlowRoutesConfig: \['bogus'\]",
+        ),
     ],
 )
 def test_a_malformed_circuit_config_is_rejected_when_it_is_loaded(config_from_yaml, raw, message):

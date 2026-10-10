@@ -2,7 +2,6 @@ from intex.model import Model
 from intex.operation.operator import Operator
 from intex.operation.plan import OperationPlan
 from intex.patching.collector import PatchingCollector, PatchingVisualizationCollector
-from intex.patching.config import PatchingMethodType
 from intex.patching.input import PatchingInput
 from intex.patching.method.factory import PatchingMethodFactory
 from intex.util.collections import batch_generator, zip_fill
@@ -34,11 +33,12 @@ class Patcher(Operator):
         return None
 
     def plan(self, patching_input: PatchingInput, save_dir: str | None = None, verbose: bool = True) -> OperationPlan:
+        # Built as the run builds it, so a plan fails wherever its run would.
+        method = PatchingMethodFactory.create(patching_input.config, self.model, self.batch_size)
         patching_input.prepare_index(self.model)
 
         runs = len(list(zip_fill(*patching_input.index))) if patching_input.index else 0
         batches = len(list(batch_generator(list(range(runs)), self.batch_size)))
-        method = PatchingMethodFactory.create(patching_input.config, self.model, self.batch_size)
         forward_passes, backward_passes = method.passes(runs, batches)
 
         prompts = [("target", patching_input.target_prompt, patching_input.target_tokens.shape[1])]
@@ -47,13 +47,14 @@ class Patcher(Operator):
 
         plan = OperationPlan(
             operation="Patcher",
+            method=patching_input.config.method.type,
             config=patching_input.config,
             steps=runs,
             steps_label="patch run",
             # The method's own passes, on top of the cached run the input prepares per prompt.
             forward_passes=forward_passes + len(prompts),
             backward_passes=backward_passes,
-            batches=batches if patching_input.config.method is PatchingMethodType.EXACT else None,
+            batches=batches if method.batched else None,
             index=[idx.to_df() for idx in patching_input.index],
             prompts=prompts,
             activations=patching_input.activation_names(),
@@ -66,11 +67,12 @@ class Patcher(Operator):
         return plan
 
     def _patch(self, patching_input: PatchingInput, save_dir: str | None, verbose: bool = True) -> PatchingCollector:
+        # Built before the cached runs, so a method that cannot be built fails before the run does any work.
+        method = PatchingMethodFactory.create(patching_input.config, self.model, self.batch_size)
         patching_input.prepare(self.model)
         collector = self.collector_class(patching_input, self.model, save_dir)
         collector.prepare()
 
-        method = PatchingMethodFactory.create(patching_input.config, self.model, self.batch_size)
         for row in method.scores(patching_input, verbose):
             collector.collect(row)
 

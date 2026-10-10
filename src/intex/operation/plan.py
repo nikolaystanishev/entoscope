@@ -33,6 +33,7 @@ def _plural(count: int, noun: str) -> str:
 @dataclass
 class OperationPlan:
     operation: str
+    method: str
     config: AbstractConfig
     steps: int
     steps_label: str
@@ -66,9 +67,7 @@ class OperationPlan:
         return "\n".join(lines)
 
     def _title(self) -> str:
-        # A patching config names no single type — its elements carry their own — so the kind is left out.
-        kind = getattr(getattr(self.config, "type", None), "value", None)
-        title = f"{self.operation} plan — {kind}" if kind else f"{self.operation} plan"
+        title = f"{self.operation} plan - {self.method}"
         return f"{title} (config: {self.config.config_id})" if self.config.config_id else title
 
     def _work(self) -> str:
