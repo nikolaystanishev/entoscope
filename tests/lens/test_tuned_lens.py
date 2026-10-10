@@ -297,4 +297,4 @@ def test_a_plan_reads_no_translators(model, monkeypatch):
 
     plan = Lens(model).plan(LensInput(config, PROMPT), verbose=False)
 
-    assert plan.describe().splitlines()[0] == "Lens plan - tuned_lens"
+    assert plan.describe().splitlines()[:2] == ["Lens plan", "  method: tuned_lens"]

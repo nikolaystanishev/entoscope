@@ -1,6 +1,7 @@
 """The logit lens, run end to end: every row's top-k is checked against the projection it names."""
 
 import json
+import re
 import subprocess
 import sys
 
@@ -37,6 +38,9 @@ from .conftest import (
 LAYER_POSITION_GRID = dict(
     activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelLocation.LAYER, ModelLocation.POSITION]
 )
+
+# What intex's own handler puts before every message it writes to stderr.
+LOG_PREFIX = r"\[intex\] INFO \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} "
 
 LENS_YAML = {
     "my_lens": {
@@ -448,7 +452,10 @@ def test_the_lens_runs_from_an_experiment_script(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip().splitlines()[-1] == str(len(pd.read_csv(save_dir / "result.csv")))
+    # The script's own output alone on stdout; intex reports on stderr without any logging set up.
+    assert result.stdout.strip() == str(len(pd.read_csv(save_dir / "result.csv")))
+    saved = re.compile(LOG_PREFIX + re.escape(f"Results saved to {save_dir}"))
+    assert any(saved.fullmatch(line) for line in result.stderr.splitlines()), result.stderr
     assert (save_dir / "index.csv").exists()
     assert json.loads((save_dir / "config.json").read_text())["config_id"] == "my_lens"
 
@@ -553,7 +560,7 @@ def test_a_plan_prints_its_summary_and_its_index(model, config_from_yaml):
 
     described = str(Lens(model).plan(LensInput(config, PROMPT), verbose=False))
 
-    assert described.splitlines()[0] == "Lens plan - logit_lens (config: my_lens)"
+    assert described.splitlines()[:3] == ["Lens plan", "  method: logit_lens", "  config: my_lens"]
     assert f"{model.cfg.n_layers * model.to_tokens(PROMPT).shape[1]} elements" in described
     assert "1 forward pass" in described
     assert "writes: nothing (no save_dir)" in described
@@ -561,15 +568,16 @@ def test_a_plan_prints_its_summary_and_its_index(model, config_from_yaml):
     assert "resid.post" in described and "RESIDUAL_POST" not in described
 
 
-def test_a_plan_prints_itself_unless_it_is_silenced(model, capsys):
-    # Printing is the point of a dry run, so it is on by default; the plan comes back either way.
+def test_a_plan_logs_itself_unless_it_is_silenced(model, caplog):
+    # Reporting is the point of a dry run, so it is on by default; the plan comes back either way.
     lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT)
 
     plan = Lens(model).plan(lens_input)
 
-    assert capsys.readouterr().out == f"{plan}\n"
+    assert caplog.messages == [str(plan)]
+    caplog.clear()
     assert Lens(model).plan(lens_input, verbose=False) is not None
-    assert capsys.readouterr().out == ""
+    assert caplog.messages == []
 
 
 def test_a_long_index_is_truncated_when_it_is_printed(model):

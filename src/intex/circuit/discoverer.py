@@ -1,3 +1,5 @@
+import logging
+
 from tqdm import tqdm
 
 from intex.circuit.collector import CircuitCollector, CircuitVisualizationCollector
@@ -6,6 +8,8 @@ from intex.circuit.method.factory import CircuitMethodFactory
 from intex.model import Model
 from intex.operation.operator import Operator
 from intex.operation.plan import OperationPlan
+
+logger = logging.getLogger(__name__)
 
 
 class CircuitDiscoverer(Operator):
@@ -64,5 +68,5 @@ class CircuitDiscoverer(Operator):
         )
 
         if verbose:
-            print(plan)
+            logger.info("%s", plan)
         return plan

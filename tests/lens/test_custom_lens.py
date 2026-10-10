@@ -203,7 +203,7 @@ def test_a_plan_names_the_registered_lens(model, monkeypatch, config_from_yaml, 
 
     plan = Lens(model).plan(lens_input, verbose=False)
 
-    assert plan.describe().splitlines()[0] == "Lens plan - temperature_lens (config: warm)"
+    assert plan.describe().splitlines()[:3] == ["Lens plan", "  method: temperature_lens", "  config: warm"]
 
 
 def test_a_lens_naming_no_method_config_takes_no_fields(model, config_from_yaml, registries):

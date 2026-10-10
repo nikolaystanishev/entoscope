@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import logging
 import os
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, get_args, get_origin
 
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
 
 InputT = TypeVar("InputT", bound=OperationInput)
 FigureT = TypeVar("FigureT", bound="Figure")
+
+logger = logging.getLogger(__name__)
 
 
 class AbstractCollector(abc.ABC, Generic[InputT]):
@@ -74,7 +77,7 @@ class AbstractCollector(abc.ABC, Generic[InputT]):
         create_if_not_exists(self.save_dir)
         self._save_result(self.save_dir)
 
-        print(f"Results saved to {self.save_dir}")
+        logger.info("Results saved to %s", self.save_dir)
 
 
 class FrameCollector(AbstractCollector[InputT]):

@@ -48,7 +48,9 @@ class OperationPlan:
     outputs: list[str] = field(default_factory=list)
 
     def describe(self, max_rows: int = 100) -> str:
-        lines = [self._title()]
+        lines = [f"{self.operation} plan", f"  method: {self.method}"]
+        if self.config.config_id:
+            lines.append(f"  config: {self.config.config_id}")
         for label, prompt, n_tokens in self.prompts[:MAX_LISTED]:
             lines.append(f'  {label}: "{prompt}" ({_plural(n_tokens, "token")})')
         if len(self.prompts) > MAX_LISTED:
@@ -65,10 +67,6 @@ class OperationPlan:
             lines.append(textwrap.indent(_printable(index).to_string(index=False, max_rows=max_rows), "    "))
 
         return "\n".join(lines)
-
-    def _title(self) -> str:
-        title = f"{self.operation} plan - {self.method}"
-        return f"{title} (config: {self.config.config_id})" if self.config.config_id else title
 
     def _work(self) -> str:
         work = _plural(self.steps, self.steps_label)
