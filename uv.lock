@@ -1041,6 +1041,7 @@ dependencies = [
     { name = "transformer-lens", version = "2.15.4", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
     { name = "transformer-lens", version = "4.0.0a1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "tuned-lens" },
+    { name = "typing-extensions" },
 ]
 
 [package.dev-dependencies]
@@ -1067,6 +1068,7 @@ requires-dist = [
     { name = "transformer-lens", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'", specifier = ">=3.0.0" },
     { name = "transformer-lens", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = ">=2.15.4,<2.16" },
     { name = "tuned-lens", specifier = ">=0.2.0" },
+    { name = "typing-extensions", specifier = ">=4.12" },
 ]
 
 [package.metadata.requires-dev]

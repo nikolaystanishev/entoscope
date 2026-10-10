@@ -5,6 +5,7 @@ import re
 import types
 import typing
 from enum import Enum
+from pathlib import PurePath
 from typing import Any
 
 import yaml
@@ -53,12 +54,13 @@ def from_dict(cls: type, value: Any) -> Any:
     Values that are already of the target type pass through untouched, so raw shapes and
     code-built objects can mix freely. A ``from_config`` classmethod on the target type
     overrides the default handling (for fields whose config shape differs from their fields);
-    enums are constructed by value, and dataclasses recurse field-wise from a mapping —
-    strictly, so unknown or missing keys raise ``ValueError``. ``list``/``dict`` annotations
-    recurse into their elements (keys and values for dicts), ``dict`` subclasses construct
-    through the key/value types of their generic base, ``X | None`` unwraps to ``X``, and
-    anything else is returned as-is. The input is never mutated (YAML anchors may alias sub-mappings).
-    ``to_dict`` writes each of these shapes back, a ``to_config`` method standing in for ``from_config``.
+    enums are constructed by value, paths from their string, and dataclasses recurse field-wise
+    from a mapping — strictly, so unknown or missing keys raise ``ValueError``. ``list``/``tuple``/
+    ``set``/``dict`` annotations recurse into their elements (keys and values for dicts), ``dict``
+    subclasses construct through the key/value types of their generic base, ``X | None`` unwraps to
+    ``X``, and anything else is returned as-is. The input is never mutated (YAML anchors may alias
+    sub-mappings). ``to_dict`` writes each of these shapes back, a ``to_config`` method standing in for
+    ``from_config``.
     """
     if cls is Any:
         return value
@@ -73,16 +75,26 @@ def from_dict(cls: type, value: Any) -> Any:
             raise ValueError(f"Expected a list for {cls.__name__}, got {value!r}")
         (element_type,) = typing.get_args(cls) or (Any,)
         return [from_dict(element_type, element) for element in value]
+    if (origin or cls) is tuple:
+        return _tuple_from_dict(cls, value)
+    if (origin or cls) in {set, frozenset}:
+        if not isinstance(value, list | tuple | set | frozenset):
+            raise ValueError(f"Expected a list for {cls}, got {value!r}")
+        (element_type,) = typing.get_args(cls) or (Any,)
+        return (origin or cls)(from_dict(element_type, element) for element in value)
     if origin is dict:
         if not isinstance(value, dict):
             raise ValueError(f"Expected a mapping for {cls.__name__}, got {value!r}")
         key_type, value_type = typing.get_args(cls) or (Any, Any)
-        return {from_dict(key_type, key): from_dict(value_type, element) for key, element in value.items()}
-    if not isinstance(cls, type) or isinstance(value, cls):
+        return {_key_from_dict(key_type, key): from_dict(value_type, element) for key, element in value.items()}
+    # Any other generic alias (``type[X]``, ``Callable[...]``) has no raw shape of its own to read.
+    if origin is not None or not isinstance(cls, type) or isinstance(value, cls):
         return value
     if hasattr(cls, "from_config"):
         return cls.from_config(value)
     if issubclass(cls, Enum):
+        return cls(value)
+    if issubclass(cls, PurePath):
         return cls(value)
     if issubclass(cls, dict):
         if not isinstance(value, dict):
@@ -91,22 +103,63 @@ def from_dict(cls: type, value: Any) -> Any:
             (typing.get_args(base) for base in getattr(cls, "__orig_bases__", ()) if typing.get_origin(base) is dict),
             (Any, Any),
         )
-        return cls({from_dict(key_type, key): from_dict(value_type, element) for key, element in value.items()})
+        return cls({_key_from_dict(key_type, key): from_dict(value_type, element) for key, element in value.items()})
     if dataclasses.is_dataclass(cls):
-        return _dataclass_from_dict(cls, value)
+        return dataclass_from_dict(cls, value)
     return value
 
 
 def to_dict(value: Any) -> Any:
-    """The raw JSON shape of ``value``, which ``from_dict`` reads back."""
+    """The raw JSON shape of ``value``, which ``from_dict`` reads back.
+
+    Raises ``TypeError`` for a value with no such shape (a function, a tensor): a config holds only data.
+    """
     return json.loads(json.dumps(value, default=_raw))
 
 
 def _raw(value: Any) -> Any:
-    return value.to_config() if hasattr(value, "to_config") else vars(value)
+    if hasattr(value, "to_config"):
+        return value.to_config()
+    if isinstance(value, Enum):
+        return value.value
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        # What its constructor takes, which is what ``from_dict`` reads back: a derived field is derived again.
+        return {field.name: getattr(value, field.name) for field in dataclasses.fields(value) if field.init}
+    if isinstance(value, PurePath):
+        return str(value)
+    if isinstance(value, set | frozenset):
+        # Sorted, so the same set is always written the same way whatever the hash seed of the run.
+        return sorted(value, key=repr)
+    raise TypeError(
+        f"A {type(value).__name__} has no config form: a config holds only numbers, strings, enums and paths, "
+        "and lists, tuples, sets, mappings and dataclasses of them"
+    )
 
 
-def _dataclass_from_dict(cls: type, value: Any) -> Any:
+def _tuple_from_dict(cls: Any, value: Any) -> tuple:
+    if not isinstance(value, list | tuple):
+        raise ValueError(f"Expected a list for {cls}, got {value!r}")
+    element_types = typing.get_args(cls) or (Any, ...)
+    if len(element_types) == 2 and element_types[1] is Ellipsis:
+        element_types = (element_types[0],) * len(value)
+    elif len(element_types) != len(value):
+        raise ValueError(f"Expected {len(element_types)} values for {cls}, got {value!r}")
+    return tuple(from_dict(element_type, element) for element_type, element in zip(element_types, value, strict=True))
+
+
+def _key_from_dict(key_type: Any, key: Any) -> Any:
+    # A JSON object's keys are strings, so a number key comes back from ``config.json`` as its text.
+    if key_type in (int, float) and isinstance(key, str):
+        return key_type(key)
+    return from_dict(key_type, key)
+
+
+def dataclass_from_dict(cls: type, value: Any) -> Any:
+    """``value`` read field by field into the dataclass ``cls``, bypassing any ``from_config`` of its own.
+
+    What a ``from_config`` that only picks the class to read into hands the reading on to, since calling
+    ``from_dict`` there would call that ``from_config`` again.
+    """
     if not isinstance(value, dict):
         raise ValueError(f"Expected a mapping for {cls.__name__}, got {value!r}")
     fields = {field.name: field for field in dataclasses.fields(cls) if field.init}

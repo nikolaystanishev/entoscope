@@ -71,11 +71,11 @@ class CircuitFigure(Figure[tuple[nx.MultiDiGraph, str]]):
 
     @property
     def title(self) -> str:
-        return titled(f"Circuit · {self.config.method} · {self.circuit.prompt}", self.config)
+        return titled(f"Circuit · {self.config.method.type} · {self.circuit.prompt}", self.config)
 
     def panels(self) -> list[tuple[nx.MultiDiGraph, str]]:
         # Named after the run's method: a registered one draws through this page as well.
-        method, prompt = escape(self.config.method), escape(self.circuit.prompt)
+        method, prompt = escape(self.config.method.type), escape(self.circuit.prompt)
         return [
             (self.circuit.routes, titled(f'Routes to the prediction · {method} · "{prompt}"', self.config)),
             (self.circuit.graph, titled(f'Full contribution graph · {method} · "{prompt}"', self.config)),

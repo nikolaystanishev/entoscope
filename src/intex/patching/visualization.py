@@ -41,10 +41,7 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
 
     def heading(self, panel: MetricPair) -> str:
         config = self.operation_input.config
-        kind = self.value_column(panel)
-        if config.method != "exact":
-            kind = f"{config.method} {kind}"
-        return titled(f"Patching — {kind}", config)
+        return titled(f"Patching - {config.method.type} · {self.value_column(panel)}", config)
 
     def subtitle(self, panel: MetricPair) -> str:
         patching_input = self.operation_input

@@ -1,10 +1,11 @@
 import abc
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Generic, cast
 
 import torch
 from jaxtyping import Float
+from typing_extensions import TypeVar
 
-from intex.lens.config import LensConfig, LensSettings
+from intex.lens.config import LensConfig, LensMethodConfig
 from intex.model import Model
 from intex.model.config import ModelLocatorConfig
 from intex.model.index import IndexElement
@@ -12,27 +13,28 @@ from intex.model.index import IndexElement
 if TYPE_CHECKING:  # ``intex.lens.input`` looks the lens up through the factory, which imports this module.
     from intex.lens.input import LensInput
 
+LensMethodConfigT = TypeVar("LensMethodConfigT", bound=LensMethodConfig, default=LensMethodConfig)
 
-class AbstractLensMethod(abc.ABC):
+
+class AbstractLensMethod(abc.ABC, Generic[LensMethodConfigT]):
     """Reads each index element out onto the vocabulary.
 
     A lens is built once per run, from the run's config alone, so a lens that handles several kinds of
-    activation tells them apart through ``index.activation()`` itself. ``settings_class`` names the
-    dataclass of its settings, extending ``LensSettings``, which the config reads its ``settings`` into as
-    it is built; a lens naming none takes ``LensSettings`` itself, which no setting fits. ``extract``
+    activation tells them apart through ``index.activation()`` itself. Its type argument names the
+    dataclass of its method config, extending ``LensMethodConfig``, which a config file's ``method`` is read
+    into; a lens naming none takes ``LensMethodConfig`` itself, which no field fits. ``extract``
     returns the tensor an element names and ``project`` maps it onto the vocabulary; the collector ranks
-    the tokens of a single slice, so an element projects to a single ``d_vocab`` vector.
-    ``reads_activations`` is ``False`` for a lens that reads only the model's weights: it takes no prompt
-    and has no ``position`` axis.
+    the tokens of a single slice, so an element projects to a single ``d_vocab`` vector. Either raises for
+    an element the lens cannot read. ``reads_activations`` is ``False`` for a lens that reads only the
+    model's weights: it takes no prompt and has no ``position`` axis.
     """
 
     reads_activations: ClassVar[bool] = True
-    settings_class: ClassVar[type[LensSettings]] = LensSettings
 
     def __init__(self, model: Model, config: LensConfig):
         self.model = model
         self.config = config
-        self.settings = config.settings
+        self.method_config = cast(LensMethodConfigT, config.method)
 
     @abc.abstractmethod
     def extract(

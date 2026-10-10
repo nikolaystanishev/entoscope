@@ -9,7 +9,7 @@ import torch
 from intex.lens.config import LensConfig
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
-from intex.lens.method.parameter_lens import ParameterLensSettings, ProjectionSpace
+from intex.lens.method.parameter_lens import ParameterLensConfig, ProjectionSpace
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 
 from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
@@ -37,8 +37,7 @@ def _parameter_config(
     top_k: int = 1, projection: ProjectionSpace = ProjectionSpace.UNEMBEDDING, scale: float = 1.0
 ) -> LensConfig:
     return LensConfig(
-        method="parameter_lens",
-        settings=ParameterLensSettings(projection=projection, scale=scale),
+        method=ParameterLensConfig(type="parameter_lens", projection=projection, scale=scale),
         top_k=top_k,
         source=ModelLocatorConfig(
             activation=ModelLayerLocation.MLP_POST,
@@ -54,7 +53,7 @@ def _weight_row(
     return single_row(
         model,
         coordinates_config(
-            coordinate, method="parameter_lens", settings=ParameterLensSettings(projection=projection, scale=scale)
+            coordinate, method=ParameterLensConfig(type="parameter_lens", projection=projection, scale=scale)
         ),
     )
 
@@ -224,7 +223,9 @@ def test_a_gated_mlps_linear_branch_reads_w_in(gated_model):
 
 
 def test_the_linear_branch_of_a_model_without_a_gate_raises(small_model):
-    config = coordinates_config({"activation": "mlp.pre_linear", "layer": 0, "neuron": 1}, method="parameter_lens")
+    config = coordinates_config(
+        {"activation": "mlp.pre_linear", "layer": 0, "neuron": 1}, method=ParameterLensConfig(type="parameter_lens")
+    )
 
     with pytest.raises(ValueError, match="which this model does not have"):
         Lens(small_model).apply(LensInput(config), verbose=False)
@@ -235,7 +236,10 @@ def test_the_linear_branch_of_a_model_without_a_gate_raises(small_model):
 # --------------------------------------------------------------------------------------------------
 def test_a_weight_vector_needs_a_single_layer(model):
     # Every weight lives in one block, so an element may not group layers.
-    config = coordinates_config({"activation": "mlp.post", "layer": [0, 1], "neuron": NEURON}, method="parameter_lens")
+    config = coordinates_config(
+        {"activation": "mlp.post", "layer": [0, 1], "neuron": NEURON},
+        method=ParameterLensConfig(type="parameter_lens"),
+    )
 
     with pytest.raises(ValueError, match="needs a single layer"):
         Lens(model).apply(LensInput(config), verbose=False)
@@ -244,7 +248,8 @@ def test_a_weight_vector_needs_a_single_layer(model):
 @pytest.mark.parametrize("activation_name", ["attn.k", "attn.v"])
 def test_key_and_value_weights_are_rejected_on_grouped_query_attention(gqa_model, activation_name):
     config = coordinates_config(
-        {"activation": activation_name, "layer": 0, "head": 0, "neuron": 1}, method="parameter_lens"
+        {"activation": activation_name, "layer": 0, "head": 0, "neuron": 1},
+        method=ParameterLensConfig(type="parameter_lens"),
     )
 
     with pytest.raises(ValueError, match="grouped-query attention"):
@@ -255,7 +260,9 @@ def test_key_and_value_weights_are_rejected_on_grouped_query_attention(gqa_model
     "activation_name", ["embed", "resid.pre", "resid.mid", "resid.post", "attn.out", "attn.pattern", "mlp.out"]
 )
 def test_an_activation_that_names_no_weight_vector_raises(model, activation_name):
-    config = coordinates_config({"activation": activation_name, "layer": 0}, method="parameter_lens")
+    config = coordinates_config(
+        {"activation": activation_name, "layer": 0}, method=ParameterLensConfig(type="parameter_lens")
+    )
 
     with pytest.raises(ValueError, match="ParameterLens cannot project"):
         Lens(model).apply(LensInput(config), verbose=False)
@@ -271,28 +278,27 @@ def test_an_activation_that_names_no_weight_vector_raises(model, activation_name
     ],
 )
 def test_a_position_is_not_a_parameter_lens_location(config_from_yaml, source):
-    config = config_from_yaml(LensConfig, "positioned", {"method": "parameter_lens", "source": source})
-
+    # Rejected as the config is loaded, before any input names a prompt.
     with pytest.raises(ValueError, match="'position' is not a location of 'parameter_lens'"):
-        LensInput(config)
+        config_from_yaml(LensConfig, "positioned", {"method": "parameter_lens", "source": source})
 
 
-def test_a_projection_on_another_lens_is_an_unknown_setting(config_from_yaml):
-    raw = {"method": "logit_lens", "settings": {"projection": "embedding"}, "source": {"activation": "resid.post"}}
+def test_a_projection_on_another_lens_is_an_unknown_field(config_from_yaml):
+    raw = {"method": {"type": "logit_lens", "projection": "embedding"}, "source": {"activation": "resid.post"}}
 
-    with pytest.raises(ValueError, match=r"Unknown keys for LensSettings: \['projection'\]"):
+    with pytest.raises(ValueError, match=r"Unknown keys for LensMethodConfig: \['projection'\]"):
         config_from_yaml(LensConfig, "projected", raw)
 
 
-def test_a_scale_on_another_lens_is_an_unknown_setting(config_from_yaml):
-    raw = {"method": "logit_lens", "settings": {"scale": -1.0}, "source": {"activation": "resid.post"}}
+def test_a_scale_on_another_lens_is_an_unknown_field(config_from_yaml):
+    raw = {"method": {"type": "logit_lens", "scale": -1.0}, "source": {"activation": "resid.post"}}
 
-    with pytest.raises(ValueError, match=r"Unknown keys for LensSettings: \['scale'\]"):
+    with pytest.raises(ValueError, match=r"Unknown keys for LensMethodConfig: \['scale'\]"):
         config_from_yaml(LensConfig, "scaled", raw)
 
 
 def test_an_unknown_projection_space_raises(config_from_yaml):
-    raw = {**PARAMETER_LENS_YAML, "settings": {"projection": "residual"}}
+    raw = {**PARAMETER_LENS_YAML, "method": {"type": "parameter_lens", "projection": "residual"}}
 
     with pytest.raises(ValueError, match="'residual' is not a valid ProjectionSpace"):
         config_from_yaml(LensConfig, "projected", raw)
@@ -316,9 +322,8 @@ def test_artifacts_are_saved_to_disk(model, config_from_yaml, tmp_path):
 
     with open(save_dir / "config.json", encoding="utf-8") as f:
         saved_config = json.load(f)
-    # Left out of the YAML, the settings are written down as the lens's defaults.
-    assert saved_config["method"] == "parameter_lens"
-    assert saved_config["settings"] == {"projection": "unembedding", "scale": 1.0}
+    # Named by its type alone in the YAML, the lens is written down with its defaults.
+    assert saved_config["method"] == {"type": "parameter_lens", "projection": "unembedding", "scale": 1.0}
     assert saved_config["config_id"] == "my_parameter_lens"
     assert saved_config["top_k"] == 2
 
@@ -371,7 +376,7 @@ def test_a_parameter_lens_page_needs_no_prompt(model, tmp_path):
 
     figure = _draw(model, _parameter_config(top_k=3), save_dir)
 
-    assert figure.title.startswith("Lens — parameter_lens")
+    assert figure.title.startswith("Lens - parameter_lens")
     assert "weights (no prompt)" in figure.title
     assert figure.kind == "bar"
     assert figure.ticks("xaxis") == [str(layer) for layer in range(model.cfg.n_layers)]
@@ -380,7 +385,7 @@ def test_a_parameter_lens_page_needs_no_prompt(model, tmp_path):
 
 def test_a_neuron_axis_goes_across_with_the_layers_down(small_model, tmp_path):
     config = LensConfig(
-        method="parameter_lens",
+        method=ParameterLensConfig(type="parameter_lens"),
         source=ModelLocatorConfig(
             activation=ModelLayerLocation.MLP_POST, location=[ModelLocation.LAYER, ModelLocation.NEURON]
         ),
@@ -398,7 +403,7 @@ def test_an_empty_index_still_writes_a_page(model, tmp_path):
     # value column either — the page says so rather than failing to render. It says it once: with
     # nothing to read, every rank of the top-k would draw the same empty plot.
     config = LensConfig(
-        method="parameter_lens",
+        method=ParameterLensConfig(type="parameter_lens"),
         top_k=3,
         source=ModelLocatorConfig(
             activation=ModelLayerLocation.MLP_POST,

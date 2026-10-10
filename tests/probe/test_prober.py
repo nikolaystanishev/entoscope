@@ -132,9 +132,9 @@ def test_a_probe_separates_sentiment_at_the_last_layer(model):
 
 
 # --------------------------------------------------------------------------------------------------
-# Training settings reach the probes the run returns
+# The training fields reach the probes the run returns
 # --------------------------------------------------------------------------------------------------
-def test_the_training_settings_reach_every_probe(model):
+def test_the_training_fields_reach_every_probe(model):
     collector = run_probe(model, _single_neuron_config(max_iter=250, seed=3))
 
     for probe in collector.probes.values():
@@ -142,7 +142,7 @@ def test_the_training_settings_reach_every_probe(model):
         assert probe.random_state == 3
 
 
-def test_the_default_training_settings_apply_when_the_config_omits_them(model, config_from_yaml):
+def test_the_default_training_fields_apply_when_the_config_omits_them(model, config_from_yaml):
     config = config_from_yaml(ProbeConfig, "my_probe", PROBE_YAML)
 
     collector = run_probe(model, config)
@@ -182,8 +182,8 @@ def test_artifacts_are_saved_to_disk(model, config_from_yaml, tmp_path):
 
     with open(save_dir / "config.json", encoding="utf-8") as f:
         saved_config = json.load(f)
-    # Left out of the YAML, the settings are written down as the probe's defaults.
-    assert (saved_config["method"], saved_config["settings"]) == ("linear", {"max_iter": 1000, "seed": 42})
+    # Named by its type alone in the YAML, the probe is written down with its defaults.
+    assert saved_config["method"] == {"type": "linear", "max_iter": 1000, "seed": 42}
     assert saved_config["pool"] == {"position": "mean"}
     assert saved_config["metric"] == METRIC_COLUMNS
     assert saved_config["config_id"] == "my_probe"
@@ -222,8 +222,8 @@ def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model, config_fro
         ({**PROBE_YAML, "target": {}}, "Unknown keys for ProbeConfig.*target"),
         ({**PROBE_YAML, "method": "mlp"}, "Unknown probe method: mlp"),
         (
-            {**PROBE_YAML, "settings": {"max_iter": 250, "solver": "lbfgs"}},
-            r"Unknown keys for LinearProbeSettings: \['solver'\]",
+            {**PROBE_YAML, "method": {"type": "linear", "max_iter": 250, "solver": "lbfgs"}},
+            r"Unknown keys for LinearProbeConfig: \['solver'\]",
         ),
     ],
 )

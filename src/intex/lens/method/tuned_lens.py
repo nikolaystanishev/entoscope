@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cached_property, lru_cache
 
 import torch
 from jaxtyping import Float
 from tuned_lens.nn import TunedLens as PretrainedTunedLens
 
-from intex.lens.config import LensConfig, LensSettings
+from intex.lens.config import LensConfig, LensMethodConfig
 from intex.lens.method.logit_lens import _QUERY_KEY_ACTIVATIONS, LogitLens, _layer
 from intex.model import Model
 from intex.model.config import ModelLayerLocation, ModelLocatorConfig
@@ -25,8 +25,8 @@ def resource_id(model: Model) -> str:
     resource = model.cfg.tokenizer_name or model.cfg.model_name
     if not resource:
         raise ValueError(
-            "Cannot tell which tuned lens belongs to this model: it has neither a tokenizer nor a model name. "
-            "Name the translators explicitly on the lens config"
+            "Cannot tell which tuned lens belongs to this model: it has neither a tokenizer nor a model name, "
+            "so name the translators in the tuned lens's 'translators' field"
         )
     return resource
 
@@ -48,21 +48,25 @@ def load_translators(model: Model, resource: str) -> torch.nn.ModuleList:
 
 
 @dataclass(kw_only=True)
-class TunedLensSettings(LensSettings):
+class TunedLensConfig(LensMethodConfig):
     """``translators`` picks the pretrained translators: a resource id on the tuned-lens hub space or a
     local directory holding ``config.json`` and ``params.pt``. Unset, the model's own name is used."""
 
     translators: str | None = None
 
 
-class TunedLens(LogitLens):
+class TunedLens(LogitLens[TunedLensConfig]):
     """The logit lens with each residual state's trained translator applied before the model's read-out."""
-
-    settings_class = TunedLensSettings
 
     def __init__(self, model: Model, config: LensConfig):
         super().__init__(model, config)
-        self.translators = load_translators(model, self.settings.translators or resource_id(model))
+        # Resolved now, so a model with no name to look its translators up by fails as the lens is built; loaded
+        # on first use, so building a lens - which a plan does - reads no checkpoint.
+        self.resource = self.method_config.translators or resource_id(model)
+
+    @cached_property
+    def translators(self) -> torch.nn.ModuleList:
+        return load_translators(self.model, self.resource)
 
     def project(
         self,

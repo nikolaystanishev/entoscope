@@ -13,7 +13,7 @@ class PatchingMethodFactory(RegistryFactory[AbstractPatchingMethod]):
 
     @classmethod
     def create(cls, config: PatchingConfig, model: Model, batch_size: int = 1) -> AbstractPatchingMethod:
-        return cls.get(config.method)(model, config, batch_size)
+        return cls.get(config.method.type)(model, config, batch_size)
 
 
 PatchingMethodFactory.register("exact")(ExactPatchingMethod)

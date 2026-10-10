@@ -38,6 +38,43 @@ def test_a_name_cannot_be_taken_over_by_another_class(jsonl_dataset_class):
     assert DatasetFactory.get("jsonl") is JsonlDataset
 
 
+CELL = """
+from intex.dataset.dataset import AbstractDataset
+
+
+class CellDataset(AbstractDataset):
+    def load(self):
+        return []
+"""
+
+
+def test_defining_a_class_again_replaces_it():
+    # Re-running a notebook cell runs its class statement again, building a new class under the same name.
+    first, second = {"__name__": "notebook"}, {"__name__": "notebook"}
+    exec(CELL, first)
+    exec(CELL, second)
+
+    DatasetFactory.register("cell")(first["CellDataset"])
+    DatasetFactory.register("cell")(second["CellDataset"])
+
+    assert DatasetFactory.get("cell") is second["CellDataset"]
+
+
+def test_classes_one_function_builds_are_two_implementations():
+    def dataset_of(rows: list[Row]) -> type[AbstractDataset]:
+        class BuiltDataset(AbstractDataset):
+            def load(self) -> list[Row]:
+                return rows
+
+        return BuiltDataset
+
+    empty = DatasetFactory.register("built")(dataset_of([]))
+
+    with pytest.raises(ValueError, match="Dataset type 'built' is already registered to BuiltDataset"):
+        DatasetFactory.register("built")(dataset_of(ROWS))
+    assert DatasetFactory.get("built") is empty
+
+
 def test_registering_the_same_class_again_changes_nothing(jsonl_dataset_class):
     DatasetFactory.register("jsonl")(JsonlDataset)
 

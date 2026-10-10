@@ -1,12 +1,13 @@
 import abc
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Generic, cast
 
 import torch
+from typing_extensions import TypeVar
 
 from intex.model import Model
-from intex.patching.config import PatchingConfig, PatchingMetric, PatchingSettings, metric_column
+from intex.patching.config import PatchingConfig, PatchingMethodConfig, PatchingMetric, metric_column
 from intex.patching.input import PatchingInput
 from intex.patching.metric import AbstractComparison
 
@@ -24,7 +25,10 @@ class RowResult:
     generation: int | None = None
 
 
-class AbstractPatchingMethod(abc.ABC):
+PatchingMethodConfigT = TypeVar("PatchingMethodConfigT", bound=PatchingMethodConfig, default=PatchingMethodConfig)
+
+
+class AbstractPatchingMethod(abc.ABC, Generic[PatchingMethodConfigT]):
     """How a run turns its index into one number per row.
 
     Every method produces the same primitive for each row — ``delta``, the metric of the patched
@@ -32,20 +36,19 @@ class AbstractPatchingMethod(abc.ABC):
     into the columns the config's comparisons ask for. What separates the methods is only how
     ``delta`` is reached: by patching and running the model, or by estimating from gradients.
 
-    A method is built once per run. ``settings_class`` names the dataclass of its settings, extending
-    ``PatchingSettings``, which the config reads its ``settings`` into as it is built; a method naming none
-    takes ``PatchingSettings`` itself, which no setting fits. ``batched`` says whether it runs the patched
+    A method is built once per run. Its type argument names the dataclass of its method config, extending
+    ``PatchingMethodConfig``, which a config file's ``method`` is read into; a method naming none
+    takes ``PatchingMethodConfig`` itself, which no field fits. ``batched`` says whether it runs the patched
     model ``batch_size`` rows at a time, so a plan reports its batches.
     """
 
     batched: ClassVar[bool] = False
-    settings_class: ClassVar[type[PatchingSettings]] = PatchingSettings
 
     def __init__(self, model: Model, config: PatchingConfig, batch_size: int = 1):
         self.model = model
         self.config = config
         self.batch_size = batch_size
-        self.settings = config.settings
+        self.method_config = cast(PatchingMethodConfigT, config.method)
 
     @abc.abstractmethod
     def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[RowResult]:

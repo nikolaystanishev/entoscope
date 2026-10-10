@@ -7,7 +7,7 @@ from transformer_lens import ActivationCache
 from intex.lens.config import LensConfig
 from intex.lens.method.factory import LensMethodFactory
 from intex.model import Model
-from intex.model.config import ModelLocation, ModelLocatorConfig
+from intex.model.config import ModelLocatorConfig
 from intex.model.index import Index
 from intex.operation.input import OperationInput
 
@@ -24,20 +24,12 @@ class LensInput(OperationInput):
     _index: Index[ModelLocatorConfig] | None = field(init=False, default=None)
 
     def __post_init__(self):
-        name = self.config.method
-        if LensMethodFactory.get(name).reads_activations:
-            if self.prompt is None:
-                raise ValueError(f"A '{name}' reads activations, so it needs a prompt")
-        else:
-            if self.prompt is not None:
-                raise ValueError(f"A '{name}' reads the model's weights, not its activations, so it takes no prompt")
-            if ModelLocation.POSITION in self.config.source.location or any(
-                ModelLocation.POSITION in coordinate for coordinate in self.config.source.coordinates or []
-            ):
-                raise ValueError(
-                    f"'position' is not a location of '{name}': it reads the model's weights, "
-                    "which have no position axis"
-                )
+        name = self.config.method.type
+        reads_activations = LensMethodFactory.get(name).reads_activations
+        if reads_activations and self.prompt is None:
+            raise ValueError(f"A '{name}' reads activations, so it needs a prompt")
+        if not reads_activations and self.prompt is not None:
+            raise ValueError(f"A '{name}' reads the model's weights, not its activations, so it takes no prompt")
 
     def prepare_index(self, model: Model) -> "LensInput":
         if self._index is not None:

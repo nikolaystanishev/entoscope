@@ -47,7 +47,7 @@ class CircuitDiscoverer(Operator):
 
         plan = OperationPlan(
             operation="CircuitDiscoverer",
-            method=circuit_input.config.method,
+            method=circuit_input.config.method.type,
             config=circuit_input.config,
             steps=len(circuit_input.prompts),
             steps_label="prompt",

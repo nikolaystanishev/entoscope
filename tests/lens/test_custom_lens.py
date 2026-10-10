@@ -3,19 +3,23 @@
 import json
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
 
 import pandas as pd
 import pytest
 import yaml
 
-from intex.lens.config import LensConfig, LensSettings
+from intex.lens.config import LensConfig, LensMethodConfig
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.lens.method.factory import LensMethodFactory
 from intex.lens.method.logit_lens import LogitLens
-from intex.lens.method.parameter_lens import ParameterLens, ParameterLensSettings, ProjectionSpace
+from intex.lens.method.parameter_lens import ParameterLens, ParameterLensConfig, ProjectionSpace
+from intex.lens.method.tuned_lens import TunedLens, TunedLensConfig
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from intex.operation.method import method_config_class
 from intex.util.data import from_dict
 
 from ..conftest import forbid_model_runs, rendered_figure
@@ -26,17 +30,15 @@ GRID = {"activation": "resid.post", "location": ["layer", "position"]}
 
 
 @dataclass(kw_only=True)
-class TemperatureLensSettings(LensSettings):
+class TemperatureLensConfig(LensMethodConfig):
     temperature: float = 1.0
 
 
-class TemperatureLens(LogitLens):
+class TemperatureLens(LogitLens[TemperatureLensConfig]):
     """The logit lens with its logits divided by a temperature, which flattens the probabilities."""
 
-    settings_class = TemperatureLensSettings
-
     def project(self, activation, index):
-        return super().project(activation, index) / self.settings.temperature
+        return super().project(activation, index) / self.method_config.temperature
 
 
 class NegatedParameterLens(ParameterLens):
@@ -47,14 +49,47 @@ class NegatedParameterLens(ParameterLens):
 
 
 @dataclass(kw_only=True)
-class SourceFileSettings(LensSettings):
+class SourceFileLensConfig(LensMethodConfig):
     path: str
 
 
-class SourceFileLens(LogitLens):
-    """A lens that cannot run without its settings: one of them has no default."""
+class SourceFileLens(LogitLens[SourceFileLensConfig]):
+    """A lens that cannot run without its method config: one of its fields has no default."""
 
-    settings_class = SourceFileSettings
+
+class Reduction(Enum):
+    SUM = "sum"
+    MEAN = "mean"
+
+
+@dataclass(kw_only=True)
+class ShapedLensConfig(LensMethodConfig):
+    """A field of every shape a config holds, ``width`` derived from them rather than given."""
+
+    reduction: Reduction = Reduction.SUM
+    window: tuple[int, int] = (0, 1)
+    weights: dict[int, float] = field(default_factory=dict)
+    checkpoint: Path | None = None
+    width: int = field(init=False)
+
+    def __post_init__(self):
+        self.width = self.window[1] - self.window[0]
+
+
+class ShapedLens(LogitLens[ShapedLensConfig]):
+    """The logit lens, taking fields of every shape a config holds."""
+
+
+SHAPED_YAML = {
+    "type": "shaped_lens",
+    "reduction": "mean",
+    "window": [2, 5],
+    "weights": {0: 0.5},
+    "checkpoint": "translators",
+}
+SHAPED = ShapedLensConfig(
+    type="shaped_lens", reduction=Reduction.MEAN, window=(2, 5), weights={0: 0.5}, checkpoint=Path("translators")
+)
 
 
 @pytest.fixture
@@ -64,18 +99,16 @@ def temperature_lens(registries):
 
 @pytest.fixture
 def negated_parameter_lens(registries):
-    # It extends the parameter lens, so it takes the parameter lens's settings.
+    # It extends the parameter lens, so it takes the parameter lens's method config.
     return LensMethodFactory.register("negated_parameter_lens")(NegatedParameterLens)
 
 
 def _temperature_yaml(**overrides) -> dict:
-    return {"method": "temperature_lens", "settings": {"temperature": TEMPERATURE}, "source": GRID, **overrides}
+    return {"method": {"type": "temperature_lens", "temperature": TEMPERATURE}, "source": GRID, **overrides}
 
 
 def _warm(source: ModelLocatorConfig) -> LensConfig:
-    return LensConfig(
-        method="temperature_lens", settings=TemperatureLensSettings(temperature=TEMPERATURE), source=source
-    )
+    return LensConfig(method=TemperatureLensConfig(type="temperature_lens", temperature=TEMPERATURE), source=source)
 
 
 def _last_position(activation: str, **coordinate: int) -> ModelLocatorConfig:
@@ -134,7 +167,7 @@ def test_a_yaml_config_is_built_as_the_code_built_one(config_from_yaml, temperat
     assert config == in_code
 
 
-def test_a_registered_lens_leaves_its_name_and_settings_beside_its_results(
+def test_a_registered_lens_leaves_its_method_config_beside_its_results(
     model, config_from_yaml, temperature_lens, tmp_path
 ):
     config = config_from_yaml(LensConfig, "warm", _temperature_yaml())
@@ -143,22 +176,25 @@ def test_a_registered_lens_leaves_its_name_and_settings_beside_its_results(
     run_lens(model, config, save_dir=save_dir)
 
     saved = json.loads((save_dir / "config.json").read_text())
-    assert (saved["method"], saved["settings"]) == ("temperature_lens", {"temperature": TEMPERATURE})
+    assert saved["method"] == {"type": "temperature_lens", "temperature": TEMPERATURE}
     # The saved config reads back as the one the run was made under.
     assert from_dict(LensConfig, saved) == config
     assert len(pd.read_csv(save_dir / "result.csv")) == model.cfg.n_layers * model.to_tokens(PROMPT).shape[1]
-    assert rendered_figure(save_dir).title.startswith("Lens — temperature_lens · top-1 (config: warm)")
+    assert rendered_figure(save_dir).title.startswith("Lens - temperature_lens · top-1 (config: warm)")
 
 
-def test_settings_left_out_are_the_lens_defaults(model, config_from_yaml, temperature_lens, tmp_path):
+def test_a_lens_named_by_its_type_alone_takes_its_defaults(model, config_from_yaml, temperature_lens, tmp_path):
     custom = config_from_yaml(LensConfig, "default", {"method": "temperature_lens", "source": GRID})
     built_in = config_from_yaml(LensConfig, "built_in", {"method": "logit_lens", "source": GRID})
     save_dir = tmp_path / "default"
 
-    assert custom.settings == TemperatureLensSettings()
+    assert custom.method == TemperatureLensConfig(type="temperature_lens")
     assert run_lens(model, custom, save_dir=save_dir).result.equals(run_lens(model, built_in).result)
     # ...and the run writes those defaults down.
-    assert json.loads((save_dir / "config.json").read_text())["settings"] == {"temperature": 1.0}
+    assert json.loads((save_dir / "config.json").read_text())["method"] == {
+        "type": "temperature_lens",
+        "temperature": 1.0,
+    }
 
 
 def test_a_plan_names_the_registered_lens(model, monkeypatch, config_from_yaml, temperature_lens):
@@ -167,18 +203,18 @@ def test_a_plan_names_the_registered_lens(model, monkeypatch, config_from_yaml, 
 
     plan = Lens(model).plan(lens_input, verbose=False)
 
-    assert plan.describe().splitlines()[0] == "Lens plan — temperature_lens (config: warm)"
+    assert plan.describe().splitlines()[0] == "Lens plan - temperature_lens (config: warm)"
 
 
-def test_a_lens_naming_no_settings_takes_none(model, config_from_yaml, registries):
+def test_a_lens_naming_no_method_config_takes_no_fields(model, config_from_yaml, registries):
     LensMethodFactory.register("plain_lens")(LogitLens)
 
     plain = config_from_yaml(LensConfig, "plain", {"method": "plain_lens", "source": GRID})
     logit = config_from_yaml(LensConfig, "logit", {"method": "logit_lens", "source": GRID})
-    warm = {"method": "plain_lens", "settings": {"temperature": 2.0}, "source": GRID}
+    warm = {"method": {"type": "plain_lens", "temperature": 2.0}, "source": GRID}
 
     assert run_lens(model, plain).result.equals(run_lens(model, logit).result)
-    with pytest.raises(ValueError, match=r"Unknown keys for LensSettings: \['temperature'\]"):
+    with pytest.raises(ValueError, match=r"Unknown keys for LensMethodConfig: \['temperature'\]"):
         config_from_yaml(LensConfig, "warm", warm)
 
 
@@ -186,8 +222,8 @@ def test_a_lens_naming_no_settings_takes_none(model, config_from_yaml, registrie
 # A lens that reads only the weights
 # --------------------------------------------------------------------------------------------------
 def test_a_lens_reading_the_weights_runs_without_a_prompt(model, negated_parameter_lens):
-    negated = LensConfig(method="negated_parameter_lens", source=_neurons())
-    flipped = LensConfig(method="parameter_lens", settings=ParameterLensSettings(scale=-1.0), source=_neurons())
+    negated = LensConfig(method=ParameterLensConfig(type="negated_parameter_lens"), source=_neurons())
+    flipped = LensConfig(method=ParameterLensConfig(type="parameter_lens", scale=-1.0), source=_neurons())
 
     assert run_lens(model, negated).result.equals(run_lens(model, flipped).result)
     with pytest.raises(ValueError, match="'negated_parameter_lens' reads the model's weights.* takes no prompt"):
@@ -198,21 +234,74 @@ def test_a_lens_reading_the_weights_has_no_position_axis(config_from_yaml, negat
     raw = {"method": "negated_parameter_lens", "source": {"activation": "mlp.post", "location": ["layer", "position"]}}
 
     with pytest.raises(ValueError, match="'position' is not a location of 'negated_parameter_lens'"):
-        LensInput(config_from_yaml(LensConfig, "positioned", raw))
+        config_from_yaml(LensConfig, "positioned", raw)
 
 
-def test_a_lens_extending_another_takes_its_settings(model, config_from_yaml, negated_parameter_lens):
-    raw = {"method": "negated_parameter_lens", "settings": {"projection": "embedding", "scale": 2.0}, "source": GRID}
+def test_a_lens_extending_another_takes_its_method_config(model, config_from_yaml, negated_parameter_lens):
+    raw = {
+        "method": {"type": "negated_parameter_lens", "projection": "embedding", "scale": 2.0},
+        "source": {"activation": "mlp.post", "location": ["layer"]},
+    }
 
     lens = LensMethodFactory.create(config_from_yaml(LensConfig, "projected", raw), model)
 
-    assert lens.settings == ParameterLensSettings(projection=ProjectionSpace.EMBEDDING, scale=2.0)
+    assert lens.method_config == ParameterLensConfig(
+        type="negated_parameter_lens", projection=ProjectionSpace.EMBEDDING, scale=2.0
+    )
 
 
 # --------------------------------------------------------------------------------------------------
-# Rejections, as the config is built
+# A lens names its method config once, as its type argument
 # --------------------------------------------------------------------------------------------------
-def test_a_lens_nothing_registered_is_rejected_as_its_config_is_built(config_from_yaml):
+def test_the_method_config_a_config_reads_is_the_lens_type_argument():
+    assert method_config_class(TemperatureLens) is TemperatureLensConfig
+    # A built-in with no fields of its own leaves its argument open, taking the TypeVar's bound, while one
+    # with fields names its method config...
+    assert (method_config_class(LogitLens), method_config_class(TunedLens)) == (LensMethodConfig, TunedLensConfig)
+    # ...and a lens extending another without an argument keeps that lens's method config.
+    assert method_config_class(NegatedParameterLens) is ParameterLensConfig
+
+
+def test_a_method_config_names_its_lens_itself():
+    # One method config class serves every lens taking it, so the class alone cannot say which lens that is.
+    with pytest.raises(TypeError, match="'type'"):
+        TunedLensConfig()
+
+
+# --------------------------------------------------------------------------------------------------
+# Method configs are data: kept as given, and written down in a form they are read back from
+# --------------------------------------------------------------------------------------------------
+@pytest.fixture
+def shaped_lens(registries):
+    return LensMethodFactory.register("shaped_lens")(ShapedLens)
+
+
+def test_a_method_config_given_as_an_instance_is_kept_as_it_is(shaped_lens):
+    config = LensConfig(method=SHAPED, source=_last_position("resid.post"))
+
+    assert config.method is SHAPED
+
+
+def test_fields_of_every_shape_are_read_from_yaml_and_back_from_the_saved_config(
+    model, config_from_yaml, shaped_lens, tmp_path
+):
+    config = config_from_yaml(LensConfig, "shaped", {"method": SHAPED_YAML, "source": GRID})
+    save_dir = tmp_path / "shaped"
+
+    run_lens(model, config, save_dir=save_dir)
+
+    assert config.method == SHAPED
+    saved = json.loads((save_dir / "config.json").read_text())
+    # JSON has no enum, tuple, path or number key, so it holds their raw form, and leaves out what is derived...
+    assert saved["method"] == {**SHAPED_YAML, "weights": {"0": 0.5}}
+    # ...which reads back as the types the method config declares.
+    assert from_dict(LensConfig, saved) == config
+
+
+# --------------------------------------------------------------------------------------------------
+# Rejections, as the config is read from a file
+# --------------------------------------------------------------------------------------------------
+def test_a_lens_nothing_registered_is_rejected_as_its_config_is_read(config_from_yaml):
     registered = r"\['logit_lens', 'parameter_lens', 'tuned_lens'\]"
 
     with pytest.raises(
@@ -221,16 +310,31 @@ def test_a_lens_nothing_registered_is_rejected_as_its_config_is_built(config_fro
         config_from_yaml(LensConfig, "warm", _temperature_yaml())
 
 
-def test_a_setting_the_lens_does_not_have_is_rejected_as_the_config_is_built(temperature_lens):
-    with pytest.raises(ValueError, match=r"Unknown keys for TemperatureLensSettings: \['translators'\]"):
-        LensConfig(method="temperature_lens", settings={"translators": "gpt2"}, source=_last_position("resid.post"))
+def test_a_field_the_lens_does_not_have_is_rejected_as_the_config_is_read(config_from_yaml, temperature_lens):
+    raw = {"method": {"type": "temperature_lens", "translators": "gpt2"}, "source": GRID}
+
+    with pytest.raises(ValueError, match=r"Unknown keys for TemperatureLensConfig: \['translators'\]"):
+        config_from_yaml(LensConfig, "warm", raw)
 
 
-def test_a_lens_whose_settings_have_no_defaults_needs_them(registries):
+def test_a_lens_whose_fields_have_no_defaults_needs_them(config_from_yaml, registries):
     LensMethodFactory.register("source_file_lens")(SourceFileLens)
 
-    with pytest.raises(ValueError, match=r"Missing required keys for SourceFileSettings: \['path'\]"):
-        LensConfig(method="source_file_lens", source=_last_position("resid.post"))
+    with pytest.raises(ValueError, match=r"Missing required keys for SourceFileLensConfig: \['path'\]"):
+        config_from_yaml(LensConfig, "source_file", {"method": "source_file_lens", "source": GRID})
+
+
+@pytest.mark.parametrize(
+    ("method", "message"),
+    [
+        ({"temperature": TEMPERATURE}, r"Missing required keys for LensMethodConfig: \['type'\]"),
+        (None, "Expected a method type or a mapping for LensMethodConfig, got None"),
+        ([TEMPERATURE], r"Expected a method type or a mapping for LensMethodConfig, got \[2.0\]"),
+    ],
+)
+def test_a_method_entry_naming_no_type_is_rejected_as_the_config_is_read(config_from_yaml, method, message):
+    with pytest.raises(ValueError, match=message):
+        config_from_yaml(LensConfig, "untyped", {"method": method, "source": GRID})
 
 
 # --------------------------------------------------------------------------------------------------
@@ -241,7 +345,7 @@ from dataclasses import dataclass
 
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 
-from intex.lens.config import LensConfig, LensSettings
+from intex.lens.config import LensConfig, LensMethodConfig
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.lens.method.factory import LensMethodFactory
@@ -251,16 +355,14 @@ from intex.script import experiment
 
 
 @dataclass(kw_only=True)
-class TemperatureLensSettings(LensSettings):
+class TemperatureLensConfig(LensMethodConfig):
     temperature: float = 1.0
 
 
 @LensMethodFactory.register("temperature_lens")
-class TemperatureLens(LogitLens):
-    settings_class = TemperatureLensSettings
-
+class TemperatureLens(LogitLens[TemperatureLensConfig]):
     def project(self, activation, index):
-        return super().project(activation, index) / self.settings.temperature
+        return super().project(activation, index) / self.method_config.temperature
 
 
 @dataclass
@@ -280,7 +382,7 @@ def main(config: Config):
     )
     lens_config = ConfigFactory[LensConfig](config.config_path).create(config.config_id)
     Lens(model).apply(LensInput(lens_config, "Paris is located in"), save_dir=config.save_dir, verbose=False)
-    print(lens_config.settings)
+    print(lens_config.method)
 """
 
 
@@ -299,11 +401,10 @@ def test_a_lens_registered_by_an_experiment_script_runs_from_its_yaml_config(tmp
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip().splitlines()[-1] == f"TemperatureLensSettings(temperature={TEMPERATURE})"
-    saved = json.loads((save_dir / "config.json").read_text())
-    assert (saved["method"], saved["settings"], saved["config_id"]) == (
-        "temperature_lens",
-        {"temperature": TEMPERATURE},
-        "warm",
+    assert (
+        result.stdout.strip().splitlines()[-1]
+        == f"TemperatureLensConfig(type='temperature_lens', temperature={TEMPERATURE})"
     )
+    saved = json.loads((save_dir / "config.json").read_text())
+    assert (saved["method"], saved["config_id"]) == ({"type": "temperature_lens", "temperature": TEMPERATURE}, "warm")
     assert (save_dir / "result.csv").exists()

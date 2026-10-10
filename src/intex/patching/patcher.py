@@ -47,7 +47,7 @@ class Patcher(Operator):
 
         plan = OperationPlan(
             operation="Patcher",
-            method=patching_input.config.method,
+            method=patching_input.config.method.type,
             config=patching_input.config,
             steps=runs,
             steps_label="patch run",

@@ -12,7 +12,7 @@ class CircuitMethodFactory(RegistryFactory[AbstractCircuitMethod]):
 
     @classmethod
     def create(cls, config: CircuitConfig, model: Model) -> AbstractCircuitMethod:
-        return cls.get(config.method)(model, config)
+        return cls.get(config.method.type)(model, config)
 
 
 CircuitMethodFactory.register("information_flow_routes")(InformationFlowRoutes)

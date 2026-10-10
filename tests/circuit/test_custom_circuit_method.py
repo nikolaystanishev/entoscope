@@ -38,7 +38,7 @@ class ResidualChain(AbstractCircuitMethod):
 
 @pytest.fixture
 def residual_chain(registries):
-    # It names no settings_class of its own, so it takes CircuitSettings, which no setting fits.
+    # It names no method config of its own, so it takes CircuitMethodConfig, which no field fits.
     return CircuitMethodFactory.register("residual_chain")(ResidualChain)
 
 
@@ -66,4 +66,4 @@ def test_a_registered_method_discovers_and_draws_a_circuit_per_prompt(
         assert f"<title>Circuit · residual_chain · {prompt} (config: chain)</title>" in page
 
     saved = json.loads((save_dir / "config.json").read_text())
-    assert (saved["method"], saved["settings"]) == ("residual_chain", {})
+    assert saved["method"] == {"type": "residual_chain"}

@@ -28,7 +28,7 @@ import torch
 from jaxtyping import Float, Int
 from transformer_lens import ActivationCache
 
-from intex.circuit.config import CircuitSettings
+from intex.circuit.config import CircuitMethodConfig
 from intex.circuit.method.circuit import AbstractCircuitMethod, PromptCircuit
 from intex.circuit.vendor import contributions
 from intex.model import Model
@@ -274,8 +274,8 @@ def prune_routes_to_predictions(
 
 
 @dataclass(kw_only=True)
-class InformationFlowRoutesSettings(CircuitSettings):
-    """Settings of Information Flow Routes.
+class InformationFlowRoutesConfig(CircuitMethodConfig):
+    """The method config of Information Flow Routes.
 
     threshold: Renormalizing edge threshold applied to contributions while building the
         full graph. Contributions below it are dropped and the rest renormalized so the
@@ -296,9 +296,7 @@ class InformationFlowRoutesSettings(CircuitSettings):
         return self.threshold if self.path_threshold is None else self.path_threshold
 
 
-class InformationFlowRoutes(AbstractCircuitMethod):
-    settings_class = InformationFlowRoutesSettings
-
+class InformationFlowRoutes(AbstractCircuitMethod[InformationFlowRoutesConfig]):
     @torch.no_grad()
     def build(self, prompt: str, tokens: Int[torch.Tensor, "batch pos"]) -> PromptCircuit:
         _, cache = self.model.run_with_cache(tokens)
@@ -306,12 +304,12 @@ class InformationFlowRoutes(AbstractCircuitMethod):
         n_tokens = tokens.shape[1]
         str_tokens = str_token_labels(self.model, tokens)
 
-        graph = build_information_flow_graph(self.model, cache, n_tokens, str_tokens, self.settings.threshold)
+        graph = build_information_flow_graph(self.model, cache, n_tokens, str_tokens, self.method_config.threshold)
         routes = prune_routes_to_predictions(
             graph,
             self.model.cfg.n_layers,
-            resolve_positions(self.settings.prediction_positions, n_tokens),
-            self.settings.resolved_path_threshold(),
+            resolve_positions(self.method_config.prediction_positions, n_tokens),
+            self.method_config.resolved_path_threshold(),
         )
 
         return PromptCircuit(prompt=prompt, str_tokens=str_tokens, graph=graph, routes=routes)

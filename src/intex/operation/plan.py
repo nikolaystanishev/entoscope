@@ -67,7 +67,7 @@ class OperationPlan:
         return "\n".join(lines)
 
     def _title(self) -> str:
-        title = f"{self.operation} plan — {self.method}"
+        title = f"{self.operation} plan - {self.method}"
         return f"{title} (config: {self.config.config_id})" if self.config.config_id else title
 
     def _work(self) -> str:

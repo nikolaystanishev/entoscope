@@ -12,7 +12,7 @@ class ProbeMethodFactory(RegistryFactory[AbstractProbeMethod]):
 
     @classmethod
     def create(cls, config: ProbeConfig, model: Model) -> AbstractProbeMethod:
-        return cls.get(config.method)(model, config)
+        return cls.get(config.method.type)(model, config)
 
 
 ProbeMethodFactory.register("linear")(LinearProbe)

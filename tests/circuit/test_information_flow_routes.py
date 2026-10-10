@@ -12,7 +12,7 @@ from intex.circuit.discoverer import CircuitDiscoverer
 from intex.circuit.input import CircuitInput
 from intex.circuit.method.circuit import PromptCircuit
 from intex.circuit.method.factory import CircuitMethodFactory
-from intex.circuit.method.information_flow_routes import InformationFlowRoutesSettings, decomposed_attn
+from intex.circuit.method.information_flow_routes import InformationFlowRoutesConfig, decomposed_attn
 from intex.model.cache import CachedModel
 
 PROMPT = "The capital of France is"
@@ -20,7 +20,7 @@ PROMPT = "The capital of France is"
 
 def circuit_config(**overrides) -> CircuitConfig:
     return CircuitConfig(
-        config_id="ifr", method="information_flow_routes", settings=InformationFlowRoutesSettings(**overrides)
+        config_id="ifr", method=InformationFlowRoutesConfig(type="information_flow_routes", **overrides)
     )
 
 
@@ -200,18 +200,25 @@ def test_parallel_attention_and_mlp_is_rejected(parallel_model):
 # --------------------------------------------------------------------------------------------------
 def test_a_yaml_config_runs_with_its_defaults(model, config_from_yaml):
     config = config_from_yaml(CircuitConfig, "my_circuit", {"method": "information_flow_routes"})
-    settings = CircuitMethodFactory.create(config, model).settings
+    method_config = CircuitMethodFactory.create(config, model).method_config
 
-    assert settings == InformationFlowRoutesSettings(threshold=0.04, path_threshold=None, prediction_positions=[-1])
-    assert settings.resolved_path_threshold() == 0.04  # the routes fall back to the graph's threshold
+    assert method_config == InformationFlowRoutesConfig(
+        type="information_flow_routes", threshold=0.04, path_threshold=None, prediction_positions=[-1]
+    )
+    assert method_config.resolved_path_threshold() == 0.04  # the routes fall back to the graph's threshold
     assert discover(model, config=config)[0].graph.number_of_edges() > 0
 
 
 def test_a_yaml_config_carries_its_explicit_values_into_the_run(model, config_from_yaml):
-    settings = {"threshold": 0.1, "path_threshold": 0.2, "prediction_positions": [-1, 0]}
-    config = config_from_yaml(CircuitConfig, "my_circuit", {"method": "information_flow_routes", "settings": settings})
+    method = {
+        "type": "information_flow_routes",
+        "threshold": 0.1,
+        "path_threshold": 0.2,
+        "prediction_positions": [-1, 0],
+    }
+    config = config_from_yaml(CircuitConfig, "my_circuit", {"method": method})
 
-    assert CircuitMethodFactory.create(config, model).settings.resolved_path_threshold() == 0.2
+    assert CircuitMethodFactory.create(config, model).method_config.resolved_path_threshold() == 0.2
     loaded = discover(model, config=config)[0]
     without_path_pruning = discover(model, config=circuit_config(threshold=0.1, prediction_positions=[-1, 0]))[0]
 
@@ -221,10 +228,10 @@ def test_a_yaml_config_carries_its_explicit_values_into_the_run(model, config_fr
 
 def test_a_whole_number_threshold_is_taken_as_it_is_written(model, config_from_yaml):
     # YAML has no float literal here: the 1 lands in a float field unconverted, and the run uses it.
-    raw = {"method": "information_flow_routes", "settings": {"threshold": 1}}
+    raw = {"method": {"type": "information_flow_routes", "threshold": 1}}
     config = config_from_yaml(CircuitConfig, "my_circuit", raw)
 
-    assert CircuitMethodFactory.create(config, model).settings.threshold == 1
+    assert CircuitMethodFactory.create(config, model).method_config.threshold == 1
     assert discover(model, config=config)[0].graph.number_of_edges() == 0
 
 
@@ -235,8 +242,8 @@ def test_a_whole_number_threshold_is_taken_as_it_is_written(model, config_from_y
         ({"method": "information_flow_routes", "threshold": 0.04}, "Unknown keys for CircuitConfig.*threshold"),
         ({"method": "acdc"}, "Unknown circuit method: acdc"),
         (
-            {"method": "information_flow_routes", "settings": {"bogus": 1}},
-            r"Unknown keys for InformationFlowRoutesSettings: \['bogus'\]",
+            {"method": {"type": "information_flow_routes", "bogus": 1}},
+            r"Unknown keys for InformationFlowRoutesConfig: \['bogus'\]",
         ),
     ],
 )

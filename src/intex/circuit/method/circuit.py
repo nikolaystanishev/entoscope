@@ -1,13 +1,16 @@
 import abc
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Generic, cast
 
 import networkx as nx
 import torch
 from jaxtyping import Int
+from typing_extensions import TypeVar
 
-from intex.circuit.config import CircuitConfig, CircuitSettings
+from intex.circuit.config import CircuitConfig, CircuitMethodConfig
 from intex.model import Model
+
+CircuitMethodConfigT = TypeVar("CircuitMethodConfigT", bound=CircuitMethodConfig, default=CircuitMethodConfig)
 
 
 @dataclass
@@ -30,20 +33,18 @@ class PromptCircuit:
     routes: nx.MultiDiGraph
 
 
-class AbstractCircuitMethod(abc.ABC):
+class AbstractCircuitMethod(abc.ABC, Generic[CircuitMethodConfigT]):
     """Discovers the circuit behind one prompt at a time; built once per run.
 
-    ``settings_class`` names the dataclass of its settings, extending ``CircuitSettings``, which the config
-    reads its ``settings`` into as it is built; a method naming none takes ``CircuitSettings`` itself, which
-    no setting fits.
+    Its type argument names the dataclass of its method config, extending ``CircuitMethodConfig``, which a config
+    file's ``method`` is read into; a method naming none takes ``CircuitMethodConfig`` itself, which no field
+    fits.
     """
-
-    settings_class: ClassVar[type[CircuitSettings]] = CircuitSettings
 
     def __init__(self, model: Model, config: CircuitConfig):
         self.model = model
         self.config = config
-        self.settings = config.settings
+        self.method_config = cast(CircuitMethodConfigT, config.method)
 
     @abc.abstractmethod
     def build(self, prompt: str, tokens: Int[torch.Tensor, "batch pos"]) -> PromptCircuit:

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import torch
 from jaxtyping import Float
 
-from intex.lens.config import LensSettings
+from intex.lens.config import LensMethodConfig
 from intex.lens.method.lens import AbstractLensMethod
 from intex.lens.method.logit_lens import _attention_layer, _layer
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
@@ -38,7 +38,7 @@ class ProjectionSpace(str, Enum):
 
 
 @dataclass(kw_only=True)
-class ParameterLensSettings(LensSettings):
+class ParameterLensConfig(LensMethodConfig):
     """``projection`` picks the vocabulary space a weight is read in, and ``scale`` multiplies the weight
     first: a negative scale reads it against its own direction, and the magnitude acts as a temperature."""
 
@@ -46,14 +46,13 @@ class ParameterLensSettings(LensSettings):
     scale: float = 1.0
 
 
-class ParameterLens(AbstractLensMethod):
+class ParameterLens(AbstractLensMethod[ParameterLensConfig]):
     """Reads a weight vector onto the vocabulary: what a neuron or a head dimension reads or writes.
 
     It reads the model's weights rather than a prompt's activations, so a run takes no prompt.
     """
 
     reads_activations = False
-    settings_class = ParameterLensSettings
 
     def extract(
         self,
@@ -82,10 +81,10 @@ class ParameterLens(AbstractLensMethod):
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, " d_vocab"]:
         with torch.no_grad():
-            return (self.settings.scale * weight) @ self._projection()
+            return (self.method_config.scale * weight) @ self._projection()
 
     def _projection(self) -> Float[torch.Tensor, "d_model d_vocab"]:
-        if self.settings.projection is ProjectionSpace.EMBEDDING:
+        if self.method_config.projection is ProjectionSpace.EMBEDDING:
             return self.model.W_E.T
         return self.model.W_U
 

@@ -9,7 +9,7 @@ same numbers — and that is what makes a result portable between them.
 import pytest
 import torch
 
-from intex.lens.config import LensConfig
+from intex.lens.config import LensConfig, LensMethodConfig
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.lens.method.logit_lens import _attention_scale
@@ -88,7 +88,7 @@ def test_a_forward_pass_produces_the_same_logits_and_activations(compatible_brid
 )
 def test_a_lens_run_reads_the_same_tokens_from_either_backend(compatible_bridge, hooked, activation):
     config = LensConfig(
-        method="logit_lens",
+        method=LensMethodConfig(type="logit_lens"),
         top_k=3,
         source=ModelLocatorConfig(activation=activation, location=[ModelLocation.LAYER, ModelLocation.POSITION]),
     )

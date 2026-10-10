@@ -39,7 +39,7 @@ class Lens(Operator):
         return None
 
     def plan(self, lens_input: LensInput, save_dir: str | None = None, verbose: bool = True) -> OperationPlan:
-        # Built as the run builds it, so a plan fails wherever its run would.
+        # Built as the run builds it, so a lens that cannot be built fails the plan as it would the run.
         LensMethodFactory.create(lens_input.config, self.model)
         lens_input.prepare_index(self.model)
 
@@ -48,7 +48,7 @@ class Lens(Operator):
 
         plan = OperationPlan(
             operation="Lens",
-            method=lens_input.config.method,
+            method=lens_input.config.method.type,
             config=lens_input.config,
             steps=len(lens_input.index),
             steps_label="element",

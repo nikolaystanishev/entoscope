@@ -36,10 +36,11 @@ follows the same four-part shape, and adding one means writing the same four pie
 - **Config** (`<op>/config.py`) — a `kw_only` dataclass extending `AbstractConfig`, validating in
   `__post_init__`. Loadable from YAML through `ConfigFactory[TheConfig](path).create("id")`, which
   deserializes strictly via `intex.util.data.from_dict` (unknown/missing keys raise; a
-  `from_config` classmethod on a field's type overrides the default handling). It names its method
-  in its `method` field and holds that method's settings in `settings`, read into the method's
-  settings class as the config is built. It is saved as `config.json` beside the run's results,
-  which `from_dict` reads back.
+  `from_config` classmethod on a field's type overrides the default handling). Its `method` field is
+  the method config, a `MethodConfig` whose `type` names the method - in YAML a mapping or just
+  the type. `type` is `MethodConfig`'s own field and has no default, since one method config class
+  serves several methods. It is saved as `config.json` beside the run's results,
+  which `from_dict` reads back - so a config holds only data, and `to_dict` rejects what has no JSON form.
 - **Input** (`<op>/input.py`) — a dataclass extending `OperationInput` that holds prompts and the
   lazily-filled tensors. `prepare_index(model)` resolves everything that needs no forward pass;
   `prepare(model)` calls it and then gathers activations. Both are idempotent, guarded on the
@@ -110,14 +111,17 @@ supplies only the per-panel payload (`value_column`, `hover`, `value_range`, ...
 
 An operation's methods are an open registry: each `<op>/method/factory.py` is a `RegistryFactory`
 (`operation/registry.py`), which knows its methods only by name, the built-ins registered through the same
-`register` users call. The config's `method` name picks one, and a method is built from
-`(model, config)`. A method names the dataclass of its settings as `settings_class`, extending its
-op's empty settings base (`LensSettings`, ...), which a method naming none takes. The config's
-`__post_init__` looks its method up in the factory (imported there, as the factory imports the
-methods, which import the config) and reads `settings` into that class, so a bad name or setting fails
-as the config is built. Each `<op>/__init__.py` imports its factory so the built-ins are registered
-whatever is imported first. A lens is a single class that tells activations apart by
-`index.activation()` itself. `DatasetFactory` is the same plain name registry; intex ships no datasets.
+`register` users call. The config's `method.type` picks one, and a method is built from
+`(model, config)`, taking `config.method` as its `self.method_config`. Each op's method base is generic in the
+dataclass of its method config: a method's first type argument (`LogitLens[TheConfig]`) types `self.method_config`
+and is what `method_config_class` (`operation/method.py`) reads to parse a config, a TypeVar left open (the op
+bases and the built-ins without fields of their own) giving its bound. Each op's method config base extends
+`MethodConfig` (`operation/method.py`) and names its factory in `factory()` (imported there, as the
+factory imports the methods, which import the method config): its `from_config` reads a file's `method`
+strictly into the class its `type` names, so a bad name or field fails as the file is read; one built in code
+is taken as given. Each `<op>/__init__.py`
+imports its factory so the built-ins are registered whatever is imported first. A lens is a single
+class that tells activations apart by `index.activation()` itself. `DatasetFactory` is the same plain name registry; intex ships no datasets.
 
 Everything else dispatches by `match` on an enum in an `AbstractX.get(enum)` static method
 (`patching/metric.py`'s metrics and comparisons, `patching/processor.py`'s source/target strategies,

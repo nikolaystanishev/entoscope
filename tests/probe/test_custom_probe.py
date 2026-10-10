@@ -8,7 +8,7 @@ import pytest
 import torch
 from sklearn.metrics import accuracy_score, roc_auc_score
 
-from intex.probe.config import ProbeConfig, ProbeSettings
+from intex.probe.config import ProbeConfig, ProbeMethodConfig
 from intex.probe.method.factory import ProbeMethodFactory
 from intex.probe.method.probe import AbstractProbeMethod
 
@@ -16,8 +16,7 @@ from .conftest import NEGATIVE, POSITIVE, probe_of, run_probe
 
 TEMPERATURE = 0.5
 CENTROID_YAML = {
-    "method": "centroid",
-    "settings": {"temperature": TEMPERATURE},
+    "method": {"type": "centroid", "temperature": TEMPERATURE},
     "pool": {"position": "mean"},
     "metric": ["accuracy", "auroc"],
     "source": {"activation": "resid.post", "location": ["layer"]},
@@ -25,14 +24,12 @@ CENTROID_YAML = {
 
 
 @dataclass(kw_only=True)
-class CentroidProbeSettings(ProbeSettings):
+class CentroidProbeConfig(ProbeMethodConfig):
     temperature: float = 1.0
 
 
-class CentroidProbe(AbstractProbeMethod):
+class CentroidProbe(AbstractProbeMethod[CentroidProbeConfig]):
     """Labels an example by the nearer of the two class means."""
-
-    settings_class = CentroidProbeSettings
 
     def fit(self, features, labels):
         self._centroids = torch.stack([features[labels == label].mean(0) for label in (0, 1)])
@@ -41,11 +38,11 @@ class CentroidProbe(AbstractProbeMethod):
         return self._distances(features).argmin(-1).numpy()
 
     def predict_proba(self, features):
-        return (-self._distances(features) / self.settings.temperature).softmax(-1)[:, 1].numpy()
+        return (-self._distances(features) / self.method_config.temperature).softmax(-1)[:, 1].numpy()
 
     @property
     def probe(self):
-        return {"centroids": self._centroids, "temperature": self.settings.temperature}
+        return {"centroids": self._centroids, "temperature": self.method_config.temperature}
 
     def _distances(self, features):
         return torch.cdist(features, self._centroids)
@@ -77,7 +74,7 @@ def test_a_registered_probe_is_trained_and_scored_at_every_location(model, cache
         assert row["auroc"] == pytest.approx(roc_auc_score(labels, (-distances / TEMPERATURE).softmax(-1)[:, 1]))
 
 
-def test_a_registered_probe_leaves_its_estimators_and_settings_behind(
+def test_a_registered_probe_leaves_its_estimators_and_method_config_behind(
     model, config_from_yaml, centroid_probe, tmp_path
 ):
     save_dir = tmp_path / "centroids"
@@ -90,5 +87,5 @@ def test_a_registered_probe_leaves_its_estimators_and_settings_behind(
     for output, probe in probes.items():
         assert torch.equal(probe["centroids"], collector.probes[output]["centroids"])
     saved = json.loads((save_dir / "config.json").read_text())
-    assert (saved["method"], saved["settings"]) == ("centroid", {"temperature": TEMPERATURE})
+    assert saved["method"] == {"type": "centroid", "temperature": TEMPERATURE}
     assert saved["metric"] == ["accuracy", "auroc"]

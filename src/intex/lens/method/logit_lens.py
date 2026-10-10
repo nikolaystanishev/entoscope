@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import torch
 from jaxtyping import Float
 
-from intex.lens.method.lens import AbstractLensMethod
+from intex.lens.method.lens import AbstractLensMethod, LensMethodConfigT
 from intex.model import Model
 from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from intex.model.index import IndexElement
@@ -64,7 +64,7 @@ def _head_lift(
     return torch.tensordot(activation, weight, dims=weight.ndim - 1)
 
 
-class LogitLens(AbstractLensMethod):
+class LogitLens(AbstractLensMethod[LensMethodConfigT]):
     """Reads an element out the way the model reads out its final residual stream.
 
     A residual-stream state is unembedded as it is. An MLP-hidden or attention head activation is

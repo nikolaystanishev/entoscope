@@ -7,7 +7,7 @@ from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorCo
 from intex.probe.collector import ProbeCollector
 from intex.probe.config import PoolingType, ProbeConfig, ProbeMetric
 from intex.probe.input import ProbeInput
-from intex.probe.method.linear import LinearProbeSettings
+from intex.probe.method.linear import LinearProbeConfig
 from intex.probe.prober import Prober
 
 POSITIVE = ["The movie was absolutely wonderful", "I loved every minute of it"]
@@ -30,8 +30,7 @@ def probe_config(
     **source,
 ) -> ProbeConfig:
     return ProbeConfig(
-        method="linear",
-        settings=LinearProbeSettings(max_iter=max_iter, seed=seed),
+        method=LinearProbeConfig(type="linear", max_iter=max_iter, seed=seed),
         pool=MEAN_OVER_POSITION if pool is None else pool,
         metric=metric or [ProbeMetric.ACCURACY],
         source=ModelLocatorConfig(activation=activation, location=location or [ModelLocation.LAYER], **source),

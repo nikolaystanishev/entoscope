@@ -3,7 +3,7 @@ import pytest
 import torch
 
 from intex.lens.collector import LensCollector
-from intex.lens.config import LensConfig, LensSettings
+from intex.lens.config import LensConfig, LensMethodConfig
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.lens.method.factory import LensMethodFactory
@@ -16,12 +16,9 @@ HEAD = 7
 LAYER = 8
 
 
-def coordinates_config(
-    *coordinates: dict, method: str = "logit_lens", settings: LensSettings | dict | None = None, top_k: int = 1
-) -> LensConfig:
+def coordinates_config(*coordinates: dict, method: LensMethodConfig | None = None, top_k: int = 1) -> LensConfig:
     return LensConfig(
-        method=method,
-        settings=settings or LensSettings(),
+        method=method or LensMethodConfig(type="logit_lens"),
         top_k=top_k,
         source=ModelLocatorConfig(coordinates=list(coordinates)),
     )
@@ -30,21 +27,19 @@ def coordinates_config(
 def declarative_config(
     activation: ModelLayerLocation,
     location: list[ModelLocation],
-    method: str = "logit_lens",
-    settings: LensSettings | dict | None = None,
+    method: LensMethodConfig | None = None,
     top_k: int = 1,
     **source,
 ) -> LensConfig:
     return LensConfig(
-        method=method,
-        settings=settings or LensSettings(),
+        method=method or LensMethodConfig(type="logit_lens"),
         top_k=top_k,
         source=ModelLocatorConfig(activation=activation, location=location, **source),
     )
 
 
 def run_lens(model, config: LensConfig, prompt: str | None = PROMPT, save_dir=None) -> LensCollector:
-    prompt = prompt if LensMethodFactory.get(config.method).reads_activations else None
+    prompt = prompt if LensMethodFactory.get(config.method.type).reads_activations else None
     lens_input = LensInput(config, prompt)
     collector = Lens(model).apply(
         lens_input, save_dir=None if save_dir is None else str(save_dir), return_collector=True, verbose=False

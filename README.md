@@ -48,13 +48,14 @@ from transformer_lens.model_bridge import TransformerBridge
 from intex.lens.config import LensConfig
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
+from intex.lens.method.parameter_lens import ParameterLensConfig
 from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
 
 config = LensConfig(
-    method="parameter_lens",
+    method=ParameterLensConfig(type="parameter_lens"),
     top_k=5,
     source=ModelLocatorConfig(
         activation=ModelLayerLocation.MLP_POST,
@@ -85,8 +86,8 @@ location out sums all of them, exactly as grouped neurons and heads work in the 
 | `attn.q` / `attn.k` / `attn.v` | column of `W_Q` / `W_K` / `W_V`            | what the subhead reads               |
 | `attn.z`                       | row of `W_O`                               | what the subhead writes              |
 
-The lens has two settings, passed as `ParameterLensSettings` (`settings=ParameterLensSettings(scale=-1.0)`,
-from `intex.lens.method.parameter_lens`). `projection` picks the
+The lens has two fields, on its `ParameterLensConfig` (`method=ParameterLensConfig(type="parameter_lens", scale=-1.0)`).
+`projection` picks the
 vocabulary space: `unembedding` (the default) multiplies by `W_U`, `embedding` by the embedding
 matrix `E`, as in the paper. The two differ whenever a model does not
 tie them — GPT-2 does tie them, so on HuggingFace's weights the two spaces agree exactly and only
@@ -99,7 +100,7 @@ vector: a ranking score over the vocabulary, not a probability the model ever pr
 the magnitude acts as a temperature on the `probability_*` ranking.
 
 Configs can also be loaded from YAML via `intex.operation.config.ConfigFactory[LensConfig]`, the
-lens's settings under `settings` (see [Custom methods](#custom-methods) for the shape), and the
+lens's method config under `method` (see [Custom methods](#custom-methods) for the shape), and the
 operation can be run from an `@intex.script.experiment.experiment` script.
 
 ## Circuit Discovery
@@ -114,12 +115,12 @@ from transformer_lens.model_bridge import TransformerBridge
 from intex.circuit.config import CircuitConfig
 from intex.circuit.discoverer import CircuitDiscoverer
 from intex.circuit.input import CircuitInput
-from intex.circuit.method.information_flow_routes import InformationFlowRoutesSettings
+from intex.circuit.method.information_flow_routes import InformationFlowRoutesConfig
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
 
-config = CircuitConfig(method="information_flow_routes", settings=InformationFlowRoutesSettings(threshold=0.04))
+config = CircuitConfig(method=InformationFlowRoutesConfig(type="information_flow_routes", threshold=0.04))
 prompts = ["The capital of France is", "The Eiffel Tower is in"]
 
 collector = CircuitDiscoverer(model).apply(
@@ -290,15 +291,16 @@ Registering a dataset follows the same rules as registering a method; see
 
 ## Custom methods
 
-Every operation runs a method, named in its config's `method` field, with the method's own settings
-beside it in `settings`: an instance of the method's settings class in code, or a mapping in YAML. A
-setting left out takes the method's default.
+Every operation runs the method in its config's `method` field: the method config, whose `type`
+names the method. In code that is an instance of its method config class; in YAML a mapping with
+`type` and the fields, or just the type for the method with its defaults. A field left out takes
+the method's default.
 
-| operation         | built-in methods (their settings)                                                    |
+| operation         | built-in methods (their fields)                                                      |
 |-------------------|--------------------------------------------------------------------------------------|
 | Lens              | `logit_lens`, `tuned_lens` (`translators`), `parameter_lens` (`projection`, `scale`) |
 | Probing           | `linear` (`max_iter`, `seed`)                                                        |
-| Patching          | `exact` (the default), `attribution`, `integrated_gradients` (`interpolation_steps`) |
+| Patching          | `exact`, `attribution`, `integrated_gradients` (`interpolation_steps`)               |
 | Circuit Discovery | `information_flow_routes` (`threshold`, `path_threshold`, `prediction_positions`)    |
 
 A method you register is named the same way, and runs through the same operator, collector, plan
@@ -307,7 +309,7 @@ and result page as the built-in ones:
 ```python
 from dataclasses import dataclass
 
-from intex.lens.config import LensConfig, LensSettings
+from intex.lens.config import LensConfig, LensMethodConfig
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
 from intex.lens.method.factory import LensMethodFactory
@@ -316,19 +318,17 @@ from intex.operation.config import ConfigFactory
 
 
 @dataclass(kw_only=True)
-class TemperatureLensSettings(LensSettings):
+class TemperatureLensConfig(LensMethodConfig):
     temperature: float = 1.0
 
 
 @LensMethodFactory.register("temperature_lens")
-class TemperatureLens(LogitLens):
-    settings_class = TemperatureLensSettings
-
+class TemperatureLens(LogitLens[TemperatureLensConfig]):
     def project(self, activation, index):
-        return super().project(activation, index) / self.settings.temperature
+        return super().project(activation, index) / self.method_config.temperature
 
 
-config = LensConfig(method="temperature_lens", settings=TemperatureLensSettings(temperature=2.0), source=...)
+config = LensConfig(method=TemperatureLensConfig(type="temperature_lens", temperature=2.0), source=...)
 # or from YAML
 config = ConfigFactory[LensConfig]("configs.yaml").create("warm")
 
@@ -337,30 +337,48 @@ Lens(model).apply(LensInput(config, "The capital of France is"), save_dir="runs/
 
 ```yaml
 warm:
-  method: temperature_lens
-  top_k: 5
-  settings:
+  method:
+    type: temperature_lens
     temperature: 2.0
+  top_k: 5
+  source:
+    activation: resid.post
+    location: [layer, position]
+
+cold:
+  method: logit_lens  # just the type: the method with its defaults
   source:
     activation: resid.post
     location: [layer, position]
 ```
 
-The name picks the method, and the method names the dataclass of its settings as `settings_class`,
-extending its operation's empty settings base. The config looks the method up as it is built and
-reads `settings` into that class, strictly: a setting the method does not have, another method's
-settings, or a setting without a default left out raises right there. A method naming none, such as
-`logit_lens`, takes the empty base itself, which no setting fits, and a method extending another takes
-that method's `settings_class` unless it names its own. `config.json` records every setting, defaults
-included, and `dataclasses.replace(config, method="tuned_lens", settings=TunedLensSettings())` switches
-a built config to another method.
+The `type` picks the method, and the method names the dataclass of its method config as its type
+argument, extending its operation's empty method config base. That one name types `self.method_config` and is
+the class the config reads `method` into. Read from a file, `method` goes into that class
+through the method config base's `from_config`, strictly: a mapping without `type`, a method nothing
+registered, a field the method does not have, or a field without a default left out raises right
+there. Built in code, the instance is used as given, so make it one of that very class: `config.json`
+is read back into it. A method naming none, such as `logit_lens`, takes the empty base
+itself, which no field fits. A method extending another keeps that one's method config, except one
+extending a method with none of its own - `logit_lens`, `exact`, `attribution`, which leave their
+type argument open - which names its own, as `TemperatureLens` does. One method config class therefore
+serves several methods, so `type` is declared once, on `MethodConfig`, with no default: the instance
+always names its method - `LensMethodConfig(type="logit_lens")`, `TunedLensConfig(type="tuned_lens")` -
+and every operation's config requires `method`. `config.json` records the method with every field,
+defaults included, and `dataclasses.replace(config, method=TunedLensConfig(type="tuned_lens"))`
+switches a built config to another method.
 
-| operation         | factory                 | subclass                 | settings base      | implement                                  | built              |
-|-------------------|-------------------------|--------------------------|--------------------|--------------------------------------------|--------------------|
-| Lens              | `LensMethodFactory`     | `AbstractLensMethod`     | `LensSettings`     | `extract`, `project`                       | once per run       |
-| Probing           | `ProbeMethodFactory`    | `AbstractProbeMethod`    | `ProbeSettings`    | `fit`, `predict`, `predict_proba`, `probe` | once per index row |
-| Patching          | `PatchingMethodFactory` | `AbstractPatchingMethod` | `PatchingSettings` | `scores`, `passes`                         | once per run       |
-| Circuit Discovery | `CircuitMethodFactory`  | `AbstractCircuitMethod`  | `CircuitSettings`  | `build`                                    | once per run       |
+Method configs are data, read back from `config.json` as they were given: numbers, strings, enums and
+paths, and lists, tuples, sets, mappings and dataclasses of them. A field that has no such form - a
+function, a tensor - cannot be written to `config.json`; a method that needs one builds it from its
+fields (a path to load it from, say) or holds it as a class attribute.
+
+| operation         | factory                 | subclass                 | method config base     | implement                                  | built              |
+|-------------------|-------------------------|--------------------------|------------------------|--------------------------------------------|--------------------|
+| Lens              | `LensMethodFactory`     | `AbstractLensMethod`     | `LensMethodConfig`     | `extract`, `project`                       | once per run       |
+| Probing           | `ProbeMethodFactory`    | `AbstractProbeMethod`    | `ProbeMethodConfig`    | `fit`, `predict`, `predict_proba`, `probe` | once per index row |
+| Patching          | `PatchingMethodFactory` | `AbstractPatchingMethod` | `PatchingMethodConfig` | `scores`, `passes`                         | once per run       |
+| Circuit Discovery | `CircuitMethodFactory`  | `AbstractCircuitMethod`  | `CircuitMethodConfig`  | `build`                                    | once per run       |
 
 - **Lens** - one class serves every activation the lens reads, telling them apart by
   `index.activation()`, and `project` returns one element's logits over the vocabulary. Extending
@@ -378,12 +396,14 @@ a built config to another method.
   `collector_class=CircuitCollector`.
 
 A method is registered when the module defining it is imported, so import it before building or
-loading a config that names it: the config looks its method up as it is built, so a name nothing
-registered (listing the names that are) or a setting that does not fit fails right there, before any
-run. The built-in methods register with their operation's package, so they are always known. In an `@experiment` script, define the method above `main`. A name
-belongs to one method: registering another under it raises, so a built-in cannot be shadowed by
-accident, while defining the same classes again (re-running a notebook cell) replaces them. A method
-that leaves an abstract method out is rejected when it is registered.
+loading a config that names it: a config file looks its method up as it is read, so a name nothing
+registered (listing the names that are) or a field that does not fit fails right there, before any
+run. The built-in methods register with their operation's package, so they are always known. In an
+`@experiment` script, define the method above `main`. A name belongs to one method: registering
+another under it raises, so a built-in cannot be shadowed by accident, while defining the same
+classes again (re-running a notebook cell) replaces them. Classes a function builds are each another
+method, however alike their names. A method that leaves an abstract method out is rejected when it is
+registered.
 
 ## Attribution & licensing
 

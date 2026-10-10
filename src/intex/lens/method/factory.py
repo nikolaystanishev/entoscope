@@ -14,7 +14,7 @@ class LensMethodFactory(RegistryFactory[AbstractLensMethod]):
 
     @classmethod
     def create(cls, config: LensConfig, model: Model) -> AbstractLensMethod:
-        return cls.get(config.method)(model, config)
+        return cls.get(config.method.type)(model, config)
 
 
 LensMethodFactory.register("logit_lens")(LogitLens)

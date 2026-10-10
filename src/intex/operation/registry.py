@@ -16,8 +16,13 @@ ImplementationT = TypeVar("ImplementationT", bound=type)
 
 def _same_definition(one: type, other: type) -> bool:
     # Re-running the statement that defines a class - a notebook cell, an ``importlib.reload`` -
-    # builds a new class object under the same module and qualified name.
-    return one is other or (one.__module__ == other.__module__ and one.__qualname__ == other.__qualname__)
+    # builds a new class object under the same module and qualified name. A class defined in a
+    # function is built anew by every call, each a different implementation, so it never counts.
+    return one is other or (
+        one.__module__ == other.__module__
+        and one.__qualname__ == other.__qualname__
+        and "<locals>" not in one.__qualname__
+    )
 
 
 class RegistryFactory(Generic[T]):

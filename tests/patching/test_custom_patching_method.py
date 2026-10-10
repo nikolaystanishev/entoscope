@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import pytest
 import torch
 
-from intex.patching.config import PatchingConfig, PatchingSettings
+from intex.patching.config import PatchingConfig, PatchingMethodConfig
 from intex.patching.input import PatchingInput
 from intex.patching.method.factory import PatchingMethodFactory
 from intex.patching.method.patching import AbstractPatchingMethod, RowResult
@@ -22,25 +22,22 @@ DELTA = 0.5
 
 ELEMENT_YAML = {"activation": "resid.post", "location": ["layer"], "type": "replace"}
 CONSTANT_YAML = {
-    "method": "constant",
-    "settings": {"delta": DELTA},
+    "method": {"type": "constant", "delta": DELTA},
     "metric": {"logit_diff": ["absolute", "indirect_effect"], "kl_divergence": ["indirect_effect"]},
     "patch": [{"source": ELEMENT_YAML, "target": ELEMENT_YAML}],
 }
 
 
 @dataclass(kw_only=True)
-class ConstantSettings(PatchingSettings):
+class ConstantConfig(PatchingMethodConfig):
     delta: float = 0.0
 
 
-class ConstantMethod(AbstractPatchingMethod):
+class ConstantMethod(AbstractPatchingMethod[ConstantConfig]):
     """Reports the same change in every metric for every row, without running anything."""
 
-    settings_class = ConstantSettings
-
     def scores(self, patching_input, verbose=True):
-        delta = torch.tensor(self.settings.delta)
+        delta = torch.tensor(self.method_config.delta)
         for group in zip_fill(*patching_input.index):
             yield RowResult(group[0].output, self._report(patching_input, dict.fromkeys(self.config.metric, delta)))
 
@@ -90,7 +87,7 @@ def test_a_plan_counts_the_registered_methods_own_passes(model, monkeypatch, con
         _input(config_from_yaml(PatchingConfig, "constant", CONSTANT_YAML)), verbose=False
     )
 
-    assert plan.describe().splitlines()[0] == "Patcher plan — constant (config: constant)"
+    assert plan.describe().splitlines()[0] == "Patcher plan - constant (config: constant)"
     assert plan.steps == model.cfg.n_layers
     # It runs no patched model, so it has no batches - only the two runs the input caches.
     assert plan.batches is None
@@ -106,6 +103,6 @@ def test_the_page_names_the_registered_method(model, config_from_yaml, constant_
 
     titles = [figure.title for figure in rendered_figures(save_dir)]
     assert len(titles) == 3
-    assert all(title.startswith("Patching — constant ") for title in titles)
+    assert all(title.startswith("Patching - constant · ") for title in titles)
     saved = json.loads((save_dir / "config.json").read_text())
-    assert (saved["method"], saved["settings"]) == ("constant", {"delta": DELTA})
+    assert saved["method"] == {"type": "constant", "delta": DELTA}
