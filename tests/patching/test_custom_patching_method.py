@@ -87,7 +87,7 @@ def test_a_plan_counts_the_registered_methods_own_passes(model, monkeypatch, con
         _input(config_from_yaml(PatchingConfig, "constant", CONSTANT_YAML)), verbose=False
     )
 
-    assert plan.describe().splitlines()[0] == "Patcher plan - constant (config: constant)"
+    assert plan.describe().splitlines()[:3] == ["Patcher plan", "  method: constant", "  config: constant"]
     assert plan.steps == model.cfg.n_layers
     # It runs no patched model, so it has no batches - only the two runs the input caches.
     assert plan.batches is None

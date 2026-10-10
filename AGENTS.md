@@ -150,6 +150,9 @@ time, so the config class must be defined above it.
 - Comments and docstrings explain *why* and what is non-obvious (a numerical gotcha, why a guard
   exists, what a backend does differently). They do not restate what the code or the math already
   says; such comments get deleted.
+- Messages to the user go through a module's `logging.getLogger(__name__)`, never `print`.
+  `intex/__init__.py` gives the `intex` logger its own stderr handler at INFO and stops it propagating,
+  so a dependency that configures the root logger (transformer_lens does) cannot reformat or mute it.
 - `src/intex/circuit/vendor/` is CC BY-NC 4.0 third-party code, kept close to verbatim and excluded
   from ruff. Do not reformat or refactor it. Circuit Discovery's `information_flow_routes` method is
   non-commercial-only as a result.

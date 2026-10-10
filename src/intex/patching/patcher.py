@@ -1,3 +1,5 @@
+import logging
+
 from intex.model import Model
 from intex.operation.operator import Operator
 from intex.operation.plan import OperationPlan
@@ -5,6 +7,8 @@ from intex.patching.collector import PatchingCollector, PatchingVisualizationCol
 from intex.patching.input import PatchingInput
 from intex.patching.method.factory import PatchingMethodFactory
 from intex.util.collections import batch_generator, zip_fill
+
+logger = logging.getLogger(__name__)
 
 
 class Patcher(Operator):
@@ -63,7 +67,7 @@ class Patcher(Operator):
         )
 
         if verbose:
-            print(plan)
+            logger.info("%s", plan)
         return plan
 
     def _patch(self, patching_input: PatchingInput, save_dir: str | None, verbose: bool = True) -> PatchingCollector:

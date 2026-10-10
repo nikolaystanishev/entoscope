@@ -1,3 +1,5 @@
+import logging
+
 from tqdm import tqdm
 
 from intex.lens.collector import LensCollector, LensVisualizationCollector
@@ -6,6 +8,8 @@ from intex.lens.method.factory import LensMethodFactory
 from intex.model import Model
 from intex.operation.operator import Operator
 from intex.operation.plan import OperationPlan
+
+logger = logging.getLogger(__name__)
 
 
 class Lens(Operator):
@@ -61,5 +65,5 @@ class Lens(Operator):
         )
 
         if verbose:
-            print(plan)
+            logger.info("%s", plan)
         return plan

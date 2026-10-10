@@ -1,3 +1,5 @@
+import logging
+
 from tqdm import tqdm
 
 from intex.model import Model
@@ -7,6 +9,8 @@ from intex.probe.collector import ProbeCollector
 from intex.probe.input import ProbeInput
 from intex.probe.method.factory import ProbeMethodFactory
 from intex.probe.metric import AbstractProbeMetric
+
+logger = logging.getLogger(__name__)
 
 
 class Prober(Operator):
@@ -75,5 +79,5 @@ class Prober(Operator):
         )
 
         if verbose:
-            print(plan)
+            logger.info("%s", plan)
         return plan

@@ -194,7 +194,9 @@ plan = Lens(model).plan(lens_input, save_dir="runs/logit_lens")
 ```
 
 ```text
-Lens plan — logit_lens (config: my_lens)
+Lens plan
+  method: logit_lens
+  config: my_lens
   prompt: "The capital of France is" (6 tokens)
   reads: blocks.0.hook_resid_post, blocks.1.hook_resid_post, blocks.10.hook_resid_post, ...
   work: 72 elements, 1 forward pass
@@ -215,8 +217,8 @@ What each operator reports:
 | `Patcher`           | one patched run per source/target pair | one per batch, plus the two cached runs                     |
 | `CircuitDiscoverer` | one graph per prompt                   | one per prompt                                              |
 
-The plan is printed as it is built; pass `verbose=False` to keep it quiet and only take the object
-back. That object, an `OperationPlan`, is a dataclass, so the same numbers are readable in code:
+The plan is logged as it is built (see [Logging](#logging)); pass `verbose=False` to keep it quiet
+and only take the object back. That object, an `OperationPlan`, is a dataclass, so the same numbers are readable in code:
 `steps`, `forward_passes`, `batches`, `activations`, `outputs`, and `index` — one DataFrame per
 index, holding exactly what `index.csv` would. `plan.describe(max_rows=...)` re-renders it with
 more or less of the index than the printout shows.
@@ -243,6 +245,31 @@ def main(config: Config):
         Lens(model).plan(lens_input, "runs/logit_lens")
     else:
         Lens(model).apply(lens_input, save_dir="runs/logit_lens")
+```
+
+## Logging
+
+What intex reports - a plan, where a run's results were saved - goes through Python's `logging`, under
+the `intex` logger at INFO, to stderr, so a script's stdout stays its own:
+
+```text
+[intex] INFO 2026-10-10 14:03:13 Results saved to runs/logit_lens
+```
+
+The `intex` logger has its own handler and does not propagate to the root logger, so the messages
+keep this form whatever configures root logging - dependencies included: transformer_lens logs
+through the module-level `logging.info`, which runs `basicConfig` behind your back. To silence them:
+
+```python
+logging.getLogger("intex").setLevel(logging.WARNING)
+```
+
+To route them through your application's own handlers instead:
+
+```python
+intex_logger = logging.getLogger("intex")
+intex_logger.handlers.clear()
+intex_logger.propagate = True
 ```
 
 ## Datasets
