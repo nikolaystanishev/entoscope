@@ -20,8 +20,13 @@ uv run pytest tests/lens/test_logit_lens.py::test_the_grid_covers_every_layer_an
 uv run ruff check . && uv run ruff format --check .
 ```
 
-CI (`.github/workflows/ci.yml`) runs exactly the lint, format-check and `pytest` above, the tests on
-Python 3.10–3.14.
+```bash
+uv run pytest --cov --cov-report=html
+```
+
+CI (`.github/workflows/ci.yml`) runs exactly the lint, format-check and `pytest` above, the tests with `--cov` on
+Python 3.10–3.14; a `coverage` job combines the versions into the job summary and a `coverage-html` artifact
+(report-only, no threshold).
 
 ## What this repo is
 
