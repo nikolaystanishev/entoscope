@@ -86,15 +86,17 @@ class PatchingInput(OperationInput):
                     self._source_logits, self._source_cache = self._run_with_cache(
                         model, self._source_tokens, batch_width, names
                     )
-                self._target_logits, self._target_cache = self._run_with_cache(model, self._target_tokens, batch_width, names)
+                self._target_logits, self._target_cache = self._run_with_cache(
+                    model, self._target_tokens, batch_width, names
+                )
             self._batch_width = batch_width
-    
+
             # Everything read off the previous runs, which a run at another width replaces.
             self._baselines = {}
             self._source_probabilities = None
             self._target_probabilities = None
             self._noise_scales = {}
-    
+
             if self._source_logits is not None:
                 self._source_generation = int(self._source_logits[0, -1].argmax())
             self._target_generation = int(self._target_logits[0, -1].argmax())
@@ -110,8 +112,10 @@ class PatchingInput(OperationInput):
 
         if batch_width != 1:
             logits = logits[:1].clone()
-            cache = ActivationCache({name: activation[:1].clone() for name, activation in cache.cache_dict.items()}, cache.model)
-        return logits, cache        
+            cache = ActivationCache(
+                {name: activation[:1].clone() for name, activation in cache.cache_dict.items()}, cache.model
+            )
+        return logits, cache
 
     def rows(self) -> list[tuple]:
         """The index's rows as a run patches them: one group of elements per patched run."""
