@@ -9,7 +9,6 @@ from intex.patching.input import PatchingInput
 from intex.patching.method.patching import AbstractPatchingMethod, PatchingMethodConfigT, RowResult
 from intex.patching.metric import AbstractMetric
 from intex.patching.processor import SourceStrategy
-from intex.util.collections import zip_fill
 
 Gradients = dict[PatchingMetric, dict[str, torch.Tensor]]
 
@@ -31,9 +30,8 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
     def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[RowResult]:
         self._check_available(patching_input)
         gradients = self._gradients(patching_input, verbose)
-        rows = list(zip_fill(*patching_input.index))
 
-        for group in tqdm(rows, disable=not verbose):
+        for group in tqdm(patching_input.rows(), disable=not verbose):
             deltas: dict[PatchingMetric, torch.Tensor] = {}
             for index in group:
                 name = index.target.transformer_activation()

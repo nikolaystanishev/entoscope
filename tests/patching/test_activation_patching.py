@@ -1267,8 +1267,8 @@ def test_gaussian_noise_is_added_at_three_standard_deviations_of_the_activation(
 
 @pytest.mark.parametrize("source_type", list(PatchingType))
 def test_a_batched_run_scores_what_an_unbatched_one_does(model: HookedTransformer, source_type: PatchingType) -> None:
-    # Only the patched run is batched, one copy of the target prompt per row; every row still reads
-    # its source from the one prompt each cache holds. Five rows a batch leaves a ragged last one.
+    # A patched run holds one copy of the target prompt per row; every row still reads its source from
+    # the one prompt each cache keeps. Five rows a batch leaves a ragged last one, padded to five.
     def element(patching_type: PatchingType) -> PatchingElementConfig:
         return PatchingElementConfig(
             activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelLocation.LAYER], type=patching_type, value=2.0
@@ -1328,6 +1328,89 @@ def test_a_one_row_element_is_patched_into_every_row_of_a_batch(model: HookedTra
     assert len(together.result) == model.cfg.n_layers
     assert torch.allclose(_metric(together), _metric(alone).expand(model.cfg.n_layers), atol=1e-4)
     assert together.result["generation"].tolist() == alone.result["generation"].tolist() * model.cfg.n_layers
+
+
+@pytest.fixture
+def batch_shape_dependent_model(model: HookedTransformer):
+    """``model`` with numerics that depend on the batch shape, as MPS kernels' do in half precision.
+
+    CPU kernels round the same at every batch size, so without this a run compared against a
+    reference made at another shape is indistinguishable from one compared at its own.
+    """
+    point = model.hook_dict["hook_embed"]
+    assert not point.fwd_hooks
+    point.add_hook(lambda activation, hook: activation + 1e-3 * activation.shape[0], dir="fwd", is_permanent=True)
+    yield model
+    point.remove_hooks("fwd", including_permanent=True)
+
+
+def _self_patch_config() -> PatchingConfig:
+    element = PatchingElementConfig(
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        type=PatchingType.REPLACE,
+    )
+    return PatchingConfig(
+        metric={PatchingMetric.PROBABILITY: [MetricComparison.ABSOLUTE]},
+        method=EXACT,
+        patch=[SinglePatchingConfig(source=element, target=element)],
+    )
+
+
+@pytest.mark.parametrize("batch_size", [1, 5])
+def test_patching_a_prompt_into_itself_reproduces_the_target_run(
+    batch_shape_dependent_model: HookedTransformer, batch_size: int
+) -> None:
+    # Writing back what a run already holds changes nothing, so every row must read exactly what the
+    # unpatched run does - which holds only if that run and its patch values were made at the patched
+    # runs' own batch shape. Five rows a batch leaves a ragged last one.
+    patching_input = PatchingInput(_self_patch_config(), TARGET_PROMPT, TARGET_PROMPT)
+    collector = Patcher(batch_shape_dependent_model, collector_class=PatchingCollector, batch_size=batch_size).apply(
+        patching_input, return_collector=True, verbose=False
+    )
+    assert collector is not None
+
+    assert len(collector.result) % batch_size != 0 or batch_size == 1
+    assert collector.result["probability"].tolist() == [
+        patching_input.target_baseline(PatchingMetric.PROBABILITY).item()
+    ] * len(collector.result)
+    assert collector.result["generation"].tolist() == [patching_input.target_generation] * len(collector.result)
+
+
+def test_preparing_at_another_width_remakes_the_runs_and_what_was_read_off_them(
+    batch_shape_dependent_model: HookedTransformer, monkeypatch
+) -> None:
+    model = batch_shape_dependent_model
+    probability = PatchingMetric.PROBABILITY
+    fresh = PatchingInput(_self_patch_config(), SOURCE_PROMPT, TARGET_PROMPT).prepare(model, batch_size=3)
+    patching_input = PatchingInput(_self_patch_config(), SOURCE_PROMPT, TARGET_PROMPT).prepare(model, batch_size=1)
+    narrow = patching_input.target_baseline(probability)
+
+    widths: list[int] = []
+    run_with_cache = model.run_with_cache
+
+    def counted(tokens, **kwargs):
+        widths.append(tokens.shape[0])
+        return run_with_cache(tokens, **kwargs)
+
+    monkeypatch.setattr(model, "run_with_cache", counted)
+    patching_input.prepare(model, batch_size=3)
+    patching_input.prepare(model, batch_size=3)
+
+    # Both prompts once at the new width, and not again at the same one.
+    assert widths == [3, 3]
+    assert patching_input.batch_width == 3
+    assert patching_input.target_cache[patching_input.activation_names()[0]].shape[0] == 1
+    assert patching_input.target_baseline(probability) != narrow
+    assert patching_input.target_baseline(probability) == fresh.target_baseline(probability)
+
+
+def test_a_batch_wider_than_the_sweep_runs_only_as_wide_as_its_rows(model: HookedTransformer) -> None:
+    patching_input = PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT)
+    Patcher(model, collector_class=PatchingCollector, batch_size=16).apply(patching_input, verbose=False)
+
+    assert len(patching_input.rows()) == 1
+    assert patching_input.batch_width == 1
 
 
 def _batched(model: HookedTransformer, config: PatchingConfig, batch_size: int) -> PatchingCollector:
