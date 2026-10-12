@@ -140,7 +140,10 @@ the same primitive — the patched run's metric minus the unpatched target run's
 so adding one means implementing `AbstractPatchingMethod.scores` and nothing else; `_report` fans
 that out into the columns and the figure draws one plot per `config.metric_pairs()` entry. A method
 that actually runs the patched model (only `exact`) also reports that run's next token as the row's
-`generation`; the gradient methods have no such run and leave it out.
+`generation`; the gradient methods have no such run and leave it out. Backends (MPS notably) round
+differently at different batch shapes, so the input's cached source and target runs are made as wide
+as the patched runs (`batch_width`) and `exact` pads its last batch to that width: a patch that writes
+back what was there must reproduce the target run exactly.
 
 ### Scripts
 

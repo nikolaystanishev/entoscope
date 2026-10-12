@@ -9,6 +9,7 @@ from intex.model.index import Index
 from intex.operation.input import OperationInput
 from intex.patching.config import PatchingConfig, PatchingElementConfig, PatchingMetric
 from intex.patching.metric import AbstractComparison, AbstractMetric
+from intex.util.collections import zip_fill
 
 
 @dataclass
@@ -29,6 +30,7 @@ class PatchingInput(OperationInput):
     _distractor_token_id: int | None = field(init=False, default=None)
     _source_cache: ActivationCache | None = field(init=False, default=None)
     _target_cache: ActivationCache | None = field(init=False, default=None)
+    _batch_width: int | None = field(init=False, default=None)
 
     _index: list[Index[PatchingElementConfig]] | None = field(init=False, default=None)
 
@@ -62,20 +64,38 @@ class PatchingInput(OperationInput):
 
         return self
 
-    def prepare(self, model: Model) -> "PatchingInput":
+    def prepare(self, model: Model, batch_size: int = 1) -> "PatchingInput":
+        """Run both prompts, caching what the index reads, as wide as the patched runs will be.
+
+        ``batch_size`` is how many rows each patched run holds. A backend may round differently at
+        different batch shapes - MPS does, by up to half a logit in bfloat16 - so a patched run has
+        to be compared with, and patched from, runs of its own shape: only then does a patch that
+        writes back what was there reproduce the target run exactly. Each prompt is therefore run
+        ``batch_width`` copies abreast and kept at its first row.
+        """
         self.prepare_index(model)
         self._check_metrics_are_available()
 
         # Guarded on the target cache, not the index: a ``plan`` may have resolved the index
         # already, and a run without a source prompt never fills the source one.
-        if self._target_cache is None:
+        batch_width = max(1, min(batch_size, len(self.rows())))
+        if self._target_cache is None or batch_width != self._batch_width:
             names = self.activation_names()
             with torch.no_grad():
                 if self._source_tokens is not None:
-                    self._source_logits, self._source_cache = model.run_with_cache(
-                        self._source_tokens, names_filter=names
+                    self._source_logits, self._source_cache = self._run_with_cache(
+                        model, self._source_tokens, batch_width, names
                     )
-                self._target_logits, self._target_cache = model.run_with_cache(self._target_tokens, names_filter=names)
+                self._target_logits, self._target_cache = self._run_with_cache(
+                    model, self._target_tokens, batch_width, names
+                )
+            self._batch_width = batch_width
+
+            # Everything read off the previous runs, which a run at another width replaces.
+            self._baselines = {}
+            self._source_probabilities = None
+            self._target_probabilities = None
+            self._noise_scales = {}
 
             if self._source_logits is not None:
                 self._source_generation = int(self._source_logits[0, -1].argmax())
@@ -83,6 +103,23 @@ class PatchingInput(OperationInput):
             self._resolve_answer_tokens(model)
 
         return self
+
+    @staticmethod
+    def _run_with_cache(
+        model: Model, tokens: Int[torch.Tensor, "batch pos"], batch_width: int, names: list[str]
+    ) -> tuple[Float[torch.Tensor, "batch pos d_vocab"], ActivationCache]:
+        logits, cache = model.run_with_cache(torch.cat([tokens] * batch_width), names_filter=names)
+
+        if batch_width != 1:
+            logits = logits[:1].clone()
+            cache = ActivationCache(
+                {name: activation[:1].clone() for name, activation in cache.cache_dict.items()}, cache.model
+            )
+        return logits, cache
+
+    def rows(self) -> list[tuple]:
+        """The index's rows as a run patches them: one group of elements per patched run."""
+        return list(zip_fill(*self.index)) if self.index else []
 
     def activation_names(self) -> list[str]:
         """Every activation the run touches, on either side of the patch.
@@ -204,6 +241,12 @@ class PatchingInput(OperationInput):
     def index(self) -> list[Index[PatchingElementConfig]]:
         assert self._index is not None
         return self._index
+
+    @property
+    def batch_width(self) -> int:
+        """How many rows every patched run holds - the width the cached runs were made at."""
+        assert self._batch_width is not None
+        return self._batch_width
 
     def source_baseline(self, metric: PatchingMetric) -> torch.Tensor:
         return self._baseline("source", metric)

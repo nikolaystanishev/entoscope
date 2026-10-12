@@ -7,8 +7,9 @@ from intex.model.index import IndexElement, SingleIndex
 from intex.patching.config import PatchingElementConfig, PatchingType
 from intex.patching.input import PatchingInput
 
-# Only the patched run is batched - one copy of the target prompt per row - so a row's batch index
-# addresses that run alone; every cache holds a single prompt and is read at batch 0.
+# A patched run holds one copy of the target prompt per row, so a row's batch index addresses that
+# run alone. The caches are made as wide as the patched runs but kept at their first row, so every
+# cache holds a single prompt and is read at batch 0.
 _CACHE_BATCH = 0
 
 

@@ -7,7 +7,7 @@ from intex.patching.input import PatchingInput
 from intex.patching.method.patching import AbstractPatchingMethod, PatchingMethodConfigT, RowResult
 from intex.patching.metric import AbstractMetric
 from intex.patching.processor import HookedPatchProcessor
-from intex.util.collections import batch_generator, zip_fill
+from intex.util.collections import batch_generator
 
 
 class ExactPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
@@ -20,19 +20,22 @@ class ExactPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
     batched = True
 
     def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[RowResult]:
-        rows = list(zip_fill(*patching_input.index))
+        rows = patching_input.rows()
+        batch_width = patching_input.batch_width
 
         for batch in tqdm(
-            batch_generator(rows, self.batch_size),
-            total=(len(rows) + self.batch_size - 1) // self.batch_size,
+            batch_generator(rows, batch_width),
+            total=(len(rows) + batch_width - 1) // batch_width,
             disable=not verbose,
         ):
             fwd_hooks = [
                 HookedPatchProcessor.hook(idx, patching_input, row) for row, group in enumerate(batch) for idx in group
             ]
+            # Always the width the input's cached runs were made at, a ragged last batch padded with
+            # unpatched copies, so every run has the shape of the runs it is compared with.
             patched_logits = self.model.run_with_hooks(
-                torch.cat([patching_input.target_tokens] * len(batch), dim=0), fwd_hooks=fwd_hooks
-            ).detach()[:, -1, :]
+                torch.cat([patching_input.target_tokens] * batch_width, dim=0), fwd_hooks=fwd_hooks
+            ).detach()[: len(batch), -1, :]
             # One transfer for the whole batch rather than one per row.
             generations = patched_logits.argmax(dim=-1).tolist()
 
