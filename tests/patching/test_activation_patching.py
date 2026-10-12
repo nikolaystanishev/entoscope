@@ -1335,11 +1335,19 @@ def batch_shape_dependent_model(model: HookedTransformer):
     """``model`` with numerics that depend on the batch shape, as MPS kernels' do in half precision.
 
     CPU kernels round the same at every batch size, so without this a run compared against a
-    reference made at another shape is indistinguishable from one compared at its own.
+    reference made at another shape is indistinguishable from one compared at its own. The shift is
+    along one coordinate: LayerNorm centers its input, so the same shift on every coordinate would
+    cancel up to rounding, and runs at different widths could still agree bit for bit.
     """
+
+    def shift(activation, hook):
+        activation = activation.clone()
+        activation[..., 0] += 1e-3 * activation.shape[0]
+        return activation
+
     point = model.hook_dict["hook_embed"]
     assert not point.fwd_hooks
-    point.add_hook(lambda activation, hook: activation + 1e-3 * activation.shape[0], dir="fwd", is_permanent=True)
+    point.add_hook(shift, dir="fwd", is_permanent=True)
     yield model
     point.remove_hooks("fwd", including_permanent=True)
 
