@@ -17,8 +17,8 @@ CircuitMethodConfigT = TypeVar("CircuitMethodConfigT", bound=CircuitMethodConfig
 class PromptCircuit:
     """One prompt's discovered circuit.
 
-    graph: full thresholded contribution graph, with a separate attention edge per head.
-    routes: pruned subgraph of the edges on paths leading to the traced prediction position(s).
+    ``graph`` is the full thresholded contribution graph, with a separate attention edge per head, and
+    ``routes`` the subgraph of its edges on paths leading to the traced prediction position(s).
 
     The circuit page and the GraphML files read the attributes Information Flow Routes writes: each
     node a ``kind`` (``input``, ``after_attn``, ``mlp`` or ``after_ffn``), ``layer``, ``position`` and

@@ -44,6 +44,13 @@ T = TypeVar("T", bound="ModelLocatorConfig")
 
 
 class IndexElement(Generic[T]):
+    """One side of an index row: its location values by name, read off the locator config ``config``.
+
+    ``slices`` turns the values into the slice of the activation tensor they address, and
+    ``transformer_activation`` names the hook that tensor is cached under. A list value addresses
+    several entries of its axis at once; a location the row does not name is the whole axis.
+    """
+
     def __init__(self, config: T, index_names: list[str], index: list[int | list[int] | str | ModelLayerLocation]):
         self.config = config
         self.index_names = deepcopy(index_names)
@@ -71,7 +78,7 @@ class IndexElement(Generic[T]):
 
         An ``int`` index drops its axis while a ``slice`` or ``list`` keeps it. Two or more
         ``list`` indices trigger NumPy-style advanced indexing, which merges those axes into
-        one whose name can no longer be attributed — that case raises instead.
+        one whose name can no longer be attributed - that case raises instead.
         """
         slicer = ActivationSlicer.get(self.activation())
         slices = slicer.extract(self._index_by_name())
@@ -103,7 +110,7 @@ class IndexElement(Generic[T]):
 class SingleIndex(Generic[T]):
     """One row of an ``Index``: where to read, where to write, and which result row it fills.
 
-    ``output`` is that row's position in the index — the key a collector files its cell under and the
+    ``output`` is that row's position in the index - the key a collector files its cell under and the
     row it lands on in the result frame. Positions are what ``Index`` iteration already hands out in
     order, so a run needs no coordinate of its own to find its row.
     """
@@ -124,6 +131,14 @@ class SingleIndex(Generic[T]):
 
 
 class Index(Generic[T]):
+    """The rows an operation iterates, one ``SingleIndex`` each.
+
+    ``source`` is a parsed locator; patching adds the ``target`` it writes into, paired with the source
+    row by row - an index of one row pairs with every row of the other. ``to_df`` is the frame
+    ``index.csv`` holds, its columns prefixed ``source_`` and ``target_``, and ``layout_df`` codes the
+    axes a result page lays the rows out on.
+    """
+
     def __init__(
         self,
         source_config: T,

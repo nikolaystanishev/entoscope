@@ -1,0 +1,22 @@
+# Configs naming the lens custom_lens.py registers: `uv run python examples/custom_lens.py --config-id <entry>`.
+#
+# A registered method is named like a built-in one. Its fields are read strictly into its method
+# config, so a field it does not have, or a lens nothing registered, fails as the file is read.
+
+# Logits divided by 2 before the softmax: the same ranking, flatter probabilities.
+warm:
+  method:
+    type: temperature_lens
+    temperature: 2.0
+  top_k: 5
+  source:
+    activation: resid.post
+    location: [layer, position]
+
+# Just the type: the lens with its defaults, which is the logit lens itself.
+plain:
+  method: temperature_lens
+  top_k: 5
+  source:
+    activation: resid.post
+    location: [layer, position]

@@ -3,8 +3,8 @@
 An ``Index`` lays its rows out as dense per-axis codes and the result frame carries the original
 ``source_*``/``target_*`` values, so laying one out is the same problem for every operation and only
 the cell payload differs. Everything produced here ends up inside plotly HTML, so values are escaped
-once, in ``format_value``, rather than at each call site. ``Figure`` — the page every operation's
-HTML is written through, grid-drawn or not — lives here too.
+once, in ``format_value``, rather than at each call site. ``Figure`` - the page every operation's
+HTML is written through, grid-drawn or not - lives here too.
 
 A run rarely reads one number off itself: patching names several metrics and the lens keeps a whole
 top-k. A page is therefore a list of panels, each drawn as its own plot from the same result, and an
@@ -30,7 +30,7 @@ from intex.operation.config import AbstractConfig
 from intex.operation.input import OperationInput
 
 InputT = TypeVar("InputT", bound=OperationInput)
-# Whatever names one plot to the operation that draws it — a metric and its comparison, a top-k rank.
+# Whatever names one plot to the operation that draws it - a metric and its comparison, a top-k rank.
 PanelT = TypeVar("PanelT")
 
 # x takes the last of these a run varies over and y the rest, so an activation-patching grid comes
@@ -168,7 +168,7 @@ class IndexGrid:
     """Where each result row sits once the axes a run varies over are laid out.
 
     Built from the index's own layout codes rather than from the result frame, so the axis rule can be
-    read — and tested — without a run behind it. An axis the run does not vary over is dropped: it
+    read - and tested - without a run behind it. An axis the run does not vary over is dropped: it
     offers no comparison and belongs in the subtitle. Axes beyond the first two fold into composite y
     keys rather than being aggregated away, so nothing is hidden; ``y_keys`` ascends and plotly draws
     the first at the bottom, putting layer 0 there as the circuit figures do.
@@ -265,8 +265,8 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
 
     Choosing the axes, pivoting the rows onto them and falling back to a bar when only one of them
     varies is the same work whatever was run, so it lives here; a subclass says only what its own
-    result means — which column a panel holds its value in, how to colour it, and what a cell reads
-    on hover. Those answers are read off the run's input, which comes along for that reason — and
+    result means - which column a panel holds its value in, how to colour it, and what a cell reads
+    on hover. Those answers are read off the run's input, which comes along for that reason - and
     because it lets a collector name a figure class and construct it without knowing what produced
     the frame. Every panel shares one grid and one set of axis labels, so those are resolved once, at
     construction. ``index`` is the one that laid the result out; its layout codes build the grid.
@@ -319,8 +319,8 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
     def str_tokens(self) -> dict[str, list[str]]:
         """The prompt's token strings for each position column of the result, keyed by that column.
 
-        Read once at construction to label the axes; a figure whose index carries no position — or a
-        run with no prompt to read one from — labels its ticks with the coordinates alone.
+        Read once at construction to label the axes; a figure whose index carries no position - or a
+        run with no prompt to read one from - labels its ticks with the coordinates alone.
         """
         return {}
 
@@ -456,7 +456,7 @@ def _location(name: str) -> ModelLocation | None:
 
 def _axis_name(column: Any) -> str:
     # A layout frame is keyed by ``ModelLocation`` members, whose ``str`` is the member name, not the
-    # location — everything downstream matches on the location, so take the value.
+    # location - everything downstream matches on the location, so take the value.
     return column.value if isinstance(column, Enum) else str(column)
 
 

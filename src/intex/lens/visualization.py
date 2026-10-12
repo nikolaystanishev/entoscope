@@ -1,6 +1,6 @@
 """Interactive Plotly rendering of a lens run.
 
-The grid is the run's own index — layer down, position (or head, or neuron) across — coloured by a
+The grid is the run's own index - layer down, position (or head, or neuron) across - coloured by a
 rank's probability, with that rank's token printed in the cell and the whole top-k in hover. One
 grid is drawn per rank, so a run's second and third guesses are as visible as its first.
 """

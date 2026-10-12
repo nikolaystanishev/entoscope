@@ -14,6 +14,13 @@ from intex.operation.input import OperationInput
 
 @dataclass
 class LensInput(OperationInput):
+    """A lens config and the prompt it reads.
+
+    ``prompt`` is ``None`` exactly when the lens reads the model's weights rather than its activations,
+    as ``parameter_lens`` does; either mismatch is rejected as the input is built, before a model is
+    involved.
+    """
+
     config: LensConfig
     prompt: str | None = None
 

@@ -226,3 +226,5 @@ __marimo__/
 # What the example scripts write
 patch_result/
 patching_cache/
+runs/
+.activation_cache/

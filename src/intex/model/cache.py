@@ -1,7 +1,7 @@
 """Local-storage caching of model activations.
 
-``CachedModel`` is a transparent wrapper around a ``transformer_lens`` model — a
-``TransformerBridge`` or a ``HookedTransformer`` — that memorizes ``run_with_cache`` to disk.
+``CachedModel`` is a transparent wrapper around a ``transformer_lens`` model - a
+``TransformerBridge`` or a ``HookedTransformer`` - that memorizes ``run_with_cache`` to disk.
 Operations receive it in place of the raw model and never know the difference: every attribute
 other than ``run_with_cache`` is forwarded to the wrapped model, so tokenization,
 ``run_with_hooks`` (patching), weight access and ``cfg`` behave exactly as before, while repeated
@@ -84,8 +84,8 @@ def _encode_input(model_input: Any) -> bytes:
 def _weight_digest(model: Any) -> str:
     """A digest of the weights a model holds, not of the architecture its ``cfg`` describes.
 
-    Two models can read back the same ``cfg`` and the same name and still compute different things —
-    a fine-tune, a merged adapter, a supplied ``hf_model``, a checkpoint at another revision — and
+    Two models can read back the same ``cfg`` and the same name and still compute different things -
+    a fine-tune, a merged adapter, a supplied ``hf_model``, a checkpoint at another revision - and
     without this they would share cache entries. Hashing every parameter in full would cost more than
     the forward pass the cache saves, so each one contributes its name, its layout and the first
     ``_WEIGHT_SAMPLE`` of its values: bounded by the parameter count rather than the parameter size,
@@ -131,7 +131,7 @@ class ActivationDiskCache:
         digest.update(names.encode("utf-8"))
         digest.update(b"\x00extra\x00")
         # Values may be tensors (e.g. ``attention_mask``), so reuse the deterministic input encoder
-        # rather than ``repr`` — ``repr`` truncates large tensors and would let distinct inputs collide.
+        # rather than ``repr`` - ``repr`` truncates large tensors and would let distinct inputs collide.
         for extra_name, extra_value in sorted(extra.items()):
             digest.update(extra_name.encode("utf-8"))
             digest.update(b"\x00")
@@ -168,7 +168,7 @@ class CachedModel:
         self._cache = ActivationDiskCache(cache_dir) if cache_dir else None
         # Taken once, from the model as it is wrapped: the weights are read for it, and a wrapper
         # that re-read them on every call would pay for that on every cache hit. Editing weights in
-        # place afterwards therefore keeps the entries they were stored under — wrap again for a
+        # place afterwards therefore keeps the entries they were stored under - wrap again for a
         # fresh namespace.
         self._model_fingerprint = self._fingerprint() if self._cache else ""
 

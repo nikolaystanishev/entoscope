@@ -66,7 +66,7 @@ def pool(
     """Reduce each axis named in ``config`` with its pooling type and flatten the rest.
 
     ``axes`` names ``activation``'s axes in order. Configured axes are reduced left to
-    right — the order matters when different pooling types are mixed. Config entries that
+    right - the order matters when different pooling types are mixed. Config entries that
     match no axis are ignored (e.g. an axis already pinned by the location grid). 0-D
     activations become a single feature.
     """

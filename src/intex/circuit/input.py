@@ -12,7 +12,7 @@ from intex.operation.input import OperationInput
 class CircuitInput(OperationInput):
     """A list of prompts to discover circuits for; one contribution graph is built per prompt.
 
-    Only tokenization happens in ``prepare`` — the activation cache is (re)built one prompt at a
+    Only tokenization happens in ``prepare`` - the activation cache is (re)built one prompt at a
     time inside the method, so peak memory stays bounded by the largest single prompt regardless
     of how many prompts are passed (mirrors ``intex.probe.input.ProbeInput``).
     """

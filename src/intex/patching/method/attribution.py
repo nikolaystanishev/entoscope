@@ -14,7 +14,7 @@ Gradients = dict[PatchingMetric, dict[str, torch.Tensor]]
 
 
 class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
-    """Attribution patching — the first-order Taylor expansion of the true indirect effect.
+    """Attribution patching - the first-order Taylor expansion of the true indirect effect.
 
     ``IE ~= grad(m) . (a_patch - a_clean)``, with the gradient taken on the target run at the
     activation a patch would overwrite. One backward pass scores the whole index, so the cost is
@@ -98,8 +98,8 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
     ) -> Callable:
         """A hook that moves the activation onto the interpolation point and keeps it differentiable.
 
-        The tensor is left in the graph — detaching it would cut the path back through the layers
-        below and zero their gradients — and is handed to ``autograd.grad`` as a non-leaf input.
+        The tensor is left in the graph - detaching it would cut the path back through the layers
+        below and zero their gradients - and is handed to ``autograd.grad`` as a non-leaf input.
         """
 
         def interpolate(activation: torch.Tensor, hook) -> torch.Tensor:
@@ -131,7 +131,7 @@ class IntegratedGradientsMethod(AttributionPatchingMethod[IntegratedGradientsCon
     Averages the gradient over ``interpolation_steps`` points on the straight path from the source
     activation to the target one instead of reading it once at the target. That recovers the
     effects a flat gradient at the clean point hides, and costs one forward and one backward pass
-    per step — still flat in the size of the index.
+    per step - still flat in the size of the index.
 
     Every hooked activation is interpolated on the same pass, which is what keeps the cost at
     ``interpolation_steps`` passes rather than that many per row.
@@ -139,7 +139,7 @@ class IntegratedGradientsMethod(AttributionPatchingMethod[IntegratedGradientsCon
     The path runs between the two runs' activations, so it is the path the intervention actually
     traverses only when the source resamples from the source run. A value-based source (zero
     ablation, scaling, noise) writes something off that path, and the averaged gradient then
-    belongs to a change other than the one being scored — attribution patching, whose expansion
+    belongs to a change other than the one being scored - attribution patching, whose expansion
     point does not depend on a path at all, is the estimate to reach for there.
     """
 

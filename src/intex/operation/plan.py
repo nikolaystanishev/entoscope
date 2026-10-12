@@ -20,7 +20,7 @@ def _listed(items: list[str]) -> str:
 
 
 def _printable(index: pd.DataFrame) -> pd.DataFrame:
-    """Locations as ``index.csv`` spells them — ``to_string`` would print an enum by its member name."""
+    """Locations as ``index.csv`` spells them - ``to_string`` would print an enum by its member name."""
     return index.map(lambda cell: cell.value if isinstance(cell, Enum) else cell)
 
 
@@ -32,6 +32,17 @@ def _plural(count: int, noun: str) -> str:
 
 @dataclass
 class OperationPlan:
+    """What a run would do, as an operator's ``plan`` reports it.
+
+    ``steps`` counts the run's units of work, named by ``steps_label`` (an index element, a probe, a
+    patched run, a prompt). ``forward_passes`` and ``backward_passes`` count every pass, the cached runs
+    of the prompts included; ``batches`` is set only for a method that runs the model a batch at a time.
+    ``index`` holds one frame per index, the same frame ``index.csv`` would hold, and ``prompts`` one
+    ``(label, prompt, token count)`` per prompt. ``activations`` are the hook names the run caches, unless
+    ``reads_full_cache`` says it caches every activation. ``outputs`` are the file names the run would
+    write into ``save_dir``.
+    """
+
     operation: str
     method: str
     config: AbstractConfig
@@ -48,6 +59,7 @@ class OperationPlan:
     outputs: list[str] = field(default_factory=list)
 
     def describe(self, max_rows: int = 100) -> str:
+        """The plan as text, with up to ``max_rows`` rows of each index - what ``str(plan)`` and the log show."""
         lines = [f"{self.operation} plan", f"  method: {self.method}"]
         if self.config.config_id:
             lines.append(f"  config: {self.config.config_id}")

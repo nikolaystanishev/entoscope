@@ -1,0 +1,23 @@
+# Circuit-discovery configs for circuit.py: `uv run python examples/circuit.py --config-id <entry>`.
+#
+# A circuit spans the whole model, so there is no `source` to locate: an entry is only the method.
+# Information Flow Routes is licensed for non-commercial use only (see the README).
+
+# The method with its defaults: contributions under 0.04 dropped, routes traced back from the
+# next-token prediction.
+information_flow_routes:
+  method: information_flow_routes
+
+# A sparser picture: the full graph keeps the same edges, while only edges above 0.1 survive into the
+# routes to the prediction.
+strong_routes:
+  method:
+    type: information_flow_routes
+    threshold: 0.04
+    path_threshold: 0.1
+
+# The routes to the predictions at the last two positions, merged into one graph.
+last_two_predictions:
+  method:
+    type: information_flow_routes
+    prediction_positions: [-2, -1]

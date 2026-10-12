@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 
 
 class PoolingType(str, Enum):
+    """How ``ProbeConfig.pool`` reduces an axis; ``last`` keeps its final entry - the last token, for ``position``."""
+
     MEAN = "mean"
     MAX = "max"
     SUM = "sum"
@@ -20,6 +22,9 @@ class PoolingType(str, Enum):
 
 
 class ProbeMetric(str, Enum):
+    """A score of a probe's predictions on its examples: ``auroc`` ranks the positive-class probabilities,
+    the others compare the 0/1 predictions with the labels."""
+
     ACCURACY = "accuracy"
     F1 = "f1"
     PRECISION = "precision"

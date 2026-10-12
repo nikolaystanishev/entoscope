@@ -1,0 +1,88 @@
+# Lens configs for lens.py: `uv run python examples/lens.py --config-id <entry>`.
+#
+# Every entry is a LensConfig. `method` names the lens - a mapping with `type` and the lens's own
+# fields, or just the type for its defaults - `top_k` how many tokens a row keeps, and `source`
+# where in the model the lens reads.
+
+# The residual stream after every layer at every position: the classic logit-lens grid, drawn with
+# position across and layer up.
+logit_lens:
+  method: logit_lens
+  top_k: 5
+  source:
+    activation: resid.post
+    location: [layer, position]
+
+# MLP-hidden activations are projected through the layer's W_out, so a row reads what the indexed
+# neurons write into the residual stream. Keep the neuron axis filtered: unfiltered it is d_mlp rows
+# per layer and position.
+neuron_logit_lens:
+  method: logit_lens
+  top_k: 5
+  source:
+    activation: mlp.post
+    location: [layer, neuron, position]
+    filter:
+      - neuron: 373
+        position: -1
+
+# attn.z is projected through the head's W_O, so every row reads what one head writes into the
+# residual stream - here at the last position.
+head_logit_lens:
+  method: logit_lens
+  top_k: 5
+  source:
+    activation: attn.z
+    location: [layer, head, position]
+    filter:
+      - position: -1
+
+# The tuned lens reads the same activations through each layer's trained translator, which maps the
+# residual stream onto the last layer's basis before unembedding it. The translators are downloaded
+# from the tuned-lens hub space for the model's own name unless `translators` names them: a resource
+# id there, or a local directory holding config.json and params.pt.
+tuned_lens:
+  method: tuned_lens
+  top_k: 5
+  source:
+    activation: resid.post
+    location: [layer, position]
+
+# The parameter lens reads the weights instead of the activations, so it runs without a prompt.
+# `mlp.post` names the value vector a neuron writes into the residual stream (a row of W_out) - here
+# neuron 373's, once per layer. `position` is not a location of this lens: weights have no position.
+parameter_lens:
+  method: parameter_lens
+  top_k: 5
+  source:
+    activation: mlp.post
+    location: [layer, neuron]
+    filter:
+      - neuron: 373
+
+# Attention heads are read one subhead at a time: every dimension of the last layer's head 7, through
+# the head's W_O. `projection: embedding` reads the vectors against the embedding matrix, as Dar et
+# al. do, and a negative `scale` would read them against their own direction.
+subhead_parameter_lens:
+  method:
+    type: parameter_lens
+    projection: embedding
+  top_k: 5
+  source:
+    activation: attn.z
+    location: [layer, head, neuron]
+    filter:
+      - layer: -1
+        head: 7
+
+# Explicit coordinates name exact points instead of a grid; each may carry its own activation. A
+# one-dimensional index like this one is drawn as a bar chart.
+explicit_coordinates:
+  method: logit_lens
+  top_k: 5
+  source:
+    coordinates:
+      - {activation: resid.mid, layer: -1, position: -1}
+      - {activation: attn.out, layer: -1, position: -1}
+      - {activation: mlp.out, layer: -1, position: -1}
+      - {activation: resid.post, layer: -1, position: -1}

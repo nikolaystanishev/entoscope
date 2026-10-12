@@ -33,6 +33,12 @@ def _selection(index: IndexElement[ModelLocatorConfig], location: ModelLocation)
 
 
 class ProjectionSpace(str, Enum):
+    """The vocabulary space a weight is read in: ``W_U`` for ``unembedding``, ``W_E`` transposed for ``embedding``.
+
+    The two coincide on a model that ties its embedding and unembedding, as GPT-2 does with HuggingFace's
+    weights, until ``enable_compatibility_mode`` folds LayerNorm in and centers the unembedding.
+    """
+
     EMBEDDING = "embedding"
     UNEMBEDDING = "unembedding"
 

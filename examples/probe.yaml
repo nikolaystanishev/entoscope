@@ -1,0 +1,43 @@
+# Probe configs for probe.py: `uv run python examples/probe.py --config-id <entry>`.
+#
+# A probing run trains one classifier per row of the index on the activations of the positive and the
+# negative example prompts, and scores it on those same examples - there is no held-out split, so read
+# the scores as how separable the classes are at each location, not as generalization.
+#
+# `pool` reduces the axes a row leaves whole: here `position`, since the prompts differ in length.
+# Every axis left unpooled is flattened into the feature vector. `layer` is never a tensor axis and
+# `neuron` is the feature axis, so neither can be pooled.
+
+# The mean residual stream after every layer. The mean includes the BOS position, which is the same
+# for every prompt.
+residual_by_layer:
+  method: linear
+  pool: {position: mean}
+  metric: [accuracy, f1, auroc]
+  source:
+    activation: resid.post
+    location: [layer]
+
+# The last token's residual stream, which has read the whole prompt, scored by every metric.
+last_token_by_layer:
+  method:
+    type: linear
+    max_iter: 2000
+    seed: 0
+  pool: {position: last}
+  metric: [accuracy, precision, recall, f1, auroc]
+  source:
+    activation: resid.post
+    location: [layer]
+
+# One probe per head of the later layers, on the head's output averaged over positions: d_head
+# features per probe.
+head_outputs:
+  method: linear
+  pool: {position: mean}
+  metric: [accuracy, auroc]
+  source:
+    activation: attn.z
+    location: [layer, head]
+    filter:
+      - layer: {range: [8, 11]}

@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 
 
 class CircuitDiscoverer(Operator):
+    """Discovers the circuit behind each prompt with the method ``config.method`` names.
+
+    There is no index: a circuit spans every layer, position and head, so the method builds one graph
+    per prompt from a full forward pass of that prompt. The default collector also draws a
+    ``circuit_{i}.html`` per prompt; ``CircuitCollector`` writes the graph files alone.
+    """
+
     def __init__(
         self,
         model: Model,
@@ -56,7 +63,7 @@ class CircuitDiscoverer(Operator):
             steps=len(circuit_input.prompts),
             steps_label="prompt",
             # The method rebuilds the whole cache for each prompt, so there is no index to narrow
-            # and no names to filter by — the graph is built over every activation.
+            # and no names to filter by - the graph is built over every activation.
             forward_passes=len(circuit_input.prompts),
             prompts=[
                 (f"prompt {i}", prompt, tokens.shape[1])

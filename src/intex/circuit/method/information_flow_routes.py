@@ -8,12 +8,12 @@ The node scheme (``X0_``/``A``/``M``/``I``) and the per-layer contribution loop 
 Transparency Tool's ``llm_transparency_tool/routes/graph.py``, but the graph here is a
 ``networkx.MultiDiGraph`` so that each attention head is its own edge (the upstream ``GraphBuilder``
 uses a ``DiGraph`` and sums attention over heads). Route pruning is reimplemented to work on a
-multigraph (the upstream helper is ``DiGraph``-only — its ``filter_edge`` lambda takes two args,
+multigraph (the upstream helper is ``DiGraph``-only - its ``filter_edge`` lambda takes two args,
 which breaks for multigraphs).
 
 The numerical contributions come from the vendored ``intex.circuit.vendor.contributions`` module,
 copied from the LM Transparency Tool under CC BY-NC 4.0 (see ``intex/circuit/vendor/NOTICE``).
-Because that code is non-commercial, this method — and any results it produces — may be used for
+Because that code is non-commercial, this method - and any results it produces - may be used for
 non-commercial purposes only.
 """
 
@@ -142,7 +142,7 @@ def decomposed_attn(
     """Per (query_pos, key_pos, head) attention contribution to the residual stream, in d_model space.
 
     Reconstructs each head's output written to the residual stream, split by the key position it came
-    from, before the residual add (no layernorm is applied — the attention output is added to the
+    from, before the residual add (no layernorm is applied - the attention output is added to the
     residual stream unnormalized). Summing over ``key_pos`` and ``head`` recovers ``attn_out`` minus
     the ``b_O`` bias. Handles grouped-query attention by repeating the value heads across their group.
     """
@@ -212,7 +212,7 @@ def build_information_flow_graph(
         # rank, so that range is empty and torch's ``sum(dim=())`` reduces over ALL dims (torch, unlike
         # numpy, treats an empty dim tuple as a full reduction), which couples positions and breaks the
         # per-position renormalization. Add a trailing singleton block dim so the reduction stays
-        # per-position (summing a size-1 dim is a no-op). The attention call above is unaffected — its
+        # per-position (summing a size-1 dim is a no-op). The attention call above is unaffected - its
         # c_attn already has extra (key_pos, head) block dims.
         c_ffn, c_resid_ffn = contributions.apply_threshold_and_renormalize(threshold, c_ffn.unsqueeze(-1), c_resid_ffn)
         c_ffn = c_ffn.squeeze(-1)
@@ -277,15 +277,13 @@ def prune_routes_to_predictions(
 class InformationFlowRoutesConfig(CircuitMethodConfig):
     """The method config of Information Flow Routes.
 
-    threshold: Renormalizing edge threshold applied to contributions while building the
-        full graph. Contributions below it are dropped and the rest renormalized so the
-        incoming weights of each representation still sum to 1 (see the Information Flow
-        Routes paper). ``0.0`` keeps every edge.
-    path_threshold: Threshold used when pruning the routes-to-prediction subgraph. Defaults
-        to ``threshold`` when ``None``.
-    prediction_positions: Token positions whose prediction the routes are traced back from.
-        Negative indices count from the end of each prompt. Defaults to ``[-1]`` (the
-        next-token prediction).
+    ``threshold`` is the renormalizing edge threshold the full graph is built with: contributions below
+    it are dropped and the rest renormalized, so the incoming weights of each representation still sum
+    to 1 (see the Information Flow Routes paper); ``0.0`` keeps every edge. ``path_threshold`` is the
+    threshold the routes to the prediction are pruned with, ``threshold`` itself when ``None``.
+    ``prediction_positions`` are the positions whose prediction the routes are traced back from,
+    negative ones counting from the end of each prompt; the default ``[-1]`` is the next-token
+    prediction.
     """
 
     threshold: float = 0.04

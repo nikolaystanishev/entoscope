@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 
 
 class Lens(Operator):
+    """Reads every index element out onto the vocabulary through the lens ``config.method`` names.
+
+    One forward pass caches the activations the index reads - none at all for a lens that reads only
+    the weights - and every row becomes its element's top-k tokens. The default collector also draws
+    ``result.html``; ``LensCollector`` writes the CSVs alone.
+    """
+
     def __init__(self, model: Model, collector_class: type[LensCollector] = LensVisualizationCollector):
         self.model = model
         self.collector_class = collector_class

@@ -1,6 +1,6 @@
 """Interactive Plotly rendering of a patching run.
 
-The grid is the run's own index — layer down, position across for the canonical sweep — coloured by
+The grid is the run's own index - layer down, position across for the canonical sweep - coloured by
 the metric on a diverging scale centred on the value an ineffective patch would produce, so warm
 cells are the locations that moved the model toward the source. One such grid is drawn per column
 the config names, each centred on its own comparison's ineffective value. A cell's hover names the
@@ -95,7 +95,7 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
     def _companions(self) -> tuple[str, list[str]]:
         """What the other patch elements did: a constant clause for the subtitle, a line per result row.
 
-        An element either has one row — the same location on every run, so it belongs in the subtitle —
+        An element either has one row - the same location on every run, so it belongs in the subtitle -
         or as many rows as the result, in which case it co-varies and is reported per cell.
         """
         rows = len(self.result)

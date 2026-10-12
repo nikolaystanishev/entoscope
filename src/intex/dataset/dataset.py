@@ -8,7 +8,7 @@ Row = dict[str, Any]
 
 
 class AbstractDataset(abc.ABC):
-    """A collection of raw rows — subclasses implement ``load`` and register with ``DatasetFactory``."""
+    """A collection of raw rows - subclasses implement ``load`` and register with ``DatasetFactory``."""
 
     def __init__(self, config: DatasetConfig):
         self.config = config

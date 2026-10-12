@@ -14,7 +14,11 @@ logger = logging.getLogger(__name__)
 
 
 class Prober(Operator):
-    """Trains one probe per location and scores it on the training examples (no held-out split)."""
+    """Trains one probe per location and scores it on the training examples (no held-out split).
+
+    Each example prompt is run once, caching only what the index reads. The probing collector draws no
+    page: its result is a table of scores and the fitted probes.
+    """
 
     def __init__(self, model: Model, collector_class: type[ProbeCollector] = ProbeCollector):
         self.model = model
