@@ -9,11 +9,11 @@ import torch
 import yaml
 from transformer_lens import HookedTransformer
 
-from intex.model.cache import CachedModel
-from intex.model.config import Filter, Group, Incremental, ModelLayerLocation, ModelLocation
-from intex.operation.config import ConfigFactory
-from intex.patching.collector import PatchingCollector
-from intex.patching.config import (
+from entoscope.model.cache import CachedModel
+from entoscope.model.config import Filter, Group, Incremental, ModelLayerLocation, ModelLocation
+from entoscope.operation.config import ConfigFactory
+from entoscope.patching.collector import PatchingCollector
+from entoscope.patching.config import (
     MetricComparison,
     PatchingConfig,
     PatchingElementConfig,
@@ -23,11 +23,11 @@ from intex.patching.config import (
     SinglePatchingConfig,
     metric_column,
 )
-from intex.patching.input import PatchingInput
-from intex.patching.method.attribution import IntegratedGradientsConfig
-from intex.patching.method.factory import PatchingMethodFactory
-from intex.patching.patcher import Patcher
-from intex.patching.processor import GaussianNoiseSourceStrategy
+from entoscope.patching.input import PatchingInput
+from entoscope.patching.method.attribution import IntegratedGradientsConfig
+from entoscope.patching.method.factory import PatchingMethodFactory
+from entoscope.patching.patcher import Patcher
+from entoscope.patching.processor import GaussianNoiseSourceStrategy
 
 from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
 

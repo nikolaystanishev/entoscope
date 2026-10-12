@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from intex.model.config import (
+from entoscope.model.config import (
     Combination,
     Coordinates,
     Filter,
@@ -20,7 +20,7 @@ from intex.model.config import (
     ModelLocation,
     ModelLocatorConfig,
 )
-from intex.operation.config import from_dict
+from entoscope.operation.config import from_dict
 
 PROMPT_SIZE = 4
 

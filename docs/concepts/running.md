@@ -73,9 +73,9 @@ it, and the base collector writes the data files alone:
 
 <!-- docs-test: skip -->
 ```python
-from intex.circuit.collector import CircuitCollector
-from intex.lens.collector import LensCollector
-from intex.patching.collector import PatchingCollector
+from entoscope.circuit.collector import CircuitCollector
+from entoscope.lens.collector import LensCollector
+from entoscope.patching.collector import PatchingCollector
 
 Lens(model, collector_class=LensCollector)
 Patcher(model, collector_class=PatchingCollector)
@@ -91,10 +91,10 @@ activations it would read and the files it would write, without a forward pass a
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.lens.config import LensConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.operation.config import ConfigFactory
+from entoscope.lens.config import LensConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.operation.config import ConfigFactory
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
@@ -131,30 +131,30 @@ In an experiment script, a `dry_run` field on your own config gives the script a
 
 ## Logging
 
-What intex reports, such as a plan or where a run's results were saved, goes through Python's
-`logging`, under the `intex` logger at INFO, to stderr. A script's stdout stays its own:
+What entoscope reports, such as a plan or where a run's results were saved, goes through Python's
+`logging`, under the `entoscope` logger at INFO, to stderr. A script's stdout stays its own:
 
 ```text
-[intex] INFO 2026-10-10 14:03:13 Results saved to runs/logit_lens
+[entoscope] INFO 2026-10-10 14:03:13 Results saved to runs/logit_lens
 ```
 
-The `intex` logger has its own handler and does not propagate to the root logger. Its messages
+The `entoscope` logger has its own handler and does not propagate to the root logger. Its messages
 therefore keep this form whatever configures root logging, including dependencies: transformer_lens
 logs through the module-level `logging.info`, which runs `basicConfig` as a side effect. To silence
-intex:
+entoscope:
 
 <!-- docs-test: skip -->
 ```python
 import logging
 
-logging.getLogger("intex").setLevel(logging.WARNING)
+logging.getLogger("entoscope").setLevel(logging.WARNING)
 ```
 
 To route its messages through your application's handlers instead:
 
 <!-- docs-test: skip -->
 ```python
-intex_logger = logging.getLogger("intex")
-intex_logger.handlers.clear()
-intex_logger.propagate = True
+entoscope_logger = logging.getLogger("entoscope")
+entoscope_logger.handlers.clear()
+entoscope_logger.propagate = True
 ```

@@ -11,11 +11,11 @@ import torch
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 
-from intex.model.cache import CachedModel
-from intex.model.config import Filter, ModelLayerLocation, ModelLocation
-from intex.probe.config import PoolingType, ProbeConfig, ProbeMetric
-from intex.probe.input import ProbeInput
-from intex.probe.prober import Prober
+from entoscope.model.cache import CachedModel
+from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation
+from entoscope.probe.config import PoolingType, ProbeConfig, ProbeMetric
+from entoscope.probe.input import ProbeInput
+from entoscope.probe.prober import Prober
 
 from ..conftest import forbid_model_runs
 from .conftest import NEGATIVE, POSITIVE, assert_trained_alike, probe_config, probe_of, refit, run_probe

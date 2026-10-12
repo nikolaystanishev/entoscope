@@ -1,5 +1,5 @@
 [project]
-name = "intex"
+name = "entoscope"
 version = "0.1.0"
 description = "Mechanistic interpretability toolkit for large language models"
 readme = "README.md"
@@ -56,12 +56,12 @@ docs = [
 testpaths = ["tests"]
 
 [tool.coverage.run]
-source_pkgs = ["intex"]
+source_pkgs = ["entoscope"]
 branch = true
 # Paths stored relative to the checkout, so data from the CI matrix jobs combines on another runner.
 relative_files = true
 # Vendored third-party code (CC BY-NC 4.0), kept verbatim - its untested lines aren't ours to cover.
-omit = ["*/intex/circuit/vendor/*"]
+omit = ["*/entoscope/circuit/vendor/*"]
 
 [tool.coverage.report]
 skip_empty = true
@@ -74,7 +74,7 @@ exclude_also = [
 target-version = "py310"
 line-length = 120
 # Vendored third-party code (CC BY-NC 4.0) is kept close to verbatim; don't lint it.
-extend-exclude = ["src/intex/circuit/vendor"]
+extend-exclude = ["src/entoscope/circuit/vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "SIM", "I"]

@@ -10,13 +10,13 @@ import torch
 from tuned_lens.nn.lenses import TunedLens as PretrainedTunedLens
 from tuned_lens.nn.lenses import TunedLensConfig as PretrainedTunedLensConfig
 
-from intex.lens.config import LensConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.lens.method import tuned_lens
-from intex.lens.method.tuned_lens import TunedLensConfig
-from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from intex.model.unembed import build_unembed
+from entoscope.lens.config import LensConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.lens.method import tuned_lens
+from entoscope.lens.method.tuned_lens import TunedLensConfig
+from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.unembed import build_unembed
 
 from ..conftest import build_tiny_model, forbid_model_runs
 from .conftest import (

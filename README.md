@@ -1,6 +1,7 @@
-# intex
+# entoscope
 
-intex is a framework for mechanistic interpretability of transformer language models, built on
+entoscope (Greek *entos*, "within", and *skopein*, "to look") is a framework for mechanistic
+interpretability of transformer language models, built on
 [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens). It reads a model through
 four operations:
 
@@ -23,15 +24,15 @@ The four operations share a common design:
 
 ## Install
 
-intex needs Python 3.10 to 3.14 and is installed from this repository:
+entoscope needs Python 3.10 to 3.14 and is installed from this repository:
 
 ```bash
-git clone git@github.com:nikolaystanishev/intex.git
-cd intex
+git clone git@github.com:nikolaystanishev/entoscope.git
+cd entoscope
 uv sync
 ```
 
-or, from another project, `uv add git+ssh://git@github.com/nikolaystanishev/intex.git`. Intel macOS is
+or, from another project, `uv add git+ssh://git@github.com/nikolaystanishev/entoscope.git`. Intel macOS is
 limited to transformer-lens 2.15 and Python 3.12 or older; see
 [Getting started](docs/getting-started.md#install).
 
@@ -42,10 +43,10 @@ A logit lens over GPT-2's residual stream, after every layer and at every positi
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.lens.config import LensConfig, LensMethodConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.lens.config import LensConfig, LensMethodConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
@@ -78,7 +79,7 @@ The docs live in [`docs/`](docs) and build into a site with
 `uv run --group docs sphinx-build docs docs/_build/html`:
 
 - [Getting started](docs/getting-started.md)
-- Concepts: [How intex is put together](docs/concepts/overview.md),
+- Concepts: [How entoscope is put together](docs/concepts/overview.md),
   [Locating activations](docs/concepts/locating.md), [Configuration files](docs/concepts/configuration.md),
   [Running and reading results](docs/concepts/running.md), [Models and caching](docs/concepts/models.md)
 - Operations: [Lens](docs/operations/lens.md), [Probing](docs/operations/probing.md),
@@ -93,7 +94,7 @@ The site also has an API reference generated from the docstrings.
 
 The Information Flow Routes method reuses the contribution-graph math of the
 [LM Transparency Tool](https://github.com/facebookresearch/llm-transparency-tool), vendored as
-`src/intex/circuit/vendor/contributions.py` (see `src/intex/circuit/vendor/NOTICE`), which is licensed
+`src/entoscope/circuit/vendor/contributions.py` (see `src/entoscope/circuit/vendor/NOTICE`), which is licensed
 **CC BY-NC 4.0**. Because that code is non-commercial, the Circuit Discovery `information_flow_routes`
 method, and any results produced with it, may be used for **non-commercial purposes only**. Method
 reference:

@@ -3,8 +3,8 @@
 ## Setup
 
 ```bash
-git clone git@github.com:nikolaystanishev/intex.git
-cd intex
+git clone git@github.com:nikolaystanishev/entoscope.git
+cd entoscope
 uv sync --group dev --group docs
 ```
 
@@ -38,7 +38,7 @@ uv run ruff check . && uv run ruff format --check .
 ```
 
 Lines are 120 characters, and ruff checks `E`, `F`, `UP`, `B`, `SIM` and `I`.
-`src/intex/circuit/vendor/` is third-party code kept close to verbatim and is excluded from ruff:
+`src/entoscope/circuit/vendor/` is third-party code kept close to verbatim and is excluded from ruff:
 do not reformat it.
 
 ## Docs

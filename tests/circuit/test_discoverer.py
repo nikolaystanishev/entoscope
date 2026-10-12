@@ -5,13 +5,13 @@ import networkx as nx
 import yaml
 from transformer_lens import HookedTransformer
 
-from intex.circuit.collector import CircuitCollector, CircuitVisualizationCollector
-from intex.circuit.config import CircuitConfig
-from intex.circuit.discoverer import CircuitDiscoverer
-from intex.circuit.input import CircuitInput
-from intex.circuit.method.circuit import PromptCircuit
-from intex.circuit.method.information_flow_routes import InformationFlowRoutesConfig
-from intex.operation.config import ConfigFactory
+from entoscope.circuit.collector import CircuitCollector, CircuitVisualizationCollector
+from entoscope.circuit.config import CircuitConfig
+from entoscope.circuit.discoverer import CircuitDiscoverer
+from entoscope.circuit.input import CircuitInput
+from entoscope.circuit.method.circuit import PromptCircuit
+from entoscope.circuit.method.information_flow_routes import InformationFlowRoutesConfig
+from entoscope.operation.config import ConfigFactory
 
 from ..conftest import forbid_model_runs, rendered_figures
 

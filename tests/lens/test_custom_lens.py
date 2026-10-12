@@ -11,16 +11,16 @@ import pandas as pd
 import pytest
 import yaml
 
-from intex.lens.config import LensConfig, LensMethodConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.lens.method.factory import LensMethodFactory
-from intex.lens.method.logit_lens import LogitLens
-from intex.lens.method.parameter_lens import ParameterLens, ParameterLensConfig, ProjectionSpace
-from intex.lens.method.tuned_lens import TunedLens, TunedLensConfig
-from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from intex.operation.method import method_config_class
-from intex.util.data import from_dict
+from entoscope.lens.config import LensConfig, LensMethodConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.lens.method.factory import LensMethodFactory
+from entoscope.lens.method.logit_lens import LogitLens
+from entoscope.lens.method.parameter_lens import ParameterLens, ParameterLensConfig, ProjectionSpace
+from entoscope.lens.method.tuned_lens import TunedLens, TunedLensConfig
+from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.operation.method import method_config_class
+from entoscope.util.data import from_dict
 
 from ..conftest import forbid_model_runs, rendered_figure
 from .conftest import HEAD, NEURON, PROMPT, assert_row_reads, mlp_matrix, run_lens, single_row, unembed
@@ -345,13 +345,13 @@ from dataclasses import dataclass
 
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 
-from intex.lens.config import LensConfig, LensMethodConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.lens.method.factory import LensMethodFactory
-from intex.lens.method.logit_lens import LogitLens
-from intex.operation.config import ConfigFactory
-from intex.script import experiment
+from entoscope.lens.config import LensConfig, LensMethodConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.lens.method.factory import LensMethodFactory
+from entoscope.lens.method.logit_lens import LogitLens
+from entoscope.operation.config import ConfigFactory
+from entoscope.script import experiment
 
 
 @dataclass(kw_only=True)

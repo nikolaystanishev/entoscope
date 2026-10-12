@@ -10,15 +10,15 @@ import pytest
 import torch
 import yaml
 
-from intex.lens.collector import LensCollector
-from intex.lens.config import LensConfig, LensMethodConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.lens.method.logit_lens import _attention_scale
-from intex.model.cache import CachedModel
-from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from intex.operation.config import ConfigFactory
-from intex.operation.visualization import format_value
+from entoscope.lens.collector import LensCollector
+from entoscope.lens.config import LensConfig, LensMethodConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.lens.method.logit_lens import _attention_scale
+from entoscope.model.cache import CachedModel
+from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.operation.config import ConfigFactory
+from entoscope.operation.visualization import format_value
 
 from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
 from .conftest import (
@@ -39,8 +39,8 @@ LAYER_POSITION_GRID = dict(
     activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelLocation.LAYER, ModelLocation.POSITION]
 )
 
-# What intex's own handler puts before every message it writes to stderr.
-LOG_PREFIX = r"\[intex\] INFO \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} "
+# What entoscope's own handler puts before every message it writes to stderr.
+LOG_PREFIX = r"\[entoscope\] INFO \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} "
 
 LENS_YAML = {
     "my_lens": {
@@ -404,11 +404,11 @@ from dataclasses import dataclass
 
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 
-from intex.lens.config import LensConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.operation.config import ConfigFactory
-from intex.script import experiment
+from entoscope.lens.config import LensConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.operation.config import ConfigFactory
+from entoscope.script import experiment
 
 DESCRIPTION = "Run a lens from a YAML config"
 
@@ -452,7 +452,7 @@ def test_the_lens_runs_from_an_experiment_script(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    # The script's own output alone on stdout; intex reports on stderr without any logging set up.
+    # The script's own output alone on stdout; entoscope reports on stderr without any logging set up.
     assert result.stdout.strip() == str(len(pd.read_csv(save_dir / "result.csv")))
     saved = re.compile(LOG_PREFIX + re.escape(f"Results saved to {save_dir}"))
     assert any(saved.fullmatch(line) for line in result.stderr.splitlines()), result.stderr

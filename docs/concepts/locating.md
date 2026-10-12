@@ -11,9 +11,9 @@ each locator as a config file does, a mapping that `from_dict` reads into a `Mod
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.model.config import ModelLocatorConfig
-from intex.model.index import Index
-from intex.util.data import from_dict
+from entoscope.model.config import ModelLocatorConfig
+from entoscope.model.index import Index
+from entoscope.util.data import from_dict
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()

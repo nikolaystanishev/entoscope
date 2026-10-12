@@ -13,12 +13,12 @@ from dataclasses import dataclass
 
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.lens.config import LensConfig, LensMethodConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.lens.method.factory import LensMethodFactory
-from intex.lens.method.logit_lens import LogitLens
-from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.lens.config import LensConfig, LensMethodConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.lens.method.factory import LensMethodFactory
+from entoscope.lens.method.logit_lens import LogitLens
+from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 
 
 # 1. The method's settings, as a dataclass extending the operation's method config.
@@ -66,7 +66,7 @@ plain:
     location: [layer, position]
 ```
 
-[`examples/custom_lens.py`](https://github.com/nikolaystanishev/intex/blob/main/examples/custom_lens.py)
+[`examples/custom_lens.py`](https://github.com/nikolaystanishev/entoscope/blob/main/examples/custom_lens.py)
 is this lens as an experiment script, run from a config file.
 
 ## What each operation asks of a method
@@ -78,9 +78,9 @@ is this lens as an experiment script, run from a config file.
 | Activation patching | `PatchingMethodFactory` | `AbstractPatchingMethod` | `PatchingMethodConfig` | `scores`, `passes` | once per run |
 | Circuit discovery | `CircuitMethodFactory` | `AbstractCircuitMethod` | `CircuitMethodConfig` | `build` | once per run |
 
-The factories live in `intex.<operation>.method.factory`, the method bases in
-`intex.lens.method.lens`, `intex.probe.method.probe`, `intex.patching.method.patching` and
-`intex.circuit.method.circuit`, and the settings bases in `intex.<operation>.config`. A method is
+The factories live in `entoscope.<operation>.method.factory`, the method bases in
+`entoscope.lens.method.lens`, `entoscope.probe.method.probe`, `entoscope.patching.method.patching` and
+`entoscope.circuit.method.circuit`, and the settings bases in `entoscope.<operation>.config`. A method is
 built from `(model, config)` (patching adds `batch_size`) and finds its own settings in
 `self.method_config`.
 
@@ -101,7 +101,7 @@ built from `(model, config)` (patching adds `batch_size`) and finds its own sett
   the config's comparisons ask for. `passes(runs, batches)` returns the `(forward, backward)` passes
   the method adds, for `plan`. Set `batched = True` if it runs the model `batch_size` rows at a time.
   The test suite's
-  [`test_custom_patching_method.py`](https://github.com/nikolaystanishev/intex/blob/main/tests/patching/test_custom_patching_method.py)
+  [`test_custom_patching_method.py`](https://github.com/nikolaystanishev/entoscope/blob/main/tests/patching/test_custom_patching_method.py)
   is a minimal worked example.
 - **Circuit discovery.** `build(prompt, tokens)` returns the prompt's `PromptCircuit`. The result page
   reads the node and edge attributes Information Flow Routes writes (see
@@ -150,4 +150,4 @@ per index row), implements `collect` and `_indices`, and declares the files it w
 `output_files` so that `plan` can report them. To draw a page as well, a collector extends
 `VisualizationCollector` and names a `GridFigure` subclass, which says what a panel plots: its
 `value_column`, its `hover` text, its title, and optionally its colour range. Both live in
-`intex.operation`; see the [API reference](../reference/operation.md).
+`entoscope.operation`; see the [API reference](../reference/operation.md).

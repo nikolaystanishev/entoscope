@@ -9,12 +9,12 @@ same numbers — and that is what makes a result portable between them.
 import pytest
 import torch
 
-from intex.lens.config import LensConfig, LensMethodConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.lens.method.logit_lens import _attention_scale
-from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from intex.model.weight import attention_out_weight, mlp_weight
+from entoscope.lens.config import LensConfig, LensMethodConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.lens.method.logit_lens import _attention_scale
+from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.weight import attention_out_weight, mlp_weight
 
 from ..conftest import _gpt2_hooked
 

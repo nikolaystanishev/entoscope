@@ -2,38 +2,38 @@
 
 ## Install
 
-intex needs Python 3.10 to 3.14. It is not published on PyPI, so install it from its repository.
+entoscope needs Python 3.10 to 3.14. It is not published on PyPI, so install it from its repository.
 
 To work in the repository itself, with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-git clone git@github.com:nikolaystanishev/intex.git
-cd intex
+git clone git@github.com:nikolaystanishev/entoscope.git
+cd entoscope
 uv sync
 ```
 
 `uv run python your_script.py` then runs against that environment.
 
-To use intex from another project, add it as a git dependency:
+To use entoscope from another project, add it as a git dependency:
 
 ```bash
-uv add git+ssh://git@github.com/nikolaystanishev/intex.git
+uv add git+ssh://git@github.com/nikolaystanishev/entoscope.git
 # or
-pip install git+ssh://git@github.com/nikolaystanishev/intex.git
+pip install git+ssh://git@github.com/nikolaystanishev/entoscope.git
 ```
 
-intex depends on PyTorch and on transformer-lens 3, which provides `TransformerBridge`, the wrapper
+entoscope depends on PyTorch and on transformer-lens 3, which provides `TransformerBridge`, the wrapper
 these docs load models with. Intel macOS is the exception: PyTorch stopped publishing x86_64 macOS
 wheels after 2.2, which pins that platform to PyTorch 2.2, transformer-lens 2.15, `numpy<2` and
 Python 3.12 or older. transformer-lens 2.15 has no `TransformerBridge`, so load models as
-`HookedTransformer` there (see [Models and caching](concepts/models.md)). intex's own environment
-also constrains `transformers<5` on that platform; a project depending on intex there needs the same
+`HookedTransformer` there (see [Models and caching](concepts/models.md)). entoscope's own environment
+also constrains `transformers<5` on that platform; a project depending on entoscope there needs the same
 constraint.
 
 ## Load a model
 
 Operations take a `transformer_lens` model. A `TransformerBridge` wraps a HuggingFace model as it is,
-so what intex reads is HuggingFace's own computation:
+so what entoscope reads is HuggingFace's own computation:
 
 ```python
 from transformer_lens.model_bridge import TransformerBridge
@@ -48,10 +48,10 @@ A logit lens reads the residual stream after every layer, at every position of a
 model stopped there and predicted the next token:
 
 ```python
-from intex.lens.config import LensConfig, LensMethodConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.lens.config import LensConfig, LensMethodConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 
 config = LensConfig(
     method=LensMethodConfig(type="logit_lens"),
@@ -140,11 +140,11 @@ The plan is logged as it is built and returned as an `OperationPlan` you can rea
 
 ## Next steps
 
-- [How intex is put together](concepts/overview.md): the four parts every operation shares.
+- [How entoscope is put together](concepts/overview.md): the four parts every operation shares.
 - [Locating activations](concepts/locating.md): reading other activations, heads, neurons and
   positions.
 - [Configuration files](concepts/configuration.md): the same run from a YAML file.
 - The operation pages: [Lens](operations/lens.md), [Probing](operations/probing.md),
   [Activation patching](operations/patching.md), [Circuit discovery](operations/circuit-discovery.md).
-- [`examples/`](https://github.com/nikolaystanishev/intex/tree/main/examples): a runnable script and
+- [`examples/`](https://github.com/nikolaystanishev/entoscope/tree/main/examples): a runnable script and
   configs for every operation.

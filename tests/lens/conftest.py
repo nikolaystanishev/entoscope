@@ -2,13 +2,13 @@ import pandas as pd
 import pytest
 import torch
 
-from intex.lens.collector import LensCollector
-from intex.lens.config import LensConfig, LensMethodConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.lens.method.factory import LensMethodFactory
-from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from intex.model.token import escape_token
+from entoscope.lens.collector import LensCollector
+from entoscope.lens.config import LensConfig, LensMethodConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.lens.method.factory import LensMethodFactory
+from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.token import escape_token
 
 PROMPT = "The capital of France is"
 NEURON = 373
@@ -61,7 +61,7 @@ def single_row(model, config: LensConfig, prompt: str | None = PROMPT) -> pd.Ser
 def mlp_matrix(model, layer: int, attribute: str) -> torch.Tensor:
     """A block's MLP weight in HookedTransformer's orientation, read without the reader under test.
 
-    ``intex.model.weight.mlp_weight`` is what a lens reads, so an expectation taken from it would
+    ``entoscope.model.weight.mlp_weight`` is what a lens reads, so an expectation taken from it would
     only restate the run. This reads the parameter the backend stores and settles the orientation by
     its shape — ``W_in``/``W_gate`` [d_model, d_mlp], ``W_out`` [d_mlp, d_model] — which no fixture
     here leaves ambiguous, none of them having ``d_model == d_mlp``.

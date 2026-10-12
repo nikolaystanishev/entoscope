@@ -6,12 +6,12 @@ from dataclasses import dataclass
 import pytest
 import torch
 
-from intex.patching.config import PatchingConfig, PatchingMethodConfig
-from intex.patching.input import PatchingInput
-from intex.patching.method.factory import PatchingMethodFactory
-from intex.patching.method.patching import AbstractPatchingMethod, RowResult
-from intex.patching.patcher import Patcher
-from intex.util.collections import zip_fill
+from entoscope.patching.config import PatchingConfig, PatchingMethodConfig
+from entoscope.patching.input import PatchingInput
+from entoscope.patching.method.factory import PatchingMethodFactory
+from entoscope.patching.method.patching import AbstractPatchingMethod, RowResult
+from entoscope.patching.patcher import Patcher
+from entoscope.util.collections import zip_fill
 
 from ..conftest import forbid_model_runs, rendered_figures
 

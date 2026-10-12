@@ -13,11 +13,11 @@ and scored by the metrics you name.
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from intex.probe.config import PoolingType, ProbeConfig, ProbeMetric
-from intex.probe.input import ProbeInput
-from intex.probe.method.linear import LinearProbeConfig
-from intex.probe.prober import Prober
+from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.probe.config import PoolingType, ProbeConfig, ProbeMetric
+from entoscope.probe.input import ProbeInput
+from entoscope.probe.method.linear import LinearProbeConfig
+from entoscope.probe.prober import Prober
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
@@ -38,8 +38,8 @@ collector = Prober(model).apply(
 print(collector.result)  # one row per layer, with an accuracy and an auroc column
 ```
 
-[`examples/probe.yaml`](https://github.com/nikolaystanishev/intex/blob/main/examples/probe.yaml) has
-more configs, and [`examples/probe.py`](https://github.com/nikolaystanishev/intex/blob/main/examples/probe.py)
+[`examples/probe.yaml`](https://github.com/nikolaystanishev/entoscope/blob/main/examples/probe.yaml) has
+more configs, and [`examples/probe.py`](https://github.com/nikolaystanishev/entoscope/blob/main/examples/probe.py)
 a larger set of example prompts.
 
 ### Config and input

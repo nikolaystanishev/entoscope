@@ -1,21 +1,21 @@
-# intex.dataset
+# entoscope.dataset
 
 The dataset extension point.
 
 ```{eval-rst}
-.. automodule:: intex.dataset.config
+.. automodule:: entoscope.dataset.config
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.dataset.dataset
+.. automodule:: entoscope.dataset.dataset
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.dataset.factory
+.. automodule:: entoscope.dataset.factory
    :members:
    :show-inheritance:
 ```

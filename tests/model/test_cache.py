@@ -10,7 +10,7 @@ import pathlib
 import pytest
 import torch
 
-from intex.model.cache import CachedModel
+from entoscope.model.cache import CachedModel
 
 from ..conftest import build_tiny_model
 

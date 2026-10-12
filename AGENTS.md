@@ -34,7 +34,7 @@ Python 3.10–3.14; a `coverage` job combines the versions into the job summary 
 
 ## What this repo is
 
-intex - mechanistic interpretability modular framework for analysis of transformer models, currently supporting
+entoscope - mechanistic interpretability modular framework for analysis of transformer models, currently supporting
 patching, probing, lensing, and circuit discovery.
 
 ## Architecture
@@ -44,7 +44,7 @@ follows the same four-part shape, and adding one means writing the same four pie
 
 - **Config** (`<op>/config.py`) - a `kw_only` dataclass extending `AbstractConfig`, validating in
   `__post_init__`. Loadable from YAML through `ConfigFactory[TheConfig](path).create("id")`, which
-  deserializes strictly via `intex.util.data.from_dict` (unknown/missing keys raise; a
+  deserializes strictly via `entoscope.util.data.from_dict` (unknown/missing keys raise; a
   `from_config` classmethod on a field's type overrides the default handling). Its `method` field is
   the method config, a `MethodConfig` whose `type` names the method - in YAML a mapping or just
   the type. `type` is `MethodConfig`'s own field and has no default, since one method config class
@@ -84,7 +84,7 @@ carries an `output` position - the row a collector files its cell under - plus a
 `IndexElement` and, for patching, a target one. `IndexElement.slices()` turns a row into the tuple
 of tensor slices for that activation, via `ActivationSlicer` (`model/slicer.py`), which owns the
 axis order per activation kind (`[batch, pos, neuron]`, `[batch, pos, head, neuron]`,
-`[batch, head, dest_pos, src_pos]`). `transformer_activation()` maps intex's dotted
+`[batch, head, dest_pos, src_pos]`). `transformer_activation()` maps entoscope's dotted
 `ModelLayerLocation` values onto `transformer_lens` hook names.
 
 Adding a location or activation therefore means touching `ModelLayerLocation`,
@@ -133,7 +133,7 @@ factory imports the methods, which import the method config): its `from_config` 
 strictly into the class its `type` names, so a bad name or field fails as the file is read; one built in code
 is taken as given. Each `<op>/__init__.py`
 imports its factory so the built-ins are registered whatever is imported first. A lens is a single
-class that tells activations apart by `index.activation()` itself. `DatasetFactory` is the same plain name registry; intex ships no datasets.
+class that tells activations apart by `index.activation()` itself. `DatasetFactory` is the same plain name registry; entoscope ships no datasets.
 
 Everything else dispatches by `match` on an enum in an `AbstractX.get(enum)` static method
 (`patching/metric.py`'s metrics and comparisons, `patching/processor.py`'s source/target strategies,
@@ -154,7 +154,7 @@ back what was there must reproduce the target run exactly.
 
 ### Scripts
 
-`@intex.script.experiment.experiment` turns `main(config: SomeDataclass)` into a CLI: fields become
+`@entoscope.script.experiment.experiment` turns `main(config: SomeDataclass)` into a CLI: fields become
 `--kebab-case` options with types, defaults and required-ness derived from the dataclass
 (`script/argument.py` handles `list`/`dict`/`tuple`/`bool`/`Optional`; anything argparse-specific
 goes in `field(metadata={...})`). When the decorated function is in `__main__` it runs at decoration
@@ -166,9 +166,9 @@ time, so the config class must be defined above it.
   exists, what a backend does differently). They do not restate what the code or the math already
   says; such comments get deleted.
 - Messages to the user go through a module's `logging.getLogger(__name__)`, never `print`.
-  `intex/__init__.py` gives the `intex` logger its own stderr handler at INFO and stops it propagating,
+  `entoscope/__init__.py` gives the `entoscope` logger its own stderr handler at INFO and stops it propagating,
   so a dependency that configures the root logger (transformer_lens does) cannot reformat or mute it.
-- `src/intex/circuit/vendor/` is CC BY-NC 4.0 third-party code, kept close to verbatim and excluded
+- `src/entoscope/circuit/vendor/` is CC BY-NC 4.0 third-party code, kept close to verbatim and excluded
   from ruff. Do not reformat or refactor it. Circuit Discovery's `information_flow_routes` method is
   non-commercial-only as a result.
 - Line length 120, ruff rules `E,F,UP,B,SIM,I`; `F722` is off for jaxtyping shape strings.

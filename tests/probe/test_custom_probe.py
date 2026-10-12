@@ -8,9 +8,9 @@ import pytest
 import torch
 from sklearn.metrics import accuracy_score, roc_auc_score
 
-from intex.probe.config import ProbeConfig, ProbeMethodConfig
-from intex.probe.method.factory import ProbeMethodFactory
-from intex.probe.method.probe import AbstractProbeMethod
+from entoscope.probe.config import ProbeConfig, ProbeMethodConfig
+from entoscope.probe.method.factory import ProbeMethodFactory
+from entoscope.probe.method.probe import AbstractProbeMethod
 
 from .conftest import NEGATIVE, POSITIVE, probe_of, run_probe
 

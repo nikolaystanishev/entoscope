@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from intex.circuit.config import CircuitConfig
-from intex.lens.config import LensConfig
-from intex.operation.config import ConfigFactory
-from intex.patching.config import PatchingConfig
-from intex.probe.config import ProbeConfig
+from entoscope.circuit.config import CircuitConfig
+from entoscope.lens.config import LensConfig
+from entoscope.operation.config import ConfigFactory
+from entoscope.patching.config import PatchingConfig
+from entoscope.probe.config import ProbeConfig
 
 from ..conftest import TransformerBridge, forbid_model_runs
 

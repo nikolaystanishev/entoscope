@@ -11,12 +11,12 @@ from pathlib import Path
 
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.model import CachedModel
-from intex.operation.config import ConfigFactory
-from intex.probe.config import ProbeConfig
-from intex.probe.input import ProbeInput
-from intex.probe.prober import Prober
-from intex.script import experiment
+from entoscope.model import CachedModel
+from entoscope.operation.config import ConfigFactory
+from entoscope.probe.config import ProbeConfig
+from entoscope.probe.input import ProbeInput
+from entoscope.probe.prober import Prober
+from entoscope.script import experiment
 
 CONFIGS = Path(__file__).with_name("probe.yaml")
 

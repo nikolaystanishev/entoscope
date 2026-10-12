@@ -18,19 +18,19 @@ from transformers import (
     LlamaForCausalLM,
 )
 
-from intex.circuit.method.factory import CircuitMethodFactory
-from intex.dataset.factory import DatasetFactory
-from intex.lens.method.factory import LensMethodFactory
-from intex.operation.config import AbstractConfig, ConfigFactory
-from intex.patching.method.factory import PatchingMethodFactory
-from intex.probe.method.factory import ProbeMethodFactory
+from entoscope.circuit.method.factory import CircuitMethodFactory
+from entoscope.dataset.factory import DatasetFactory
+from entoscope.lens.method.factory import LensMethodFactory
+from entoscope.operation.config import AbstractConfig, ConfigFactory
+from entoscope.patching.method.factory import PatchingMethodFactory
+from entoscope.probe.method.factory import ProbeMethodFactory
 
 try:
     from transformer_lens.model_bridge import TransformerBridge
 except ImportError:  # transformer-lens 2.x (Intel macOS fallback)
     TransformerBridge = None
 
-# Every model fixture runs its tests once per backend. The bridge is what intex is built around;
+# Every model fixture runs its tests once per backend. The bridge is what entoscope is built around;
 # HookedTransformer stays supported for the platforms that cannot install a transformer-lens with it.
 BACKENDS = ["hooked"] if TransformerBridge is None else ["bridge", "hooked"]
 

@@ -11,13 +11,13 @@ from pathlib import Path
 
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.lens.config import LensConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.lens.method.factory import LensMethodFactory
-from intex.model import CachedModel
-from intex.operation.config import ConfigFactory
-from intex.script import experiment
+from entoscope.lens.config import LensConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.lens.method.factory import LensMethodFactory
+from entoscope.model import CachedModel
+from entoscope.operation.config import ConfigFactory
+from entoscope.script import experiment
 
 CONFIGS = Path(__file__).with_name("lens.yaml")
 

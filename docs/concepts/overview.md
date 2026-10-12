@@ -1,4 +1,4 @@
-# How intex is put together
+# How entoscope is put together
 
 Every operation is made of the same four parts, so once one operation makes sense the others mostly
 do too.
@@ -10,10 +10,10 @@ do too.
 | Operator | Runs the config's method over the input | `Lens` | `Prober` | `Patcher` | `CircuitDiscoverer` |
 | Collector | Gathers one result per row and writes the run's files | `LensVisualizationCollector` | `ProbeCollector` | `PatchingVisualizationCollector` | `CircuitVisualizationCollector` |
 
-The classes live in modules named after their part: `intex.lens.config`, `intex.lens.input`,
-`intex.lens.lens` and `intex.lens.collector` for the lens, and the same for `intex.probe`,
-`intex.patching` and `intex.circuit` (the operators are `intex.probe.prober`, `intex.patching.patcher`
-and `intex.circuit.discoverer`).
+The classes live in modules named after their part: `entoscope.lens.config`, `entoscope.lens.input`,
+`entoscope.lens.lens` and `entoscope.lens.collector` for the lens, and the same for `entoscope.probe`,
+`entoscope.patching` and `entoscope.circuit` (the operators are `entoscope.probe.prober`, `entoscope.patching.patcher`
+and `entoscope.circuit.discoverer`).
 
 ## A run, step by step
 
@@ -51,7 +51,7 @@ gradients. The config's `method` field picks the way. It is a method config whos
 method, and whose other fields are that method's settings:
 
 ```python
-from intex.lens.method.parameter_lens import ParameterLensConfig
+from entoscope.lens.method.parameter_lens import ParameterLensConfig
 
 method = ParameterLensConfig(type="parameter_lens", scale=-1.0)
 ```
@@ -68,8 +68,8 @@ interactive HTML page; passing the base collector writes the data files alone:
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.lens.collector import LensCollector
-from intex.lens.lens import Lens
+from entoscope.lens.collector import LensCollector
+from entoscope.lens.lens import Lens
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()

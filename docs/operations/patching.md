@@ -19,8 +19,8 @@ and position:
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.model.config import ModelLayerLocation, ModelLocation
-from intex.patching.config import (
+from entoscope.model.config import ModelLayerLocation, ModelLocation
+from entoscope.patching.config import (
     MetricComparison,
     PatchingConfig,
     PatchingElementConfig,
@@ -29,8 +29,8 @@ from intex.patching.config import (
     PatchingType,
     SinglePatchingConfig,
 )
-from intex.patching.input import PatchingInput
-from intex.patching.patcher import Patcher
+from entoscope.patching.input import PatchingInput
+from entoscope.patching.patcher import Patcher
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
@@ -78,7 +78,7 @@ target_layer
 ```
 
 In a config file this is the `residual_sweep` entry of
-[`examples/patching.yaml`](https://github.com/nikolaystanishev/intex/blob/main/examples/patching.yaml),
+[`examples/patching.yaml`](https://github.com/nikolaystanishev/entoscope/blob/main/examples/patching.yaml),
 which has an entry for every variant on this page.
 
 ## The two runs and the answer tokens
@@ -225,7 +225,7 @@ Zero ablation writes a value, so it reads no source run. The source names only i
 that pairs with every target row:
 
 ```python
-from intex.util.data import from_dict
+from entoscope.util.data import from_dict
 
 zero_mlp = from_dict(
     PatchingConfig,
@@ -266,7 +266,7 @@ hover gives its value, its patched run's prediction and its full source and targ
 ## Recipes
 
 All of these are entries of
-[`examples/patching.yaml`](https://github.com/nikolaystanishev/intex/blob/main/examples/patching.yaml):
+[`examples/patching.yaml`](https://github.com/nikolaystanishev/entoscope/blob/main/examples/patching.yaml):
 
 | Question | Entry |
 |---|---|
