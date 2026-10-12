@@ -55,7 +55,7 @@ def from_dict(cls: type, value: Any) -> Any:
     code-built objects can mix freely. A ``from_config`` classmethod on the target type
     overrides the default handling (for fields whose config shape differs from their fields);
     enums are constructed by value, paths from their string, and dataclasses recurse field-wise
-    from a mapping — strictly, so unknown or missing keys raise ``ValueError``. ``list``/``tuple``/
+    from a mapping - strictly, so unknown or missing keys raise ``ValueError``. ``list``/``tuple``/
     ``set``/``dict`` annotations recurse into their elements (keys and values for dicts), ``dict``
     subclasses construct through the key/value types of their generic base, ``X | None`` unwraps to
     ``X``, and anything else is returned as-is. The input is never mutated (YAML anchors may alias

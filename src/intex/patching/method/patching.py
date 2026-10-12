@@ -31,8 +31,8 @@ PatchingMethodConfigT = TypeVar("PatchingMethodConfigT", bound=PatchingMethodCon
 class AbstractPatchingMethod(abc.ABC, Generic[PatchingMethodConfigT]):
     """How a run turns its index into one number per row.
 
-    Every method produces the same primitive for each row — ``delta``, the metric of the patched
-    run minus the metric of the unpatched target run, one per metric — and ``_report`` fans it out
+    Every method produces the same primitive for each row - ``delta``, the metric of the patched
+    run minus the metric of the unpatched target run, one per metric - and ``_report`` fans it out
     into the columns the config's comparisons ask for. What separates the methods is only how
     ``delta`` is reached: by patching and running the model, or by estimating from gradients.
 

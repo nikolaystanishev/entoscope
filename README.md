@@ -1,445 +1,102 @@
 # intex
 
-A mechanistic-interpretability toolkit for large language models, built on
-[`transformer_lens`](https://github.com/TransformerLensOrg/TransformerLens). Each operation follows
-the same shape — `Config → Input → Operator → Collector` — and can be driven inline or from an
-experiment script. Current operations: Logit Lens, Tuned Lens, Parameter Lens, Probing, Activation
-Patching, and Circuit Discovery.
+intex is a framework for mechanistic interpretability of transformer language models, built on
+[TransformerLens](https://github.com/TransformerLensOrg/TransformerLens). It reads a model through
+four operations:
 
-## Models
+| Operation | Methods | The question it answers |
+|---|---|---|
+| [Lens](docs/operations/lens.md) | `logit_lens`, `tuned_lens`, `parameter_lens` | What does an activation, or a weight, say about the vocabulary? |
+| [Probing](docs/operations/probing.md) | `linear` | Where does the model represent a property of its input? |
+| [Activation patching](docs/operations/patching.md) | `exact`, `attribution`, `integrated_gradients` | Which activations cause the model's behaviour on a task? |
+| [Circuit discovery](docs/operations/circuit-discovery.md) | `information_flow_routes` | Which routes through the model carry its prediction? |
 
-Operations take a `TransformerBridge`, the wrapper `transformer_lens` loads HuggingFace models
-through, and read it as-is — so activations and weights are HuggingFace's own, and a run means the
-same thing as the same computation done against the HuggingFace model directly:
+The four operations share a common design:
 
-```python
-from transformer_lens.model_bridge import TransformerBridge
+- They all have the same shape: a config, an input, an operator and a collector.
+- Lens, probing and patching point at the model the same way, naming an activation and the layers,
+  heads, neurons and positions to read it at.
+- Each run can be built in Python or read from YAML, and can be planned before it is made.
+- Each run writes CSV or graph files, and every operation but probing draws an interactive HTML page
+  beside them.
+- You can register methods of your own, and they run exactly like the built-in ones.
 
-model = TransformerBridge.boot_transformers("gpt2")
-model.eval()
+## Install
+
+intex needs Python 3.10 to 3.14 and is installed from this repository:
+
+```bash
+git clone git@github.com:nikolaystanishev/intex.git
+cd intex
+uv sync
 ```
 
-Calling `model.enable_compatibility_mode()` switches the model into `transformer_lens`'s convention
-instead, folding LayerNorm into the following weights and centering the ones that write to the
-residual stream. Both are supported; the choice changes what the intermediate numbers mean, not
-whether a run works. Two consequences worth knowing:
+or, from another project, `uv add git+ssh://git@github.com/nikolaystanishev/intex.git`. Intel macOS is
+limited to transformer-lens 2.15 and Python 3.12 or older; see
+[Getting started](docs/getting-started.md#install).
 
-- Under HuggingFace's numerics a model that ties its embedding and unembedding — GPT-2 does — has
-  `W_E.T == W_U`, so the parameter lens's two `projection` spaces coincide. Folding separates them.
-- `eval()` on a bridge does not reach the HuggingFace model it wraps. `boot_transformers` returns
-  one already in eval mode, but a model you construct yourself and pass as `hf_model=` needs its
-  own `eval()` or dropout stays on.
+## Quickstart
 
-`HookedTransformer` is still accepted wherever a bridge is — `Model` is the union of the two, plus
-the `CachedModel` wrapper — and the test suite runs against both. It is the only option on
-platforms whose `transformer_lens` predates the bridge.
-
-## Parameter Lens
-
-Reads the model's **weights** in vocabulary space, following
-[Analyzing Transformers in Embedding Space](https://arxiv.org/abs/2209.02535): a `d_model`
-parameter vector is projected onto the vocabulary directly, without LayerNorm or biases. Nothing
-about it depends on an input, so a run takes no prompt at all — it is the same `Lens` operator and
-the same `LensInput`, with `prompt=None`.
+A logit lens over GPT-2's residual stream, after every layer and at every position of a prompt:
 
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.lens.config import LensConfig
+from intex.lens.config import LensConfig, LensMethodConfig
 from intex.lens.input import LensInput
 from intex.lens.lens import Lens
-from intex.lens.method.parameter_lens import ParameterLensConfig
-from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
 
 config = LensConfig(
-    method=ParameterLensConfig(type="parameter_lens"),
-    top_k=5,
+    method=LensMethodConfig(type="logit_lens"),
+    top_k=3,
     source=ModelLocatorConfig(
-        activation=ModelLayerLocation.MLP_POST,
-        location=[ModelLocation.LAYER, ModelLocation.NEURON],
-        filter=Filter(inclusion_terms=[{ModelLocation.NEURON: 373}]),
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER, ModelLocation.POSITION],
     ),
 )
-
-collector = Lens(model).apply(
-    LensInput(config), save_dir="runs/parameter_lens", return_collector=True
-)
-print(collector.result)  # one row per (layer, neuron), with its top-k tokens
+Lens(model).apply(LensInput(config, "The capital of France is"), save_dir="runs/logit_lens")
 ```
 
-Alongside `result.csv` the run writes an interactive `result.html` — see
-[Result visualization](#result-visualization).
+Open `runs/logit_lens/result.html` in a browser to see each cell's top token, with layers up and
+positions across. `result.csv` holds the same result as a table, and `config.json` the config the run
+was made under.
 
-An index element needs a single layer — each weight lives in one block — while a list of neurons
-(or heads) sums those weight vectors into one direction before projecting it, and leaving the
-location out sums all of them, exactly as grouped neurons and heads work in the logit lens.
-`position` is not a valid location:
+Every operation has a ready-made script and a YAML file of configs in [`examples/`](examples):
 
-| location                       | weight                                     | reading                              |
-|--------------------------------|--------------------------------------------|--------------------------------------|
-| `mlp.pre`                      | column of `W_in` (`W_gate` on a gated MLP) | the key vector the neuron reads with |
-| `mlp.pre_linear`               | column of `W_in` (gated MLPs only)         | the key vector of the linear branch  |
-| `mlp.post`                     | row of `W_out`                             | the value vector the neuron writes   |
-| `attn.q` / `attn.k` / `attn.v` | column of `W_Q` / `W_K` / `W_V`            | what the subhead reads               |
-| `attn.z`                       | row of `W_O`                               | what the subhead writes              |
-
-The lens has two fields, on its `ParameterLensConfig` (`method=ParameterLensConfig(type="parameter_lens", scale=-1.0)`).
-`projection` picks the
-vocabulary space: `unembedding` (the default) multiplies by `W_U`, `embedding` by the embedding
-matrix `E`, as in the paper. The two differ whenever a model does not
-tie them — GPT-2 does tie them, so on HuggingFace's weights the two spaces agree exactly and only
-come apart once `enable_compatibility_mode` has folded LayerNorm in and centered the unembedding.
-The collector's `probability_*` columns are a softmax over the projected weight
-vector: a ranking score over the vocabulary, not a probability the model ever produces.
-
-`scale` multiplies the weight vector before projecting it (default `1.0`). A negative scale such as
-`-1.0` inverts the direction, surfacing the tokens a weight writes *against* rather than *toward*;
-the magnitude acts as a temperature on the `probability_*` ranking.
-
-Configs can also be loaded from YAML via `intex.operation.config.ConfigFactory[LensConfig]`, the
-lens's method config under `method` (see [Custom methods](#custom-methods) for the shape), and the
-operation can be run from an `@intex.script.experiment.experiment` script.
-
-## Circuit Discovery
-
-Discovers the circuit a model uses on a set of prompts. It supports multiple methods; the first is
-**Information Flow Routes**, which builds a contribution graph over the residual stream and prunes the
-routes that lead to the model's prediction.
-
-```python
-from transformer_lens.model_bridge import TransformerBridge
-
-from intex.circuit.config import CircuitConfig
-from intex.circuit.discoverer import CircuitDiscoverer
-from intex.circuit.input import CircuitInput
-from intex.circuit.method.information_flow_routes import InformationFlowRoutesConfig
-
-model = TransformerBridge.boot_transformers("gpt2")
-model.eval()
-
-config = CircuitConfig(method=InformationFlowRoutesConfig(type="information_flow_routes", threshold=0.04))
-prompts = ["The capital of France is", "The Eiffel Tower is in"]
-
-collector = CircuitDiscoverer(model).apply(
-    CircuitInput(config, prompts), save_dir="runs/circuit", return_collector=True
-)
-
-# In memory: one PromptCircuit per prompt, each with a full graph and the pruned routes.
-first = collector.result[0]
-print(first.graph, first.routes)
+```bash
+uv run python examples/patching.py --config-id head_sweep
+uv run python examples/circuit.py --prompts "The Eiffel Tower is in"
 ```
 
-For each prompt `i`, the collector writes into `save_dir`:
-
-- `graph_{i}.graphml` / `graph_{i}.json` — the full thresholded contribution graph (a
-  `networkx.MultiDiGraph` with a separate attention edge per head).
-- `routes_{i}.graphml` / `routes_{i}.json` — the pruned subgraph of routes to the prediction.
-- `circuit_{i}.html` — a self-contained interactive Plotly visualization (tokens on the x axis,
-  layers on the y axis; attention edges coloured by head, sized by contribution).
-- `prompts.json`, `config.json` — the run's index and configuration.
-
-By default `CircuitDiscoverer` uses `CircuitVisualizationCollector`, which writes the HTML above. For
-graph-data-only runs (no HTML), pass the base collector:
-`CircuitDiscoverer(model, collector_class=CircuitCollector)` — see
-[Result visualization](#result-visualization), which every operation shares.
-
-Configs can also be loaded from YAML via `intex.operation.config.ConfigFactory[CircuitConfig]`, and
-the operation can be run from an `@intex.script.experiment.experiment` script.
-
-## Result visualization
-
-Every operation writes a self-contained interactive Plotly page into `save_dir` next to its data —
-`result.html` for a lens or patching run, `circuit_{i}.html` per prompt for circuit discovery. The
-page needs no network and no local server: open the file.
-
-A lens or patching page draws the run's own index. **Position goes on the x axis and layer on the y
-axis** when both are present — the canonical activation-patching layout — otherwise the axes follow
-`layer, head, neuron, position`, with the last of these the run varies over going across. An axis the
-run does not vary over is dropped, further axes fold into composite y ticks (`layer 5 · head 3`), and
-a one-dimensional index — including one built from explicit `coordinates` — becomes a bar chart.
-Position ticks carry the prompt's tokens (`4: " Spain"`); for patching that is the *target* prompt,
-since the patched run is the target run.
-
-What each encodes:
-
-- **Patching** — the metric on a diverging scale centred on the value an ineffective patch would
-  produce (the unpatched target's own logit diff, or zero for the normalized and KL metrics), so warm
-  cells are the locations that moved the model toward the source. Hover carries the metric, the full
-  source and target coordinates, and what any other patch element did.
-- **Lens** — the top-1 probability on a sequential scale fixed to `[0, 1]`, with the top-1 token
-  printed in the cell and the whole top-k in hover.
-
-Visualization is chosen by the collector rather than by a config flag, so a run that only needs the
-CSV opts out by naming the base collector:
-
-```python
-Patcher(model, collector_class=PatchingCollector)
-Lens(model, collector_class=LensCollector)
-CircuitDiscoverer(model, collector_class=CircuitCollector)
-```
-
-## Dry run
-
-Every operator can describe a run before making it. `plan` resolves the input's index — the same
-expansion `apply` iterates — and reports the work, the activations it would read and the files it
-would write, without a single forward pass and without touching `save_dir`:
-
-```python
-lens_input = LensInput(config, "The capital of France is")
-
-plan = Lens(model).plan(lens_input, save_dir="runs/logit_lens")
-```
-
-```text
-Lens plan
-  method: logit_lens
-  config: my_lens
-  prompt: "The capital of France is" (6 tokens)
-  reads: blocks.0.hook_resid_post, blocks.1.hook_resid_post, blocks.10.hook_resid_post, ...
-  work: 72 elements, 1 forward pass
-  writes: runs/logit_lens/{result.html, result.csv, index.csv, config.json}
-  index (72 rows):
-     source_layer  source_position source_activation
-                0                0        resid.post
-                0                1        resid.post
-              ...              ...               ...
-```
-
-What each operator reports:
-
-| operator            | steps                                  | forward passes                                              |
-|---------------------|----------------------------------------|-------------------------------------------------------------|
-| `Lens`              | one element per index row              | 1 — none at all for the parameter lens, which reads weights |
-| `Prober`            | one probe per index row                | one per example prompt                                      |
-| `Patcher`           | one patched run per source/target pair | one per batch, plus the two cached runs                     |
-| `CircuitDiscoverer` | one graph per prompt                   | one per prompt                                              |
-
-The plan is logged as it is built (see [Logging](#logging)); pass `verbose=False` to keep it quiet
-and only take the object back. That object, an `OperationPlan`, is a dataclass, so the same numbers are readable in code:
-`steps`, `forward_passes`, `batches`, `activations`, `outputs`, and `index` — one DataFrame per
-index, holding exactly what `index.csv` would. `plan.describe(max_rows=...)` re-renders it with
-more or less of the index than the printout shows.
-
-Passing the *same* input object to `apply` afterwards costs nothing extra: the resolved index is
-reused, and only the activations are still fetched.
-
-In an experiment script, put the switch on your own config and `--dry-run` comes for free from the
-parser `@experiment` builds (see `example_lens_script.py`):
-
-```python
-@dataclass
-class Config:
-    model_name: str
-    dry_run: bool = False
-
-
-@experiment
-def main(config: Config):
-    model = TransformerBridge.boot_transformers(config.model_name)
-    lens_input = LensInput(config_of_the_run, "The capital of France is")
-
-    if config.dry_run:
-        Lens(model).plan(lens_input, "runs/logit_lens")
-    else:
-        Lens(model).apply(lens_input, save_dir="runs/logit_lens")
-```
-
-## Logging
-
-What intex reports - a plan, where a run's results were saved - goes through Python's `logging`, under
-the `intex` logger at INFO, to stderr, so a script's stdout stays its own:
-
-```text
-[intex] INFO 2026-10-10 14:03:13 Results saved to runs/logit_lens
-```
-
-The `intex` logger has its own handler and does not propagate to the root logger, so the messages
-keep this form whatever configures root logging - dependencies included: transformer_lens logs
-through the module-level `logging.info`, which runs `basicConfig` behind your back. To silence them:
-
-```python
-logging.getLogger("intex").setLevel(logging.WARNING)
-```
-
-To route them through your application's own handlers instead:
-
-```python
-intex_logger = logging.getLogger("intex")
-intex_logger.handlers.clear()
-intex_logger.propagate = True
-```
-
-## Datasets
-
-An extension point for declaring *where* prompts come from, following the same `Config → Factory`
-shape as the operations. A dataset yields plain `dict` rows; `intex` ships no concrete
-implementation — you register your own and the factory resolves it by the config's `type`:
-
-```python
-from intex.dataset.config import DatasetConfig
-from intex.dataset.dataset import AbstractDataset, Row
-from intex.dataset.factory import DatasetFactory
-from intex.operation.config import ConfigFactory
-
-
-@DatasetFactory.register("jsonl")
-class JsonlDataset(AbstractDataset):
-    def load(self) -> list[Row]:
-        with open(self.config.path) as f:  # 'path' is a dynamic config property
-            return [json.loads(line) for line in f][: self.config.get("limit")]
-
-
-config = ConfigFactory[DatasetConfig]("example_config.yaml").create("my_data")
-dataset = DatasetFactory.create(config).prepare()
-print(len(dataset), dataset[0])
-```
-
-```yaml
-my_data:
-  type: jsonl
-  path: data/prompts.jsonl
-  limit: 10
-```
-
-`DatasetConfig` declares only `type`; every other key in the entry is carried as a dynamic property,
-readable as `config.path` or `config.get("limit", 100)` — so a dataset defines its own vocabulary
-without `intex` knowing about it. Subclass `DatasetConfig` with real dataclass fields when you want
-those settings typed and validated instead; unknown keys still land in `properties`.
-
-`load` is called once, lazily, by `prepare()`; `len`, iteration and indexing read the cached rows.
-Operations do not consume datasets yet — `LensInput`, `ProbeInput`, `CircuitInput` and
-`PatchingInput` still take prompts directly.
-
-Registering a dataset follows the same rules as registering a method; see
-[Custom methods](#custom-methods).
-
-## Custom methods
-
-Every operation runs the method in its config's `method` field: the method config, whose `type`
-names the method. In code that is an instance of its method config class; in YAML a mapping with
-`type` and the fields, or just the type for the method with its defaults. A field left out takes
-the method's default.
-
-| operation         | built-in methods (their fields)                                                      |
-|-------------------|--------------------------------------------------------------------------------------|
-| Lens              | `logit_lens`, `tuned_lens` (`translators`), `parameter_lens` (`projection`, `scale`) |
-| Probing           | `linear` (`max_iter`, `seed`)                                                        |
-| Patching          | `exact`, `attribution`, `integrated_gradients` (`interpolation_steps`)               |
-| Circuit Discovery | `information_flow_routes` (`threshold`, `path_threshold`, `prediction_positions`)    |
-
-A method you register is named the same way, and runs through the same operator, collector, plan
-and result page as the built-in ones:
-
-```python
-from dataclasses import dataclass
-
-from intex.lens.config import LensConfig, LensMethodConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.lens.method.factory import LensMethodFactory
-from intex.lens.method.logit_lens import LogitLens
-from intex.operation.config import ConfigFactory
-
-
-@dataclass(kw_only=True)
-class TemperatureLensConfig(LensMethodConfig):
-    temperature: float = 1.0
-
-
-@LensMethodFactory.register("temperature_lens")
-class TemperatureLens(LogitLens[TemperatureLensConfig]):
-    def project(self, activation, index):
-        return super().project(activation, index) / self.method_config.temperature
-
-
-config = LensConfig(method=TemperatureLensConfig(type="temperature_lens", temperature=2.0), source=...)
-# or from YAML
-config = ConfigFactory[LensConfig]("configs.yaml").create("warm")
-
-Lens(model).apply(LensInput(config, "The capital of France is"), save_dir="runs/warm")
-```
-
-```yaml
-warm:
-  method:
-    type: temperature_lens
-    temperature: 2.0
-  top_k: 5
-  source:
-    activation: resid.post
-    location: [layer, position]
-
-cold:
-  method: logit_lens  # just the type: the method with its defaults
-  source:
-    activation: resid.post
-    location: [layer, position]
-```
-
-The `type` picks the method, and the method names the dataclass of its method config as its type
-argument, extending its operation's empty method config base. That one name types `self.method_config` and is
-the class the config reads `method` into. Read from a file, `method` goes into that class
-through the method config base's `from_config`, strictly: a mapping without `type`, a method nothing
-registered, a field the method does not have, or a field without a default left out raises right
-there. Built in code, the instance is used as given, so make it one of that very class: `config.json`
-is read back into it. A method naming none, such as `logit_lens`, takes the empty base
-itself, which no field fits. A method extending another keeps that one's method config, except one
-extending a method with none of its own - `logit_lens`, `exact`, `attribution`, which leave their
-type argument open - which names its own, as `TemperatureLens` does. One method config class therefore
-serves several methods, so `type` is declared once, on `MethodConfig`, with no default: the instance
-always names its method - `LensMethodConfig(type="logit_lens")`, `TunedLensConfig(type="tuned_lens")` -
-and every operation's config requires `method`. `config.json` records the method with every field,
-defaults included, and `dataclasses.replace(config, method=TunedLensConfig(type="tuned_lens"))`
-switches a built config to another method.
-
-Method configs are data, read back from `config.json` as they were given: numbers, strings, enums and
-paths, and lists, tuples, sets, mappings and dataclasses of them. A field that has no such form - a
-function, a tensor - cannot be written to `config.json`; a method that needs one builds it from its
-fields (a path to load it from, say) or holds it as a class attribute.
-
-| operation         | factory                 | subclass                 | method config base     | implement                                  | built              |
-|-------------------|-------------------------|--------------------------|------------------------|--------------------------------------------|--------------------|
-| Lens              | `LensMethodFactory`     | `AbstractLensMethod`     | `LensMethodConfig`     | `extract`, `project`                       | once per run       |
-| Probing           | `ProbeMethodFactory`    | `AbstractProbeMethod`    | `ProbeMethodConfig`    | `fit`, `predict`, `predict_proba`, `probe` | once per index row |
-| Patching          | `PatchingMethodFactory` | `AbstractPatchingMethod` | `PatchingMethodConfig` | `scores`, `passes`                         | once per run       |
-| Circuit Discovery | `CircuitMethodFactory`  | `AbstractCircuitMethod`  | `CircuitMethodConfig`  | `build`                                    | once per run       |
-
-- **Lens** - one class serves every activation the lens reads, telling them apart by
-  `index.activation()`, and `project` returns one element's logits over the vocabulary. Extending
-  `LogitLens` (as above) keeps its read-out of residual-stream, MLP and attention head activations.
-  A lens that reads only the weights sets `reads_activations = False`: it then takes no prompt and
-  has no `position` axis, like `ParameterLens`.
-- **Probing** - `probe` is the fitted estimator the collector pickles into `probes.pkl`.
-- **Patching** - `scores` yields a `RowResult` per index row from the change it measured in each
-  metric, which `self._report` turns into the columns of the comparisons the config names; `passes`
-  is what `plan` reports, and `batched = True` says the method runs the model `batch_size` rows at a
-  time.
-- **Circuit Discovery** - the result page draws graphs whose nodes carry `kind`, `layer`,
-  `position` and `token` and whose edges carry `kind`, `weight` and `head`, the schema
-  `PromptCircuit` documents; a method writing other attributes runs with
-  `collector_class=CircuitCollector`.
-
-A method is registered when the module defining it is imported, so import it before building or
-loading a config that names it: a config file looks its method up as it is read, so a name nothing
-registered (listing the names that are) or a field that does not fit fails right there, before any
-run. The built-in methods register with their operation's package, so they are always known. In an
-`@experiment` script, define the method above `main`. A name belongs to one method: registering
-another under it raises, so a built-in cannot be shadowed by accident, while defining the same
-classes again (re-running a notebook cell) replaces them. Classes a function builds are each another
-method, however alike their names. A method that leaves an abstract method out is rejected when it is
-registered.
-
-## Attribution & licensing
-
-The Information Flow Routes method reuses contribution-graph math from the
-[LM Transparency Tool](https://github.com/facebookresearch/llm-transparency-tool)
-(`src/intex/circuit/vendor/contributions.py`, vendored — see `src/intex/circuit/vendor/NOTICE`),
-which is licensed **CC BY-NC 4.0**. Because that code is non-commercial, the Circuit Discovery
-`information_flow_routes` method — and any results produced with it — may be used for
-**non-commercial purposes only**. Method reference:
+## Documentation
+
+The docs live in [`docs/`](docs) and build into a site with
+`uv run --group docs sphinx-build docs docs/_build/html`:
+
+- [Getting started](docs/getting-started.md)
+- Concepts: [How intex is put together](docs/concepts/overview.md),
+  [Locating activations](docs/concepts/locating.md), [Configuration files](docs/concepts/configuration.md),
+  [Running and reading results](docs/concepts/running.md), [Models and caching](docs/concepts/models.md)
+- Operations: [Lens](docs/operations/lens.md), [Probing](docs/operations/probing.md),
+  [Activation patching](docs/operations/patching.md), [Circuit discovery](docs/operations/circuit-discovery.md)
+- Guides: [Experiment scripts](docs/guides/experiment-scripts.md),
+  [Custom methods](docs/guides/custom-methods.md), [Datasets](docs/guides/datasets.md)
+- [Development](docs/development.md); the architecture is described in [AGENTS.md](AGENTS.md)
+
+The site also has an API reference generated from the docstrings.
+
+## Attribution and licensing
+
+The Information Flow Routes method reuses the contribution-graph math of the
+[LM Transparency Tool](https://github.com/facebookresearch/llm-transparency-tool), vendored as
+`src/intex/circuit/vendor/contributions.py` (see `src/intex/circuit/vendor/NOTICE`), which is licensed
+**CC BY-NC 4.0**. Because that code is non-commercial, the Circuit Discovery `information_flow_routes`
+method, and any results produced with it, may be used for **non-commercial purposes only**. Method
+reference:
 
 > Javier Ferrando and Elena Voita. "Information Flow Routes: Automatically Interpreting Language
 > Models at Scale." 2024. https://arxiv.org/abs/2403.00824

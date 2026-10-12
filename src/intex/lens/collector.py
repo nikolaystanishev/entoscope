@@ -8,6 +8,14 @@ from intex.operation.collector import FrameCollector, VisualizationCollector
 
 
 class LensCollector(FrameCollector[LensInput]):
+    """One row per index element: its top-k tokens, best first.
+
+    Rank ``i`` fills ``token_{i}`` (the token id), ``str_token_{i}`` (its string, escaped - see
+    ``str_token`` on reading it back) and ``probability_{i}`` (the softmax over the element's logits).
+    Writes ``result.csv``, ``index.csv`` and ``config.json``; ``LensVisualizationCollector`` adds
+    ``result.html``.
+    """
+
     def collect(self, logits: torch.Tensor, index: int):
         # Each cell holds the top-k tokens of a single-position slice; elements spanning
         # multiple positions (e.g. a layer-only location) do not fit this per-row layout.

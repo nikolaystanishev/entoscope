@@ -46,6 +46,11 @@ dev = [
     "pytest-cov>=4.1.0",
     "ruff>=0.15.20",
 ]
+docs = [
+    "furo>=2024.8.6",
+    "myst-parser>=4.0",
+    "sphinx>=8.1",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -9,6 +9,12 @@ CONFIG_FILE = "config.json"
 
 @dataclasses.dataclass(kw_only=True)
 class AbstractConfig:
+    """What every operation's config shares.
+
+    ``config_id`` names the YAML entry the config was read from - ``ConfigFactory`` sets it - and
+    titles the run's plan and result pages; a config built in code may leave it unset.
+    """
+
     config_id: str | None = None
 
     def save(self, save_dir: str) -> None:
@@ -20,6 +26,15 @@ T = TypeVar("T", bound=AbstractConfig)
 
 
 class ConfigFactory(Generic[T]):
+    """Reads configs out of a YAML file of ``config_id: config`` entries.
+
+    The type argument is the class an entry is read into, so it is required:
+    ``ConfigFactory[LensConfig]("configs.yaml").create("my_lens")``. Reading is strict - an unknown
+    or missing key raises - and the file is read once per factory. A value may name environment
+    variables as ``${NAME}``: each is replaced by the variable's value, or by ``NAME`` itself when it
+    is unset, and a value that is a single variable holding digits becomes an int.
+    """
+
     def __init__(self, config_path: str):
         self.config_path = config_path
         self.config = None

@@ -10,6 +10,12 @@ from intex.probe.method.probe import AbstractProbeMethod
 
 
 class ProbeCollector(FrameCollector[ProbeInput]):
+    """One row per location, with a column per metric the config names.
+
+    Writes ``result.csv``, ``index.csv``, ``config.json`` and ``probes.pkl``: the fitted probes, pickled
+    as a dict from result row to estimator.
+    """
+
     _probes: dict[int, Any] | None = None
 
     @property

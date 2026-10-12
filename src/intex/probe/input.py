@@ -20,9 +20,9 @@ class ProbeInput(OperationInput):
 
     The location grid is parsed once. When every prompt tokenizes to the same length the grid uses
     that length, so a filtered position resolves to a concrete index. When prompt lengths differ the
-    grid is parsed length-agnostically (``n_positions=None``): explicit positions stay symbolic —
+    grid is parsed length-agnostically (``n_positions=None``): explicit positions stay symbolic -
     non-negative counts from the start, negative from each prompt's own end (torch resolves it
-    against that prompt's cache at slice time) — and a grid that would enumerate every position (an
+    against that prompt's cache at slice time) - and a grid that would enumerate every position (an
     unfiltered ``position`` axis) is rejected because its size would depend on the prompt. Every
     explicit position must be valid for the shortest prompt. Position axes left outside the grid
     stay full slices and adapt to each prompt.

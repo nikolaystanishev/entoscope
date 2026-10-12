@@ -14,6 +14,18 @@ from intex.util.collections import zip_fill
 
 @dataclass
 class PatchingInput(OperationInput):
+    """The two prompts a patching run sits between, and the tokens its metrics compare.
+
+    The target run is the one patched; the source run is what ``replace`` and ``value_scale`` read.
+    ``source_prompt`` may be ``None`` when no element reads it, and then ``kl_divergence`` and
+    ``normalized``, which score against the source run, are unavailable.
+
+    ``correct_token`` is the ``r`` and ``distractor_token`` the ``r'`` of the metrics: a string that
+    tokenizes to a single token, or a token id. Left unset, the correct token is the source run's own
+    prediction and the distractor the target run's, which only means something while the two prompts
+    disagree - a pair that predicts the same token is rejected by the difference metrics.
+    """
+
     config: PatchingConfig
     source_prompt: str | None
     target_prompt: str
@@ -255,7 +267,7 @@ class PatchingInput(OperationInput):
         return self._baseline("target", metric)
 
     def _baseline(self, run: str, metric: PatchingMetric) -> torch.Tensor:
-        """``metric`` on one of the two unpatched runs — what a patched run is reported against."""
+        """``metric`` on one of the two unpatched runs - what a patched run is reported against."""
         if (run, metric) not in self._baselines:
             logits = self.source_logits if run == "source" else self.target_logits
             self._baselines[(run, metric)] = AbstractMetric.get(metric).compute(self, logits[0, -1])

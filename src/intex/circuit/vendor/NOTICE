@@ -11,7 +11,9 @@ Author:  Meta Platforms, Inc. and affiliates
 License: Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)
          https://creativecommons.org/licenses/by-nc/4.0/
 
-Modifications: none to the code. An attribution header was prepended to the file.
+Modifications: an attribution header was prepended to the file, and the typeguard import and
+the five @typechecked decorators were removed (typeguard 4.x parses the jaxtyping shape strings as
+Python and fails at import time; the header gives the details). No numerical behaviour changed.
 
 Reference paper:
   Javier Ferrando and Elena Voita.
@@ -22,6 +24,6 @@ IMPORTANT: The CC BY-NC 4.0 license permits NON-COMMERCIAL use only. The graph-b
 math in this file, and any intex code that imports it (the Circuit Discovery
 "information_flow_routes" method), may therefore be used for non-commercial purposes only.
 
-The intex per-head graph assembly and route-pruning in ../graph.py are original intex code,
-inspired by the structure of the same tool's llm_transparency_tool/routes/graph.py (node
-naming X0_/A/M/I and the layer/token contribution loop).
+The intex per-head graph assembly and route-pruning in ../method/information_flow_routes.py are
+original intex code, inspired by the structure of the same tool's
+llm_transparency_tool/routes/graph.py (node naming X0_/A/M/I and the layer/token contribution loop).

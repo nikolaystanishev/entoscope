@@ -15,6 +15,12 @@ from intex.util.collections import range_combinations
 
 
 class ModelLocation(str, Enum):
+    """The keys an index row is made of.
+
+    ``layer``, ``head``, ``neuron`` and ``position`` are axes a locator can enumerate. ``activation`` is
+    not: it is set once on the locator (or on each coordinate) and stamped on every row.
+    """
+
     ACTIVATION = "activation"
     LAYER = "layer"
     HEAD = "head"
@@ -23,6 +29,12 @@ class ModelLocation(str, Enum):
 
 
 class ModelLayerLocation(str, Enum):
+    """The activations a locator can name, spelled as a config spells them.
+
+    Each maps onto a ``transformer_lens`` hook through ``TRANSFORMER_ACT_NAME``; the comment beside a
+    member is its tensor's axes. ``embed`` is not inside a block, so a locator reading it names no layer.
+    """
+
     EMBEDDING = "embed"  # [batch, position, neuron]
     RESIDUAL_PRE = "resid.pre"  # [batch, position, neuron]
     RESIDUAL_MID = "resid.mid"  # [batch, position, neuron]
@@ -95,12 +107,15 @@ class IndexTransform(Protocol):
 class Filter:
     """Keep/drop index rows from a list of patterns.
 
-    Each pattern maps ``location -> constraint`` (multiple keys are AND-ed, patterns are OR-ed),
-    and ``{"not": <pattern>}`` drops the matching rows instead. Pattern keys are ``ModelLocation``
-    members (``from_config`` converts the config file's plain strings). A constraint is:
-      int                     -> the value
-      {"range": [start, end]} -> ``start..end`` inclusive
-      [<value or range>, ...] -> any of the listed constraints
+    Each pattern maps ``location -> constraint``: the keys of one pattern are AND-ed, the patterns are
+    OR-ed, and ``{"not": <pattern>}`` drops the rows it matches instead. Pattern keys are
+    ``ModelLocation`` members (``from_config`` converts a config file's plain strings). A constraint is
+    one of:
+
+    - an int, matching that value;
+    - ``{"range": [start, end]}``, matching ``start`` to ``end`` with both ends included;
+    - a list of the above, matching any of them.
+
     Negative numbers count from the end. The result is the union of the positive patterns
     (everything when there are none) minus the union of the ``not`` patterns.
     """
@@ -199,7 +214,13 @@ class Filter:
 
 
 class Group(dict[ModelLocation, list[int] | str]):
-    """Group values together (collapsing the resulting duplicate rows)."""
+    """Merge the listed values of an axis into one row that addresses them together.
+
+    ``{head: [6, 9]}`` turns the rows of heads 6 and 9 into a single row reading both heads, and
+    ``"all"`` merges every value the axis has. The duplicate rows a merge leaves are dropped. Merge
+    heads, neurons or positions: every layer is a hook of its own, so a row naming several layers names
+    no activation a run can read.
+    """
 
     def apply(self, index_df: pd.DataFrame) -> pd.DataFrame:
         for name, values in self.items():
@@ -213,7 +234,11 @@ class Group(dict[ModelLocation, list[int] | str]):
 
 
 class Incremental(dict[ModelLocation, list[int]]):
-    """Create new incremental rows (taking all rows and incrementing the specified locations)."""
+    """Follow every row with rows that add growing prefixes of the listed values to an axis.
+
+    ``{head: [6, 9]}`` turns the row of head 0 into rows for heads ``[0]``, ``[0, 6]`` and
+    ``[0, 6, 9]``. An axis the index does not have yet is added, and then only the grown rows exist.
+    """
 
     def apply(self, index_df: pd.DataFrame) -> pd.DataFrame:
         for name, values in self.items():
@@ -243,7 +268,12 @@ class Incremental(dict[ModelLocation, list[int]]):
 
 @dataclass
 class Combination:
-    """Create new combination rows (taking all rows and combining the specified location's values)."""
+    """Expand each row into one row per combination of the values it holds on each axis in ``location``.
+
+    Combinations run from one value up to ``max_elements``, so it follows a ``group``: after
+    ``group: {head: all}`` over heads 6, 9 and 10, ``max_elements: 2`` gives the rows ``(6,)``,
+    ``(9,)``, ``(10,)``, ``(6, 9)``, ``(6, 10)`` and ``(9, 10)``.
+    """
 
     location: list[ModelLocation] = field(default_factory=list)
     max_elements: int = sys.maxsize
@@ -342,7 +372,7 @@ class ModelLocatorConfig:
     by ``filter`` and reshaped by the transforms. Explicitly, ``coordinates`` enumerates the exact
     points as ``location -> value`` mappings (every coordinate using the same locations, values as
     in ``Group`` rows: an int or a list of ints patched together); the two modes are mutually
-    exclusive. A coordinate may also carry its own ``activation`` — then every coordinate must, and
+    exclusive. A coordinate may also carry its own ``activation`` - then every coordinate must, and
     the config-level one must be unset. Negative values count from the end, as in ``Filter``.
     """
 
@@ -392,8 +422,8 @@ class ModelLocatorConfig:
         """Resolve the config into an index DataFrame for a prompt of ``n_positions`` tokens.
 
         ``n_positions=None`` means the prompt length varies (used when probing prompts of unequal
-        length): positions stay symbolic — non-negative counts from the start, negative from each
-        prompt's own end (torch resolves it at slice time) — and a grid that would enumerate every
+        length): positions stay symbolic - non-negative counts from the start, negative from each
+        prompt's own end (torch resolves it at slice time) - and a grid that would enumerate every
         position (an unfiltered ``position`` axis) is rejected because its size would depend on the
         prompt. Other locations never depend on the prompt length, so they are unaffected.
         """

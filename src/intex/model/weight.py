@@ -28,7 +28,7 @@ def attention_out_weight(model: Model, layer: int) -> torch.Tensor:
     """A block's ``W_O`` in HookedTransformer's orientation, ``[head, d_head, d_model]``.
 
     A bridge picks its reshape by reading the layout off the matrix shape, and ``W_O`` is square
-    whenever ``d_model == n_heads * d_head`` — so on the architectures ``mlp_weight`` describes it
+    whenever ``d_model == n_heads * d_head`` - so on the architectures ``mlp_weight`` describes it
     takes the ``Conv1D`` branch and skips the transpose ``nn.Linear`` needs. Rebuilding from the
     parameter also covers the non-square case, where the bridge's reading is already right.
     """

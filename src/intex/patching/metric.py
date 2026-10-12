@@ -21,7 +21,7 @@ class AbstractMetric(abc.ABC):
     """
 
     # The metric's effect is normally the rise in m, but a KL divergence is a distance, so its
-    # effect is the drop — that keeps 'positive means the patch restored the source behaviour'
+    # effect is the drop - that keeps 'positive means the patch restored the source behaviour'
     # true for every metric. It cancels in the normalized comparison, which divides by the same sign.
     effect_sign: int = 1
     needs_distractor: bool = False
@@ -70,8 +70,8 @@ class LogProbMetric(AbstractMetric):
 
 
 class LogProbDiffMetric(AbstractMetric):
-    """Numerically the same thing as ``LogitDiffMetric`` — the softmax's normalizer is shared by the
-    two tokens and cancels — and kept apart because the papers that use it call it by this name."""
+    """Numerically the same thing as ``LogitDiffMetric`` - the softmax's normalizer is shared by the
+    two tokens and cancels - and kept apart because the papers that use it call it by this name."""
 
     needs_distractor = True
 
@@ -84,7 +84,7 @@ class LogProbDiffMetric(AbstractMetric):
 
 
 class KLDivergenceMetric(AbstractMetric):
-    """``D_KL(P_source || P_run)`` — how far a run's whole distribution sits from the source run's.
+    """``D_KL(P_source || P_run)`` - how far a run's whole distribution sits from the source run's.
 
     Needs no answer token, which is what makes it the task-agnostic choice. ``kl_div(input, target)``
     reads ``input`` as log-probabilities and computes ``D_KL(target || exp(input))``, so the run
@@ -104,8 +104,8 @@ class KLDivergenceMetric(AbstractMetric):
 class AbstractComparison(abc.ABC):
     """Turns the change a patch made to a metric into the number a run reports.
 
-    Every method produces the same primitive — ``delta``, the patched run's metric minus the
-    unpatched target run's — exactly for ``exact`` and as a gradient estimate for the others.
+    Every method produces the same primitive - ``delta``, the patched run's metric minus the
+    unpatched target run's - exactly for ``exact`` and as a gradient estimate for the others.
     """
 
     needs_source_run: bool = False

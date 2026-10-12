@@ -2,7 +2,7 @@
 
 Lays the graph out as the Information Flow Routes figures do: token position on the x axis, model
 depth on the y axis (input tokens at the bottom, the final layer at the top). Attention edges are
-drawn per head — the coloured midpoint markers encode which head carries each edge (colour) and how
+drawn per head - the coloured midpoint markers encode which head carries each edge (colour) and how
 strong it is (size). One self-contained HTML file is produced per prompt, holding two figures: the
 pruned routes-to-prediction (headline) and the full contribution graph.
 """

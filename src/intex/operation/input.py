@@ -13,7 +13,7 @@ class OperationInput(abc.ABC):
 
     @abc.abstractmethod
     def prepare_index(self, model: Model) -> OperationInput:
-        """Resolve everything that does not need a forward pass — what a run would iterate.
+        """Resolve everything that does not need a forward pass - what a run would iterate.
 
         Split out of ``prepare`` so an operation can be planned against a model without spending
         the compute; ``prepare`` calls it and then gathers the activations on top.

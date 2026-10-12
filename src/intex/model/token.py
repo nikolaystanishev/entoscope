@@ -5,7 +5,7 @@ from intex.model.base import Model
 
 
 def escape_token(token: str) -> str:
-    """Escape non-printable characters (e.g. "\\r", "\\n" byte tokens) — raw ones break CSV round-trips."""
+    """Escape non-printable characters (e.g. "\\r", "\\n" byte tokens) - raw ones break CSV round-trips."""
     return "".join(char if char.isprintable() else char.encode("unicode_escape").decode("ascii") for char in token)
 
 

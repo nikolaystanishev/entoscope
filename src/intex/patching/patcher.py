@@ -12,6 +12,14 @@ logger = logging.getLogger(__name__)
 
 
 class Patcher(Operator):
+    """Patches the source run into the target run and reports how the metrics moved, one row per patched run.
+
+    ``batch_size`` is how many rows one forward pass of ``exact`` patches; the gradient methods score the
+    whole index from a pass per interpolation step and ignore it. Backends round differently at different
+    batch shapes, so the cached source and target runs are made at the same width as the patched runs.
+    The default collector also draws ``result.html``; ``PatchingCollector`` writes the CSVs alone.
+    """
+
     def __init__(
         self,
         model: Model,

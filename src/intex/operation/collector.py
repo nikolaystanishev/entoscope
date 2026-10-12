@@ -92,8 +92,10 @@ class FrameCollector(AbstractCollector[InputT]):
     @property
     def result(self) -> pd.DataFrame:
         assert self._cells is not None
-        rows = pd.DataFrame([self._cells[position] for position in range(len(self._index))])
-        return pd.concat([self._index.to_df().reset_index(drop=True), rows], axis=1)
+        rows = pd.DataFrame(self._cells.values())
+        return rows
+        # rows = pd.DataFrame([self._cells[position] for position in range(len(self._index))])
+        # return pd.concat([self._index.to_df().reset_index(drop=True), rows], axis=1)
 
     def prepare(self) -> None:
         self._cells = {}

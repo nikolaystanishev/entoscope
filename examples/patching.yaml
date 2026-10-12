@@ -1,0 +1,144 @@
+# Patching configs for patching.py: `uv run python examples/patching.py --config-id <entry>`.
+#
+# A patching run writes activations of the source run into the target run, one patched run per row
+# of the index, and reads metrics off every patched run. The script's defaults patch "The capital of
+# France is" (source) into "The capital of Spain is" (target), scoring " Paris" against " Madrid".
+#
+# `metric` maps each scalar read off a patched run to the comparisons it is reported under - one
+# result column per pair. 'logit_diff' and 'logprob_diff' compare the correct token with the
+# distractor, 'probability' and 'log_prob' read the correct one alone, and 'kl_divergence' scores the
+# whole distribution against the source run's and needs no answer token at all. They all come off the
+# same forward pass, so asking for several costs nothing, and each column is drawn as its own plot.
+#
+# The comparison says what a patched run is reported against. 'absolute' is the metric of the patched
+# run itself; 'indirect_effect' subtracts the unpatched target run, which is activation patching
+# stated as a causal quantity; 'normalized' divides that by the source run's own distance from the
+# target, putting 0 at 'the patch changed nothing' and 1 at 'the patch reproduced the source run'.
+
+# The residual stream before every layer at every position: where the information that tells the
+# two prompts apart lives, layer by layer.
+residual_sweep:
+  metric:
+    logit_diff: [normalized]
+    kl_divergence: [indirect_effect]
+  method: exact
+  patch:
+    - source: &residual
+        activation: resid.pre
+        location: [layer, position]
+        type: replace
+      target: *residual
+
+# Every head's output, at every position at once. A comparison sits on its metric because the right
+# one differs per metric, and a metric may name several: all three columns come off the one run.
+head_sweep:
+  metric:
+    logit_diff: [normalized, absolute]
+    probability: [indirect_effect]
+  method: exact
+  patch:
+    - source: &heads
+        activation: attn.z
+        location: [layer, head]
+        type: replace
+      target: *heads
+
+# Zero ablation: the source names no location, only a value (0.0 by default), so nothing is read from
+# a source run - pass `--source-prompt ""` to run without one. Reported as an indirect effect this is
+# 'm(x | do(a = 0)) - m(x)'. 'normalized' and 'kl_divergence' score against the source run, so neither
+# is available without one.
+zero_ablation:
+  metric:
+    logit_diff: [indirect_effect]
+  method: exact
+  patch:
+    - source:
+        type: value_replace
+      target:
+        activation: mlp.out
+        location: [layer]
+        type: replace
+
+# Causal-tracing corruption: every token's embedding gets Gaussian noise at three times the
+# embedding's own spread, one position at a time. `embed` sits outside the blocks, so it has no layer.
+noise_tracing:
+  metric:
+    logit_diff: [indirect_effect]
+  method: exact
+  patch:
+    - source:
+        activation: embed
+        location: [position]
+        type: gaussian_noise
+      target:
+        activation: embed
+        location: [position]
+        type: replace
+
+# Attribution patching: the first-order expansion of the effect the residual sweep measures. One
+# forward and one backward pass score every row of the index, so the cost is flat in the size of the
+# sweep rather than one run per row - at the price of a linearity assumption a large intervention
+# leaves behind.
+attribution:
+  metric:
+    logit_diff: [indirect_effect]
+  method: attribution
+  patch:
+    - source: *residual
+      target: *residual
+
+# Integrated gradients: the same estimate with the gradient averaged over `interpolation_steps` points
+# on the path from the source activation to the target one, which recovers effects a single gradient
+# at the clean point hides. The path runs between the two runs, so this needs a source prompt, and two
+# prompts of the same token length.
+integrated_gradients:
+  metric:
+    logit_diff: [indirect_effect]
+  method:
+    type: integrated_gradients
+    interpolation_steps: 10
+  patch:
+    - source: *residual
+      target: *residual
+
+# Explicit coordinates: source coordinate i is read from the source run and written at target
+# coordinate i of the target run, one patched run per pair. Each coordinate may carry its own
+# activation instead of the element-level one.
+explicit_coordinates:
+  metric:
+    logit_diff: [absolute]
+  method: exact
+  patch:
+    - source:
+        coordinates:
+          - {activation: resid.post, layer: -2, position: -1}
+          - {activation: mlp.out, layer: -1, position: -1}
+        type: replace
+      target:
+        coordinates:
+          - {activation: resid.post, layer: -1, position: -1}
+          - {activation: mlp.out, layer: -1, position: -1}
+        type: replace
+
+# Two elements patched together: each patched run applies one row of every element. The first element
+# lays the result out, so the one that varies comes first; an element with a single row is applied on
+# every run, and the result page names it in its subtitle.
+heads_with_fixed_mlp:
+  metric:
+    logit_diff: [normalized]
+  method: exact
+  patch:
+    - source: &late_heads
+        activation: attn.z
+        location: [layer, head]
+        filter:
+          - layer: {range: [8, 11]}
+        type: replace
+      target: *late_heads
+    - source: &first_mlp
+        activation: mlp.out
+        location: [layer]
+        filter:
+          - layer: 0
+        type: replace
+      target: *first_mlp

@@ -33,7 +33,7 @@ def resource_id(model: Model) -> str:
 
 @lru_cache(maxsize=2)
 def load_translators(model: Model, resource: str) -> torch.nn.ModuleList:
-    """Pretrained translators for ``resource`` — a directory, or a resource id on the hub space.
+    """Pretrained translators for ``resource`` - a directory, or a resource id on the hub space.
 
     Cached so that repeated runs over the same model read the checkpoint once; the model is part of
     the key only to build the unembedding the checkpoint is checked against.

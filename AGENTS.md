@@ -24,9 +24,13 @@ uv run ruff check . && uv run ruff format --check .
 uv run pytest --cov --cov-report=html
 ```
 
+```bash
+uv run --group docs sphinx-build -W --keep-going docs docs/_build/html
+```
+
 CI (`.github/workflows/ci.yml`) runs exactly the lint, format-check and `pytest` above, the tests with `--cov` on
 Python 3.10–3.14; a `coverage` job combines the versions into the job summary and a `coverage-html` artifact
-(report-only, no threshold).
+(report-only, no threshold), and a `docs` job builds the site above into a `docs-html` artifact.
 
 ## What this repo is
 
@@ -35,10 +39,10 @@ patching, probing, lensing, and circuit discovery.
 
 ## Architecture
 
-Every operation — Logit/Tuned/Parameter Lens, Probing, Activation Patching, Circuit Discovery —
+Every operation - Logit/Tuned/Parameter Lens, Probing, Activation Patching, Circuit Discovery -
 follows the same four-part shape, and adding one means writing the same four pieces:
 
-- **Config** (`<op>/config.py`) — a `kw_only` dataclass extending `AbstractConfig`, validating in
+- **Config** (`<op>/config.py`) - a `kw_only` dataclass extending `AbstractConfig`, validating in
   `__post_init__`. Loadable from YAML through `ConfigFactory[TheConfig](path).create("id")`, which
   deserializes strictly via `intex.util.data.from_dict` (unknown/missing keys raise; a
   `from_config` classmethod on a field's type overrides the default handling). Its `method` field is
@@ -46,34 +50,37 @@ follows the same four-part shape, and adding one means writing the same four pie
   the type. `type` is `MethodConfig`'s own field and has no default, since one method config class
   serves several methods. It is saved as `config.json` beside the run's results,
   which `from_dict` reads back - so a config holds only data, and `to_dict` rejects what has no JSON form.
-- **Input** (`<op>/input.py`) — a dataclass extending `OperationInput` that holds prompts and the
+- **Input** (`<op>/input.py`) - a dataclass extending `OperationInput` that holds prompts and the
   lazily-filled tensors. `prepare_index(model)` resolves everything that needs no forward pass;
   `prepare(model)` calls it and then gathers activations. Both are idempotent, guarded on the
   *cache* rather than the index, so `plan()` followed by `apply()` on the same object costs one
   index resolution.
-- **Operator** (`<op>/<name>.py`) — `apply(input, save_dir, return_collector, verbose)` iterates
+- **Operator** (`<op>/<name>.py`) - `apply(input, save_dir, return_collector, verbose)` iterates
   `input.index`, and `plan(input, save_dir, verbose)` builds an `OperationPlan` describing the same
   run without touching the model or `save_dir`. Constructor takes `(model, collector_class=...)`.
-- **Collector** (`<op>/collector.py`) — accumulates one cell per index row and writes the run's
+- **Collector** (`<op>/collector.py`) - accumulates one cell per index row and writes the run's
   files. `FrameCollector` glues cells onto the index's own columns to produce `result.csv`;
   `VisualizationCollector` additionally renders `result.html`.
+
+An operation (or a method) also gets its page in `docs/operations/`, its modules in `docs/reference/`
+and an entry in `examples/` - see [Docs](#docs).
 
 ### The index is the spine
 
 `ModelLocatorConfig` (`model/config.py`) is what every operation's config embeds to say *where* in
 the model to look, in one of two mutually exclusive modes:
 
-- declarative — `location` names the axes (`layer`, `head`, `neuron`, `position`), the full range of
+- declarative - `location` names the axes (`layer`, `head`, `neuron`, `position`), the full range of
   each is generated, then narrowed by `Filter` and reshaped by the `Group` / `Incremental` /
   `Combination` transforms;
-- explicit — `coordinates` enumerates exact points, optionally each with its own `activation`.
+- explicit - `coordinates` enumerates exact points, optionally each with its own `activation`.
 
 `parse(model, n_positions)` turns that into a DataFrame. `n_positions=None` means the prompt length
 varies (probing over unequal-length prompts): positions stay symbolic so torch resolves a negative
 against each prompt's own cache at slice time, and an unfiltered `position` axis is rejected.
 
 `Index` (`model/index.py`) wraps the DataFrame(s) and is what operators iterate. Each `SingleIndex`
-carries an `output` position — the row a collector files its cell under — plus a source
+carries an `output` position - the row a collector files its cell under - plus a source
 `IndexElement` and, for patching, a target one. `IndexElement.slices()` turns a row into the tuple
 of tensor slices for that activation, via `ActivationSlicer` (`model/slicer.py`), which owns the
 axis order per activation kind (`[batch, pos, neuron]`, `[batch, pos, head, neuron]`,
@@ -92,7 +99,7 @@ switches to `transformer_lens`'s folded-LayerNorm convention and both must keep 
 platform markers in `pyproject.toml`). **Any new `transformer_lens` import that moved between 2.x
 and 3.x needs the same `try/except ImportError` fallback** used in `model/index.py`,
 `model/base.py` and `tests/conftest.py`. Backend-dependent weight access is centralized in
-`model/weight.py` and `model/unembed.py` — go through those rather than reading `model.W_*`
+`model/weight.py` and `model/unembed.py` - go through those rather than reading `model.W_*`
 directly.
 
 `CachedModel` (`model/cache.py`) is a transparent read-through disk cache that overrides only
@@ -104,7 +111,7 @@ supplied `hf_model` cannot collide with the base model.
 
 Passing `collector_class=LensCollector` / `PatchingCollector` / `CircuitCollector` opts out of HTML;
 each HTML collector lives beside the base one it extends, in `<op>/collector.py`. A `Figure` is a
-page of *panels* — `panels()` names them and `figure(panel)` draws one plot each, which is how a
+page of *panels* - `panels()` names them and `figure(panel)` draws one plot each, which is how a
 patching page gets a plot per metric column, a lens page one per top-k rank and a circuit page its
 routes and its full graph.
 `GridFigure` (`operation/visualization.py`) derives the whole layout from the `Index`: position on x
@@ -136,7 +143,7 @@ Patching composes three of those: `PatchingMetric` picks the scalar read off a r
 picks what the patched run is reported against, and the config's `method` picks how the change in
 the metric is obtained. The config's `metric` maps the first onto a list of the second, one result column
 per pair, so the comparison is chosen per metric and a metric may carry several. Every method yields
-the same primitive — the patched run's metric minus the unpatched target run's, one per *metric* —
+the same primitive - the patched run's metric minus the unpatched target run's, one per *metric* -
 so adding one means implementing `AbstractPatchingMethod.scores` and nothing else; `_report` fans
 that out into the columns and the figure draws one plot per `config.metric_pairs()` entry. A method
 that actually runs the patched model (only `exact`) also reports that run's next token as the row's
@@ -166,12 +173,28 @@ time, so the config class must be defined above it.
   non-commercial-only as a result.
 - Line length 120, ruff rules `E,F,UP,B,SIM,I`; `F722` is off for jaxtyping shape strings.
 
+## Docs
+
+`docs/` is a Sphinx site written in Markdown through MyST, with the Furo theme. Each page reads on
+GitHub too, so pages stick to plain Markdown, relative links and hidden toctrees. The API reference
+(`docs/reference/`) is a page per package that lists its modules for autodoc - a new module is added
+there by hand - which makes docstrings part of the docs: they must be valid reStructuredText, since
+the `-W` build fails on any warning. `README.md` is the landing page
+and points into `docs/`; `examples/` holds an experiment script and a YAML file of configs per
+operation.
+
+The docs are tested with the code. `tests/docs/test_snippets.py` executes every ```` ```python ````
+block of `README.md` and `docs/`, page by page in one namespace (a block preceded by
+`<!-- docs-test: skip -->` is display-only), and `tests/examples/test_examples.py` loads every example
+config and dry-runs every script on each one. Both run on the bridge backend only, against the
+session's GPT-2.
+
 ## Tests
 
 Integration-style, against real (tiny, randomly initialized) transformers built in
 `tests/conftest.py`, plus real GPT-2 for the `model` fixture. Everything derives from the
 session-scoped `backend` fixture, so each test runs once per backend (`bridge`, `hooked`) and a test
-taking several model fixtures gets them all on the same one — a test reaching a fixture through
+taking several model fixtures gets them all on the same one - a test reaching a fixture through
 `request.getfixturevalue` must also name `backend`. Other shared helpers: `forbid_model_runs` (asserts
 a `plan()` never runs the model), `rendered_figure` (parses the plotly JSON back out of
 `result.html`), `config_from_yaml` (sources a config the way a run does, through `ConfigFactory`) and

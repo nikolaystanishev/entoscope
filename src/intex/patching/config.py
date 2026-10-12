@@ -13,6 +13,14 @@ if TYPE_CHECKING:
 
 
 class PatchingType(str, Enum):
+    """What a patch writes, named on its source element; a target element is always ``replace``.
+
+    ``replace`` writes the source run's activation and ``value_scale`` the same times ``value``.
+    ``value_replace`` writes the constant ``value`` - zero ablation with the default 0.0 - and
+    ``gaussian_noise`` the target run's own activation plus noise at three times its spread, the
+    corruption of causal tracing; neither reads the source run.
+    """
+
     REPLACE = "replace"
     VALUE_REPLACE = "value_replace"
     VALUE_SCALE = "value_scale"
@@ -41,7 +49,7 @@ class MetricComparison(str, Enum):
 
     An ineffective patch reproduces the target run, and one that takes over entirely reproduces
     the source run, so ``normalized`` reads 0 and 1 at those two ends whichever of the pair is the
-    clean prompt — that choice is expressed by the correct and distractor tokens, not here.
+    clean prompt - that choice is expressed by the correct and distractor tokens, not here.
     """
 
     ABSOLUTE = "absolute"  # m(patched)
@@ -51,12 +59,25 @@ class MetricComparison(str, Enum):
 
 @dataclass(kw_only=True)
 class PatchingElementConfig(ModelLocatorConfig):
+    """One side of a patch element: a locator, plus ``type`` and the ``value`` some types read.
+
+    ``value`` is the constant ``value_replace`` writes and the factor ``value_scale`` multiplies by.
+    """
+
     type: PatchingType
     value: float = 0.0
 
 
 @dataclass
 class SinglePatchingConfig:
+    """A patch element: what is read at row ``i`` of the source index is written at row ``i`` of the target's.
+
+    An index of a single row pairs with every row of the other. A config lists several elements to
+    patch them together: patched run ``i`` applies row ``i`` of every element, so their indices have the
+    same number of rows, or one. The result is laid out along the first element's index, so the element
+    that varies comes first.
+    """
+
     source: PatchingElementConfig
     target: PatchingElementConfig
 
@@ -88,7 +109,7 @@ class PatchingConfig(AbstractConfig):
     """``metric`` maps each metric to the comparisons it is reported under, one result column each.
 
     Everything named there is read off the same patched run, so a second metric costs no extra
-    forward pass and a second comparison of a metric already asked for costs nothing at all — it
+    forward pass and a second comparison of a metric already asked for costs nothing at all - it
     re-reads that metric's change. Each column is drawn as its own plot on the result page.
 
     ``method`` is how that change is obtained, ``type`` naming it: ``exact`` patches and runs the model once
@@ -121,5 +142,5 @@ class PatchingConfig(AbstractConfig):
         return [metric_column(*pair) for pair in self.metric_pairs()]
 
     def primary(self) -> MetricPair:
-        """The first column's metric and comparison — the run's headline pair."""
+        """The first column's metric and comparison - the run's headline pair."""
         return self.metric_pairs()[0]

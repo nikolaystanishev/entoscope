@@ -92,3 +92,27 @@ jobs:
         with:
           name: coverage-html
           path: htmlcov/
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: uv sync --group docs
+
+      # -W fails the build on any warning: a broken link, a missing page, or a docstring that is not valid RST.
+      - name: Build the docs
+        run: uv run --no-sync sphinx-build -W --keep-going docs docs/_build/html
+
+      - name: Upload the docs
+        uses: actions/upload-artifact@v7
+        with:
+          name: docs-html
+          path: docs/_build/html/
