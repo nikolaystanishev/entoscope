@@ -3,7 +3,7 @@ import torch
 
 from entoscope.model.base import Model, is_bridge
 
-# The bridge submodule each HookedTransformer-style MLP weight is an alias for.
+# The bridge submodule holding each HookedTransformer-style MLP weight.
 _MLP_SUBMODULE = {"W_in": "in", "W_gate": "gate", "W_out": "out"}
 
 
@@ -11,17 +11,21 @@ def mlp_weight(model: Model, layer: int, attribute: str) -> torch.Tensor | None:
     """A block's MLP weight in HookedTransformer's orientation.
 
     ``W_in`` and ``W_gate`` come back as ``[d_model, d_mlp]`` and ``W_out`` as ``[d_mlp, d_model]``.
-    A bridge aliases these straight onto the wrapped module's parameter, and the two layouts
-    disagree: ``nn.Linear`` stores ``[out, in]`` while GPT-2's ``Conv1D`` stores ``[in, out]``, so
-    only the former needs transposing. ``enable_compatibility_mode`` does not reconcile them.
+    On a bridge the weight is read off the wrapped module's parameter, whose layout its type fixes:
+    ``nn.Linear`` stores ``[out, in]`` while GPT-2's ``Conv1D`` stores ``[in, out]``, so only the
+    former needs transposing. The bridge's own ``W_in``-style aliases are no help: transformer-lens has
+    returned an ``nn.Linear`` weight through them in either orientation, depending on the release.
+    ``enable_compatibility_mode`` processes the parameter in place, so the processed weights come back.
     """
     mlp = model.blocks[layer].mlp
-    weight = getattr(mlp, attribute)
-    if weight is None or not is_bridge(model):
-        return weight
+    if not is_bridge(model):
+        return getattr(mlp, attribute)
 
-    component = mlp._modules[_MLP_SUBMODULE[attribute]].original_component
-    return weight.T if isinstance(component, torch.nn.Linear) else weight
+    submodule = mlp._modules.get(_MLP_SUBMODULE[attribute])
+    if submodule is None:  # ``W_gate`` of an MLP without a gate
+        return None
+    component = submodule.original_component
+    return component.weight.T if isinstance(component, torch.nn.Linear) else component.weight
 
 
 def attention_out_weight(model: Model, layer: int) -> torch.Tensor:

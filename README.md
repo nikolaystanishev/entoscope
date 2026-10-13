@@ -7,10 +7,10 @@ four operations:
 
 | Operation | Methods | The question it answers |
 |---|---|---|
-| [Lens](docs/operations/lens.md) | `logit_lens`, `tuned_lens`, `parameter_lens` | What does an activation, or a weight, say about the vocabulary? |
-| [Probing](docs/operations/probing.md) | `linear` | Where does the model represent a property of its input? |
-| [Activation patching](docs/operations/patching.md) | `exact`, `attribution`, `integrated_gradients` | Which activations cause the model's behaviour on a task? |
-| [Circuit discovery](docs/operations/circuit-discovery.md) | `information_flow_routes` | Which routes through the model carry its prediction? |
+| [Lens](https://nikolaystanishev.github.io/entoscope/operations/lens.html) | `logit_lens`, `tuned_lens`, `parameter_lens` | What does an activation, or a weight, say about the vocabulary? |
+| [Probing](https://nikolaystanishev.github.io/entoscope/operations/probing.html) | `linear` | Where does the model represent a property of its input? |
+| [Activation patching](https://nikolaystanishev.github.io/entoscope/operations/patching.html) | `exact`, `attribution`, `integrated_gradients` | Which activations cause the model's behaviour on a task? |
+| [Circuit discovery](https://nikolaystanishev.github.io/entoscope/operations/circuit-discovery.html) | `information_flow_routes` | Which routes through the model carry its prediction? |
 
 The four operations share a common design:
 
@@ -24,17 +24,16 @@ The four operations share a common design:
 
 ## Install
 
-entoscope needs Python 3.10 to 3.14 and is installed from this repository:
+entoscope needs Python 3.10 to 3.14 and is published on PyPI:
 
 ```bash
-git clone git@github.com:nikolaystanishev/entoscope.git
-cd entoscope
-uv sync
+pip install entoscope
+# or, in a uv project
+uv add entoscope
 ```
 
-or, from another project, `uv add git+ssh://git@github.com/nikolaystanishev/entoscope.git`. Intel macOS is
-limited to transformer-lens 2.15 and Python 3.12 or older; see
-[Getting started](docs/getting-started.md#install).
+Intel macOS is limited to transformer-lens 2.15 and Python 3.12 or older; see
+[Getting started](https://nikolaystanishev.github.io/entoscope/getting-started.html#install).
 
 ## Quickstart
 
@@ -66,32 +65,35 @@ Open `runs/logit_lens/result.html` in a browser to see each cell's top token, wi
 positions across. `result.csv` holds the same result as a table, and `config.json` the config the run
 was made under.
 
-Every operation has a ready-made script and a YAML file of configs in [`examples/`](examples):
+Every operation has a ready-made script and a YAML file of configs on the [Examples](https://nikolaystanishev.github.io/entoscope/examples.html)
+page. Saved side by side, a script runs an entry of its YAML file:
 
 ```bash
-uv run python examples/patching.py --config-id head_sweep
-uv run python examples/circuit.py --prompts "The Eiffel Tower is in"
+python patching.py --config-id head_sweep
+python circuit.py --prompts "The Eiffel Tower is in"
 ```
 
 ## Documentation
 
-The docs live in [`docs/`](docs) and build into a site with
-`uv run --group docs sphinx-build docs docs/_build/html`:
+The documentation is at <https://nikolaystanishev.github.io/entoscope/>:
 
-- [Getting started](docs/getting-started.md)
-- Concepts: [How entoscope is put together](docs/concepts/overview.md),
-  [Locating activations](docs/concepts/locating.md), [Configuration files](docs/concepts/configuration.md),
-  [Running and reading results](docs/concepts/running.md), [Models and caching](docs/concepts/models.md)
-- Operations: [Lens](docs/operations/lens.md), [Probing](docs/operations/probing.md),
-  [Activation patching](docs/operations/patching.md), [Circuit discovery](docs/operations/circuit-discovery.md)
-- Guides: [Experiment scripts](docs/guides/experiment-scripts.md),
-  [Custom methods](docs/guides/custom-methods.md), [Datasets](docs/guides/datasets.md)
-- [Development](docs/development.md); the architecture is described in [AGENTS.md](AGENTS.md)
-
-The site also has an API reference generated from the docstrings.
+- [Getting started](https://nikolaystanishev.github.io/entoscope/getting-started.html) and [Examples](https://nikolaystanishev.github.io/entoscope/examples.html)
+- Concepts: [How entoscope is put together](https://nikolaystanishev.github.io/entoscope/concepts/overview.html),
+  [Locating activations](https://nikolaystanishev.github.io/entoscope/concepts/locating.html),
+  [Configuration files](https://nikolaystanishev.github.io/entoscope/concepts/configuration.html),
+  [Running and reading results](https://nikolaystanishev.github.io/entoscope/concepts/running.html),
+  [Models and caching](https://nikolaystanishev.github.io/entoscope/concepts/models.html)
+- Operations: [Lens](https://nikolaystanishev.github.io/entoscope/operations/lens.html), [Probing](https://nikolaystanishev.github.io/entoscope/operations/probing.html),
+  [Activation patching](https://nikolaystanishev.github.io/entoscope/operations/patching.html),
+  [Circuit discovery](https://nikolaystanishev.github.io/entoscope/operations/circuit-discovery.html)
+- Guides: [Experiment scripts](https://nikolaystanishev.github.io/entoscope/guides/experiment-scripts.html),
+  [Custom methods](https://nikolaystanishev.github.io/entoscope/guides/custom-methods.html), [Datasets](https://nikolaystanishev.github.io/entoscope/guides/datasets.html)
+- [API reference](https://nikolaystanishev.github.io/entoscope/reference/operation.html), generated from the docstrings
+- [Development](https://nikolaystanishev.github.io/entoscope/development.html)
 
 ## Attribution and licensing
 
+entoscope is released under the MIT License, except for one vendored file.
 The Information Flow Routes method reuses the contribution-graph math of the
 [LM Transparency Tool](https://github.com/facebookresearch/llm-transparency-tool), vendored as
 `src/entoscope/circuit/vendor/contributions.py` (see `src/entoscope/circuit/vendor/NOTICE`), which is licensed

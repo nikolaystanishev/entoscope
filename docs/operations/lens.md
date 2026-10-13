@@ -38,7 +38,7 @@ Lens(model).apply(LensInput(config, "The capital of France is"), save_dir="runs/
 ```
 
 The same config in a file is the `head_logit_lens` entry of
-[`examples/lens.yaml`](https://github.com/nikolaystanishev/entoscope/blob/main/examples/lens.yaml).
+[`examples/lens.yaml`](../examples.md#lens).
 
 ### Config and input
 

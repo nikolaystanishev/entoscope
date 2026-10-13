@@ -22,7 +22,7 @@ from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, Mo
 from entoscope.operation.method import method_config_class
 from entoscope.util.data import from_dict
 
-from ..conftest import forbid_model_runs, rendered_figure
+from ..conftest import TransformerBridge, forbid_model_runs, rendered_figure
 from .conftest import HEAD, NEURON, PROMPT, assert_row_reads, mlp_matrix, run_lens, single_row, unembed
 
 TEMPERATURE = 2.0
@@ -343,7 +343,9 @@ def test_a_method_entry_naming_no_type_is_rejected_as_the_config_is_read(config_
 CUSTOM_LENS_SCRIPT = """\
 from dataclasses import dataclass
 
-from transformer_lens import HookedTransformer, HookedTransformerConfig
+import torch
+from transformer_lens.model_bridge import TransformerBridge
+from transformers import AutoTokenizer, GPT2Config, GPT2LMHeadModel
 
 from entoscope.lens.config import LensConfig, LensMethodConfig
 from entoscope.lens.input import LensInput
@@ -374,11 +376,10 @@ class Config:
 
 @experiment
 def main(config: Config):
-    model = HookedTransformer(
-        HookedTransformerConfig(
-            n_layers=2, d_model=8, n_ctx=16, d_head=4, n_heads=4, d_mlp=6, d_vocab=50257,
-            act_fn="gelu", tokenizer_name="gpt2", seed=0,
-        )
+    torch.manual_seed(0)
+    hf_model = GPT2LMHeadModel(GPT2Config(n_layer=2, n_embd=8, n_head=4, n_inner=6, n_positions=16)).eval()
+    model = TransformerBridge.boot_transformers(
+        "tiny", hf_model=hf_model, tokenizer=AutoTokenizer.from_pretrained("gpt2"), device="cpu"
     )
     lens_config = ConfigFactory[LensConfig](config.config_path).create(config.config_id)
     Lens(model).apply(LensInput(lens_config, "Paris is located in"), save_dir=config.save_dir, verbose=False)
@@ -386,6 +387,7 @@ def main(config: Config):
 """
 
 
+@pytest.mark.skipif(TransformerBridge is None, reason="the script loads its model as a TransformerBridge")
 def test_a_lens_registered_by_an_experiment_script_runs_from_its_yaml_config(tmp_path):
     script = tmp_path / "custom_lens_script.py"
     script.write_text(CUSTOM_LENS_SCRIPT)

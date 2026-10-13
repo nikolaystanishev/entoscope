@@ -38,9 +38,8 @@ collector = Prober(model).apply(
 print(collector.result)  # one row per layer, with an accuracy and an auroc column
 ```
 
-[`examples/probe.yaml`](https://github.com/nikolaystanishev/entoscope/blob/main/examples/probe.yaml) has
-more configs, and [`examples/probe.py`](https://github.com/nikolaystanishev/entoscope/blob/main/examples/probe.py)
-a larger set of example prompts.
+[`examples/probe.yaml`](../examples.md#probing) has more configs, and
+[`examples/probe.py`](../examples.md#probing) a larger set of example prompts.
 
 ### Config and input
 

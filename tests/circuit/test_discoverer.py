@@ -3,7 +3,6 @@ from pathlib import Path
 
 import networkx as nx
 import yaml
-from transformer_lens import HookedTransformer
 
 from entoscope.circuit.collector import CircuitCollector, CircuitVisualizationCollector
 from entoscope.circuit.config import CircuitConfig
@@ -11,6 +10,7 @@ from entoscope.circuit.discoverer import CircuitDiscoverer
 from entoscope.circuit.input import CircuitInput
 from entoscope.circuit.method.circuit import PromptCircuit
 from entoscope.circuit.method.information_flow_routes import InformationFlowRoutesConfig
+from entoscope.model import Model
 from entoscope.operation.config import ConfigFactory
 
 from ..conftest import forbid_model_runs, rendered_figures
@@ -22,7 +22,7 @@ def _config(**kwargs) -> CircuitConfig:
     return CircuitConfig(config_id="ifr", method=InformationFlowRoutesConfig(type="information_flow_routes", **kwargs))
 
 
-def test_one_circuit_per_prompt(model: HookedTransformer):
+def test_one_circuit_per_prompt(model: Model):
     collector = CircuitDiscoverer(model).apply(CircuitInput(_config(), PROMPTS), return_collector=True, verbose=False)
     assert collector is not None
     assert len(collector.result) == len(PROMPTS)
@@ -31,7 +31,7 @@ def test_one_circuit_per_prompt(model: HookedTransformer):
     assert all(c.graph.number_of_edges() > 0 for c in collector.result)
 
 
-def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path):
+def test_artifacts_saved_to_disk(model: Model, tmp_path: Path):
     # Build the config through ConfigFactory (YAML round-trip), mirroring how configs are sourced.
     config_yaml = tmp_path / "configs.yaml"
     config_yaml.write_text(
@@ -88,7 +88,7 @@ def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path):
     }
 
 
-def test_a_prepared_input_moves_to_a_device(model: HookedTransformer):
+def test_a_prepared_input_moves_to_a_device(model: Model):
     circuit_input = CircuitInput(_config(), PROMPTS).prepare(model)
 
     moved = circuit_input.to("cpu")
@@ -98,7 +98,7 @@ def test_a_prepared_input_moves_to_a_device(model: HookedTransformer):
     assert [tokens.shape for tokens in moved.tokens] == [model.to_tokens(prompt).shape for prompt in PROMPTS]
 
 
-def test_a_run_without_a_collector_still_writes_its_artifacts(model: HookedTransformer, tmp_path: Path):
+def test_a_run_without_a_collector_still_writes_its_artifacts(model: Model, tmp_path: Path):
     # Not asking for the collector is the default, and how the example scripts run an operation.
     save_dir = tmp_path / "no_collector"
     returned = CircuitDiscoverer(model, collector_class=CircuitCollector).apply(
@@ -112,7 +112,7 @@ def test_a_run_without_a_collector_still_writes_its_artifacts(model: HookedTrans
     assert json.loads((save_dir / "prompts.json").read_text())[0]["prompt"] == PROMPTS[0]
 
 
-def test_a_plan_counts_one_graph_per_prompt_without_building_them(model: HookedTransformer, monkeypatch, tmp_path):
+def test_a_plan_counts_one_graph_per_prompt_without_building_them(model: Model, monkeypatch, tmp_path):
     save_dir = tmp_path / "planned"
     circuit_input = CircuitInput(_config(), PROMPTS)
 
@@ -128,7 +128,7 @@ def test_a_plan_counts_one_graph_per_prompt_without_building_them(model: HookedT
     assert "reads: full activation cache" in str(plan)
 
 
-def test_a_plan_describes_the_run_that_follows_it(model: HookedTransformer, tmp_path: Path):
+def test_a_plan_describes_the_run_that_follows_it(model: Model, tmp_path: Path):
     save_dir = tmp_path / "circuit_run"
     circuit_input = CircuitInput(_config(), PROMPTS[:1])
 
@@ -139,7 +139,7 @@ def test_a_plan_describes_the_run_that_follows_it(model: HookedTransformer, tmp_
     assert "circuit_0.html" in plan.outputs
 
 
-def test_a_plan_for_the_base_collector_promises_no_html(model: HookedTransformer, tmp_path: Path):
+def test_a_plan_for_the_base_collector_promises_no_html(model: Model, tmp_path: Path):
     save_dir = tmp_path / "no_viz_plan"
     circuit_input = CircuitInput(_config(), PROMPTS[:1])
     discoverer = CircuitDiscoverer(model, collector_class=CircuitCollector)
@@ -151,7 +151,7 @@ def test_a_plan_for_the_base_collector_promises_no_html(model: HookedTransformer
     assert sorted(path.name for path in save_dir.iterdir()) == sorted(plan.outputs)
 
 
-def test_base_collector_skips_html(model: HookedTransformer, tmp_path: Path):
+def test_base_collector_skips_html(model: Model, tmp_path: Path):
     # The base collector persists graph data only; visualization is opt-in via the subclass.
     save_dir = tmp_path / "no_viz"
     collector = CircuitDiscoverer(model, collector_class=CircuitCollector).apply(

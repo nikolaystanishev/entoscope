@@ -28,6 +28,7 @@ The operations share most of what you need to learn about them:
 ## Where to go
 
 - [Getting started](getting-started.md): install entoscope and make a first run.
+- [Examples](examples.md): a script and a YAML file of configs for every operation.
 - Concepts:
   - [How entoscope is put together](concepts/overview.md)
   - [Locating activations](concepts/locating.md)
@@ -41,15 +42,14 @@ The operations share most of what you need to learn about them:
 - [API reference](reference/operation.md), generated from the docstrings.
 - [Development](development.md): working on entoscope itself.
 
-The repository's
-[`examples/`](https://github.com/nikolaystanishev/entoscope/tree/main/examples) directory has a runnable
-script and a YAML file of configs for every operation.
+[Examples](examples.md) has a runnable script and a YAML file of configs for every operation.
 
 ```{toctree}
 :hidden:
 :caption: Start
 
 getting-started
+examples
 ```
 
 ```{toctree}

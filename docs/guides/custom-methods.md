@@ -66,7 +66,7 @@ plain:
     location: [layer, position]
 ```
 
-[`examples/custom_lens.py`](https://github.com/nikolaystanishev/entoscope/blob/main/examples/custom_lens.py)
+[`examples/custom_lens.py`](../examples.md#a-custom-lens)
 is this lens as an experiment script, run from a config file.
 
 ## What each operation asks of a method

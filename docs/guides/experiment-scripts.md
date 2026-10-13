@@ -114,5 +114,4 @@ command line. A `main` that takes no parameters gets no parser and simply runs.
 A command line argparse cannot read, such as a missing required option or a value that does not
 convert, exits with status 2 and a usage message.
 
-The scripts in [`examples/`](https://github.com/nikolaystanishev/entoscope/tree/main/examples) are all
-built this way.
+The scripts on the [Examples](../examples.md) page are all built this way.

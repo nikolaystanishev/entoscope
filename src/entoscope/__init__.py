@@ -1,4 +1,7 @@
 import logging
+from importlib.metadata import version
+
+__version__ = version("entoscope")
 
 # entoscope owns its output instead of deferring to the root logger: dependencies configure root as a
 # side effect (transformer_lens logs through the module-level ``logging.info``, which runs

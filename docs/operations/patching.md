@@ -78,7 +78,7 @@ target_layer
 ```
 
 In a config file this is the `residual_sweep` entry of
-[`examples/patching.yaml`](https://github.com/nikolaystanishev/entoscope/blob/main/examples/patching.yaml),
+[`examples/patching.yaml`](../examples.md#activation-patching),
 which has an entry for every variant on this page.
 
 ## The two runs and the answer tokens
@@ -266,7 +266,7 @@ hover gives its value, its patched run's prediction and its full source and targ
 ## Recipes
 
 All of these are entries of
-[`examples/patching.yaml`](https://github.com/nikolaystanishev/entoscope/blob/main/examples/patching.yaml):
+[`examples/patching.yaml`](../examples.md#activation-patching):
 
 | Question | Entry |
 |---|---|

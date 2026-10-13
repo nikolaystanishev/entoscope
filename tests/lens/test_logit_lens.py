@@ -20,7 +20,7 @@ from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, Mo
 from entoscope.operation.config import ConfigFactory
 from entoscope.operation.visualization import format_value
 
-from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
+from ..conftest import RenderedFigure, TransformerBridge, forbid_model_runs, rendered_figure, rendered_figures
 from .conftest import (
     HEAD,
     NEURON,
@@ -402,7 +402,9 @@ def test_a_config_id_the_file_does_not_have_raises(tmp_path):
 LENS_SCRIPT = """\
 from dataclasses import dataclass
 
-from transformer_lens import HookedTransformer, HookedTransformerConfig
+import torch
+from transformer_lens.model_bridge import TransformerBridge
+from transformers import AutoTokenizer, GPT2Config, GPT2LMHeadModel
 
 from entoscope.lens.config import LensConfig
 from entoscope.lens.input import LensInput
@@ -422,11 +424,10 @@ class Config:
 
 @experiment
 def main(config: Config):
-    model = HookedTransformer(
-        HookedTransformerConfig(
-            n_layers=2, d_model=8, n_ctx=16, d_head=4, n_heads=4, d_mlp=6, d_vocab=50257,
-            act_fn="gelu", tokenizer_name="gpt2", seed=0,
-        )
+    torch.manual_seed(0)
+    hf_model = GPT2LMHeadModel(GPT2Config(n_layer=2, n_embd=8, n_head=4, n_inner=6, n_positions=16)).eval()
+    model = TransformerBridge.boot_transformers(
+        "tiny", hf_model=hf_model, tokenizer=AutoTokenizer.from_pretrained("gpt2"), device="cpu"
     )
     lens_config = ConfigFactory[LensConfig](config.config_path).create(config.config_id)
     collector = Lens(model).apply(
@@ -436,6 +437,7 @@ def main(config: Config):
 """
 
 
+@pytest.mark.skipif(TransformerBridge is None, reason="the script loads its model as a TransformerBridge")
 def test_the_lens_runs_from_an_experiment_script(tmp_path):
     # A fresh process, the config read off a file by its id, and the artifacts left behind.
     script = tmp_path / "lens_script.py"

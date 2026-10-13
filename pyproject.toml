@@ -3,22 +3,51 @@ name = "entoscope"
 version = "0.1.0"
 description = "Mechanistic interpretability toolkit for large language models"
 readme = "README.md"
+# The vendored circuit/vendor/contributions.py is CC BY-NC 4.0; NOTICE beside it gives the details.
+license = "MIT AND CC-BY-NC-4.0"
+license-files = ["LICENSE", "src/entoscope/circuit/vendor/NOTICE"]
 authors = [
     { name = "Nikolay Stanishev", email = "stanishev.nikolay@gmail.com" }
 ]
+keywords = [
+    "mechanistic interpretability",
+    "interpretability",
+    "transformer-lens",
+    "logit lens",
+    "tuned lens",
+    "probing",
+    "activation patching",
+    "circuit discovery",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 requires-python = ">=3.10"
 dependencies = [
+    # transformer-lens and tuned-lens import datasets, and one before 2.14.7 needs pyarrow's PyExtensionType,
+    # which current pyarrow no longer has. A floor is needed: 2.14.4, the last datasets with no fsspec cap,
+    # is what a resolver lands on whenever the newer ones are ruled out (as on Intel macOS).
+    "datasets>=2.14.7",
+    "einops>=0.6",
     "jaxtyping>=0.2.37",
-    "networkx>=3.0",
+    "networkx>=3.4",
     "numpy>=2.1.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "pandas>=2.3.3",
-    "pandas-stubs~=2.3.3",
     "plotly>=5.20",
     "pyyaml>=6.0.3",
     "scikit-learn>=1.7",
     "torch>=2.9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "tqdm>=4.68.3",
-    "transformer-lens>=3.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "transformer-lens>=3.2.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "tuned-lens>=0.2.0",
     # TypeVar defaults (PEP 696), which typing has only from Python 3.13.
     "typing-extensions>=4.12",
@@ -28,20 +57,21 @@ dependencies = [
     "numpy>=1.26,<2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "torch>=2.2,<2.3; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "transformer-lens>=2.15.4,<2.16; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-]
-
-[tool.uv]
-# transformers 5+ needs torch>=2.4 and drops APIs transformer-lens 2.15 uses.
-constraint-dependencies = [
+    # transformers 5+ needs torch>=2.4 and drops APIs transformer-lens 2.15 uses. Declared here rather
+    # than as a uv constraint, so it holds wherever entoscope is installed.
     "transformers<5; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 
+[project.urls]
+Documentation = "https://nikolaystanishev.github.io/entoscope/"
+
 [build-system]
-requires = ["uv_build>=0.9.18,<0.10.0"]
+requires = ["uv_build>=0.13.0,<0.14"]
 build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "pandas-stubs~=2.3.3",
     "pytest>=9.1.1",
     "pytest-cov>=4.1.0",
     "ruff>=0.15.20",

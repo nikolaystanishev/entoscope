@@ -4,6 +4,8 @@ on:
   push:
     branches: [ main ]
   pull_request:
+  # The release runs this whole workflow on the tag it publishes, and publishes what the package job built.
+  workflow_call:
 
 jobs:
   lint:
@@ -57,6 +59,66 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+
+  # The tests again, on the lowest version of each dependency pyproject.toml allows rather than on uv.lock,
+  # so a lower bound published with the package is one the tests have passed on.
+  lowest:
+    runs-on: ubuntu-latest
+    env:
+      UV_RESOLUTION: lowest-direct
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+          cache-suffix: lowest
+          python-version: "3.10"
+
+      - name: Install the lowest dependencies
+        run: uv sync --group dev
+
+      - name: Run tests
+        run: uv run pytest
+
+  # The sdist and wheel as they would be published, tested as installed rather than from src/.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+          python-version: "3.14"
+
+      # The sdist first, then the wheel from it, so the wheel tested is one the sdist can build.
+      - name: Build
+        run: uv build --no-sources
+
+      # --strict also fails on warnings, such as a README PyPI would not render.
+      - name: Check the metadata
+        run: uvx twine check --strict dist/*
+
+      - name: Install the wheel
+        run: |
+          uv sync --locked --no-install-project --group dev
+          uv pip install dist/*.whl
+
+      # The tests import entoscope from wherever Python finds it, so check that is the installed wheel.
+      - name: Run tests against the wheel
+        run: |
+          uv run --no-sync python -c "import entoscope, pathlib; assert 'site-packages' in pathlib.Path(entoscope.__file__).parts"
+          uv run --no-sync pytest
+
+      - name: Upload the distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
 
   coverage:
     needs: test

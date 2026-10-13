@@ -19,8 +19,9 @@ uv run pytest --cov --cov-report=html
 The tests are integration tests against real transformers. Most use tiny, randomly initialized models
 built in `tests/conftest.py`, and `model` is GPT-2, downloaded from the HuggingFace hub on first use.
 The tuned-lens tests also download GPT-2's pretrained translators. Every model fixture derives from
-the session-scoped `backend` fixture, so each test runs once with a `TransformerBridge` and once with
-a `HookedTransformer`.
+the session-scoped `backend` fixture, so each test runs once per backend the installed transformer-lens
+has: with a `TransformerBridge`, and on transformer-lens 3 also with a `HookedTransformer`, which
+transformer-lens 4 removed.
 
 `tests/conftest.py` also provides:
 
@@ -74,7 +75,36 @@ When you add an operation or a method, add or update its docs page, its referenc
 - ruff's lint and format checks;
 - `pytest --cov` on Python 3.10 to 3.14, with a job that combines the coverage of all versions into
   the job summary and a `coverage-html` artifact;
+- `lowest`, the tests on Python 3.10 with the lowest version of each dependency `pyproject.toml`
+  allows, so the lower bounds published with the package are ones the tests pass on. `uv.lock` holds
+  transformer-lens 4, which has no `HookedTransformer`, so this job's transformer-lens 3 is also where
+  that backend and the bridge parity tests run;
+- `package`, which builds the sdist and the wheel, checks their metadata as PyPI will, and runs the
+  tests against the installed wheel rather than `src/`, uploading both as a `dist` artifact;
 - the docs build, uploaded as a `docs-html` artifact you can download and open.
+
+## Releasing
+
+A release is a `v` tag on `main`, and `.github/workflows/release.yml` does the rest:
+
+1. Bump the version in a pull request, which updates `pyproject.toml` and `uv.lock`:
+
+   ```bash
+   uv version --bump patch  # or minor, or major
+   ```
+
+2. Once it is merged, tag the merge commit with the new version and push the tag:
+
+   ```bash
+   git tag v0.1.1
+   git push origin v0.1.1
+   ```
+
+The workflow checks that the tag names the version in `pyproject.toml`, runs the whole of CI on the
+tag, and then publishes the sdist and wheel the `package` job built and tested to PyPI. It also deploys
+the docs to GitHub Pages and creates a GitHub release whose notes list the pull requests merged since
+the last one. PyPI is reached by trusted publishing, so there is no token to keep: the PyPI project
+trusts `release.yml` running in the repository's `pypi` environment.
 
 ## Architecture
 

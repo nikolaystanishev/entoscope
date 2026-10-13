@@ -81,5 +81,6 @@ Probing has no page: its default collector already writes the data files alone.
 
 ## Models
 
-Operations accept a `TransformerBridge`, a `HookedTransformer`, or either one wrapped in a
-`CachedModel`, which keeps activations on disk between runs. See [Models and caching](models.md).
+Operations accept a `TransformerBridge`, a `HookedTransformer` (on transformer-lens 2 and 3), or either
+one wrapped in a `CachedModel`, which keeps activations on disk between runs. See
+[Models and caching](models.md).

@@ -8,9 +8,9 @@ Operations accept any of three model types:
 
 ## TransformerBridge
 
-`TransformerBridge` is how transformer-lens 3 loads a HuggingFace model. entoscope reads it as it is, so
-its activations and weights are HuggingFace's own, and a run means the same as the same computation
-done on the HuggingFace model directly:
+`TransformerBridge` is how transformer-lens 3 and later load a HuggingFace model. entoscope reads it as
+it is, so its activations and weights are HuggingFace's own, and a run means the same as the same
+computation done on the HuggingFace model directly:
 
 ```python
 from transformer_lens.model_bridge import TransformerBridge
@@ -37,8 +37,9 @@ and centering separate them.
 
 ## HookedTransformer
 
-`HookedTransformer` is accepted wherever a bridge is, and entoscope's test suite runs against both. It is
-the only option on Intel macOS, whose transformer-lens 2.15 has no bridge:
+`HookedTransformer` is accepted wherever a bridge is, with the transformer-lens releases that have it:
+2.x and 3.x, since transformer-lens 4 removed it in favour of the bridge. It is the only option on
+Intel macOS, whose transformer-lens 2.15 has no bridge:
 
 <!-- docs-test: skip -->
 ```python

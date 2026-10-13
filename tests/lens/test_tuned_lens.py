@@ -18,7 +18,7 @@ from entoscope.lens.method.tuned_lens import TunedLensConfig
 from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from entoscope.model.unembed import build_unembed
 
-from ..conftest import build_tiny_model, forbid_model_runs
+from ..conftest import build_small_model, forbid_model_runs
 from .conftest import (
     HEAD,
     NEURON,
@@ -204,9 +204,9 @@ def test_the_translators_default_to_the_models_own_name(model):
     assert named["probability_0"] == pytest.approx(default["probability_0"])
 
 
-def test_a_model_without_a_name_has_to_name_its_translators(model):
-    nameless = build_tiny_model(tokenizer_name=None, model_name=None)
-    nameless.set_tokenizer(model.tokenizer)
+def test_a_model_without_a_name_has_to_name_its_translators(backend):
+    nameless = build_small_model(backend)
+    nameless.cfg.model_name = nameless.cfg.tokenizer_name = None
     config = tuned_config({"activation": "resid.post", "layer": 0, "position": -1})
 
     with pytest.raises(ValueError, match="name the translators in the tuned lens's 'translators' field"):

@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 import torch
 import yaml
-from transformer_lens import HookedTransformer, HookedTransformerConfig
 from transformers import (
     AutoTokenizer,
     GPT2Config,
@@ -26,13 +25,18 @@ from entoscope.patching.method.factory import PatchingMethodFactory
 from entoscope.probe.method.factory import ProbeMethodFactory
 
 try:
+    from transformer_lens import HookedTransformer, HookedTransformerConfig
+except ImportError:  # transformer-lens 4 removed them in favour of the bridge
+    HookedTransformer = HookedTransformerConfig = None
+
+try:
     from transformer_lens.model_bridge import TransformerBridge
 except ImportError:  # transformer-lens 2.x (Intel macOS fallback)
     TransformerBridge = None
 
-# Every model fixture runs its tests once per backend. The bridge is what entoscope is built around;
-# HookedTransformer stays supported for the platforms that cannot install a transformer-lens with it.
-BACKENDS = ["hooked"] if TransformerBridge is None else ["bridge", "hooked"]
+# Every model fixture runs its tests once per backend the installed transformer-lens has: 2.x (Intel macOS)
+# has only HookedTransformer, 3.x both, and 4.x only the bridge, which is what entoscope is built around.
+BACKENDS = [name for name, cls in (("bridge", TransformerBridge), ("hooked", HookedTransformer)) if cls is not None]
 
 # Shared by both backends' tiny models, so an index means the same thing whichever one is under test.
 # ``d_model`` is ``n_heads * d_head`` because a HuggingFace config derives the head size from the
@@ -59,18 +63,29 @@ def build_tiny_model(**overrides) -> HookedTransformer:
     return model
 
 
-def build_tiny_bridge(hf_model):
-    """The bridge counterpart of ``build_tiny_model``.
+def build_tiny_bridge(hf_model, name: str = "tiny"):
+    """The bridge counterpart of ``build_tiny_model``, named ``name``.
 
     A bridge wraps a HuggingFace model instead of a ``HookedTransformerConfig``, so the architecture
     variants come from choosing the HF class rather than from setting a flag. The wrapped model is
     evaluated separately: a bridge holds it outside ``_modules``, so ``eval()`` does not reach it and
-    a freshly constructed HuggingFace model would keep dropout on.
+    a freshly constructed HuggingFace model would keep dropout on. Its dtype is the HuggingFace model's:
+    a bridge only records the ``dtype`` it is booted with and leaves a supplied model's weights as they are.
     """
     hf_model.eval()
-    model = TransformerBridge.boot_transformers("tiny", hf_model=hf_model, tokenizer=_tokenizer(), device="cpu")
+    dtype = next(hf_model.parameters()).dtype
+    model = TransformerBridge.boot_transformers(
+        name, hf_model=hf_model, tokenizer=_tokenizer(), device="cpu", dtype=dtype
+    )
     model.eval()
     return model
+
+
+def build_small_model(backend: str, name: str | None = None, dtype: torch.dtype = torch.float32):
+    """The model ``small_model`` holds, built afresh: for a test that changes it, or needs it named or typed."""
+    if backend == "hooked":
+        return build_tiny_model(dtype=dtype, **({"model_name": name} if name else {}))
+    return build_tiny_bridge(_tiny_gpt2().to(dtype), name=name or "tiny")
 
 
 def _tiny_hf(factory, config_class, **settings):
@@ -135,7 +150,11 @@ def _backend_fixture(bridge, hooked):
 
 model = _backend_fixture(_gpt2_bridge, _gpt2_hooked)
 
-small_model = _backend_fixture(lambda: build_tiny_bridge(_tiny_gpt2()), build_tiny_model)
+
+@pytest.fixture(scope="session")
+def small_model(backend):
+    return build_small_model(backend)
+
 
 # Llama is gated as well as grouped-query; the tests using this fixture only read head counts.
 gqa_model = _backend_fixture(

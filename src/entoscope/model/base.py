@@ -1,8 +1,13 @@
 from typing import Any, TypeAlias
 
-from transformer_lens import HookedTransformer
-
 from entoscope.model.cache import CachedModel
+
+try:
+    from transformer_lens import HookedTransformer
+except ImportError as error:  # transformer-lens 4 removed it in favour of the bridge
+    if error.name != "HookedTransformer":  # transformer_lens itself failing to import is a real error
+        raise
+    HookedTransformer = None
 
 try:
     from transformer_lens.model_bridge import TransformerBridge
@@ -16,6 +21,8 @@ except ModuleNotFoundError as error:  # transformer-lens 2.x (Intel macOS fallba
 # __getattr__, so it is a runtime drop-in; this alias makes it a static drop-in too.
 if TransformerBridge is None:
     Model: TypeAlias = HookedTransformer | CachedModel
+elif HookedTransformer is None:
+    Model: TypeAlias = TransformerBridge | CachedModel
 else:
     Model: TypeAlias = TransformerBridge | HookedTransformer | CachedModel
 

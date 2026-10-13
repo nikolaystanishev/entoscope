@@ -30,7 +30,10 @@ uv run --group docs sphinx-build -W --keep-going docs docs/_build/html
 
 CI (`.github/workflows/ci.yml`) runs exactly the lint, format-check and `pytest` above, the tests with `--cov` on
 Python 3.10–3.14; a `coverage` job combines the versions into the job summary and a `coverage-html` artifact
-(report-only, no threshold), and a `docs` job builds the site above into a `docs-html` artifact.
+(report-only, no threshold), and a `docs` job builds the site above into a `docs-html` artifact. A `lowest`
+job runs the tests on the lowest dependency versions `pyproject.toml` allows, and a `package` job builds the
+sdist and wheel and runs the tests against the installed wheel. A `v*` tag runs `release.yml`: the whole of
+CI, then PyPI by trusted publishing, the docs to GitHub Pages and a GitHub release.
 
 ## What this repo is
 
@@ -96,8 +99,9 @@ Adding a location or activation therefore means touching `ModelLayerLocation`,
 `TransformerBridge` with raw HuggingFace numerics is the default; `enable_compatibility_mode()`
 switches to `transformer_lens`'s folded-LayerNorm convention and both must keep working.
 `HookedTransformer` is kept because Intel macOS is pinned to `transformer-lens` 2.x (see the
-platform markers in `pyproject.toml`). **Any new `transformer_lens` import that moved between 2.x
-and 3.x needs the same `try/except ImportError` fallback** used in `model/index.py`,
+platform markers in `pyproject.toml`), and transformer-lens 4 removed it, so either backend may be
+missing. **Any new `transformer_lens` import that moved or went away between 2.x, 3.x and 4.x needs
+the same `try/except ImportError` fallback** used in `model/index.py`,
 `model/base.py` and `tests/conftest.py`. Backend-dependent weight access is centralized in
 `model/weight.py` and `model/unembed.py` - go through those rather than reading `model.W_*`
 directly.
@@ -179,9 +183,9 @@ time, so the config class must be defined above it.
 GitHub too, so pages stick to plain Markdown, relative links and hidden toctrees. The API reference
 (`docs/reference/`) is a page per package that lists its modules for autodoc - a new module is added
 there by hand - which makes docstrings part of the docs: they must be valid reStructuredText, since
-the `-W` build fails on any warning. `README.md` is the landing page
-and points into `docs/`; `examples/` holds an experiment script and a YAML file of configs per
-operation.
+the `-W` build fails on any warning. `README.md` is the landing page and the PyPI description, so its
+links are absolute ones into the published site; `examples/` holds an experiment script and a YAML file
+of configs per operation, which `docs/examples.md` shows on the site.
 
 The docs are tested with the code. `tests/docs/test_snippets.py` executes every ```` ```python ````
 block of `README.md` and `docs/`, page by page in one namespace (a block preceded by
@@ -193,7 +197,8 @@ session's GPT-2.
 
 Integration-style, against real (tiny, randomly initialized) transformers built in
 `tests/conftest.py`, plus real GPT-2 for the `model` fixture. Everything derives from the
-session-scoped `backend` fixture, so each test runs once per backend (`bridge`, `hooked`) and a test
+session-scoped `backend` fixture, so each test runs once per backend the installed transformer-lens has
+(`bridge`, `hooked`; 4.x has no `hooked`, so the `lowest` CI job's 3.x is where it runs) and a test
 taking several model fixtures gets them all on the same one - a test reaching a fixture through
 `request.getfixturevalue` must also name `backend`. Other shared helpers: `forbid_model_runs` (asserts
 a `plan()` never runs the model), `rendered_figure` (parses the plotly JSON back out of

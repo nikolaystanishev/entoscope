@@ -2,33 +2,22 @@
 
 ## Install
 
-entoscope needs Python 3.10 to 3.14. It is not published on PyPI, so install it from its repository.
-
-To work in the repository itself, with [uv](https://docs.astral.sh/uv/):
+entoscope needs Python 3.10 to 3.14 and is published on PyPI:
 
 ```bash
-git clone git@github.com:nikolaystanishev/entoscope.git
-cd entoscope
-uv sync
+pip install entoscope
+# or, in a uv project
+uv add entoscope
 ```
 
-`uv run python your_script.py` then runs against that environment.
+To work on entoscope itself, see [Development](development.md).
 
-To use entoscope from another project, add it as a git dependency:
-
-```bash
-uv add git+ssh://git@github.com/nikolaystanishev/entoscope.git
-# or
-pip install git+ssh://git@github.com/nikolaystanishev/entoscope.git
-```
-
-entoscope depends on PyTorch and on transformer-lens 3, which provides `TransformerBridge`, the wrapper
-these docs load models with. Intel macOS is the exception: PyTorch stopped publishing x86_64 macOS
-wheels after 2.2, which pins that platform to PyTorch 2.2, transformer-lens 2.15, `numpy<2` and
-Python 3.12 or older. transformer-lens 2.15 has no `TransformerBridge`, so load models as
-`HookedTransformer` there (see [Models and caching](concepts/models.md)). entoscope's own environment
-also constrains `transformers<5` on that platform; a project depending on entoscope there needs the same
-constraint.
+entoscope depends on PyTorch and on transformer-lens 3 or later, which provides `TransformerBridge`, the
+wrapper these docs load models with. Intel macOS is the exception: PyTorch stopped publishing x86_64
+macOS wheels after 2.2, which pins that platform to PyTorch 2.2, transformer-lens 2.15, `numpy<2`,
+`transformers<5` and Python 3.12 or older, and the installer picks those versions there by itself.
+transformer-lens 2.15 has no `TransformerBridge`, so load models as `HookedTransformer` there (see
+[Models and caching](concepts/models.md)).
 
 ## Load a model
 
@@ -146,5 +135,4 @@ The plan is logged as it is built and returned as an `OperationPlan` you can rea
 - [Configuration files](concepts/configuration.md): the same run from a YAML file.
 - The operation pages: [Lens](operations/lens.md), [Probing](operations/probing.md),
   [Activation patching](operations/patching.md), [Circuit discovery](operations/circuit-discovery.md).
-- [`examples/`](https://github.com/nikolaystanishev/entoscope/tree/main/examples): a runnable script and
-  configs for every operation.
+- [Examples](examples.md): a runnable script and configs for every operation.
