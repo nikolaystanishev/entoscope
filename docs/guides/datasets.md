@@ -9,9 +9,7 @@ rows. entoscope ships no implementation: you register your own and `DatasetFacto
 import json
 from pathlib import Path
 
-from entoscope.dataset.config import DatasetConfig
-from entoscope.dataset.dataset import AbstractDataset, Row
-from entoscope.dataset.factory import DatasetFactory
+from entoscope.dataset import AbstractDataset, DatasetConfig, DatasetFactory, Row
 
 
 @DatasetFactory.register("jsonl")
@@ -38,7 +36,7 @@ my_data:
 
 <!-- docs-test: skip -->
 ```python
-from entoscope.operation.config import ConfigFactory
+from entoscope import ConfigFactory
 
 config = ConfigFactory[DatasetConfig]("configs.yaml").create("my_data")
 ```

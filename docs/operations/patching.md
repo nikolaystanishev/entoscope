@@ -19,18 +19,19 @@ and position:
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope.model.config import ModelLayerLocation, ModelLocation
-from entoscope.patching.config import (
+from entoscope import (
     MetricComparison,
+    ModelLayerLocation,
+    ModelLocation,
+    Patcher,
     PatchingConfig,
     PatchingElementConfig,
+    PatchingInput,
     PatchingMethodConfig,
     PatchingMetric,
     PatchingType,
     SinglePatchingConfig,
 )
-from entoscope.patching.input import PatchingInput
-from entoscope.patching.patcher import Patcher
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
@@ -225,7 +226,7 @@ Zero ablation writes a value, so it reads no source run. The source names only i
 that pairs with every target row:
 
 ```python
-from entoscope.util.data import from_dict
+from entoscope import from_dict
 
 zero_mlp = from_dict(
     PatchingConfig,

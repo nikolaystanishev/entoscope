@@ -65,8 +65,9 @@ follows the same four-part shape, and adding one means writing the same four pie
   files. `FrameCollector` glues cells onto the index's own columns to produce `result.csv`;
   `VisualizationCollector` additionally renders `result.html`.
 
-An operation (or a method) also gets its page in `docs/operations/`, its modules in `docs/reference/`
-and an entry in `examples/` - see [Docs](#docs).
+An operation (or a method) also gets its exports in its package's `__init__.py` (see
+[Public API](#public-api)), its page in `docs/operations/`, its modules in `docs/reference/` and an
+entry in `examples/` - see [Docs](#docs).
 
 ### The index is the spine
 
@@ -155,6 +156,15 @@ that actually runs the patched model (only `exact`) also reports that run's next
 differently at different batch shapes, so the input's cached source and target runs are made as wide
 as the patched runs (`batch_width`) and `exact` pads its last batch to that width: a patch that writes
 back what was there must reproduce the target run exactly.
+
+### Public API
+
+Each package's `__init__.py` re-exports its public classes in a sorted `__all__`, and
+`entoscope/__init__.py` re-exports the everyday ones from those (operators, inputs, configs, method
+configs, enums, locator classes, `CachedModel`, `ConfigFactory`, `from_dict`, `experiment`), so
+`from entoscope import Lens, LensConfig, LensInput` works; `tests/test_public_api.py` keeps the levels in
+step. The docs and examples import from these. Code in `src/` imports from the defining module instead,
+never from `entoscope` or an operation's package, whose `__init__` imports everything and would cycle.
 
 ### Scripts
 

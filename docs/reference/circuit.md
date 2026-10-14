@@ -2,6 +2,9 @@
 
 Circuit discovery.
 
+The operator, its input, configs, collectors and methods are importable from `entoscope.circuit`; the
+operator, its input and configs from `entoscope` too.
+
 ```{eval-rst}
 .. automodule:: entoscope.circuit.config
    :members:

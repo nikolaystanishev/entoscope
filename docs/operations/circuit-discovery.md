@@ -16,10 +16,7 @@ may be used for non-commercial purposes only (see [Licensing](#licensing)).
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope.circuit.config import CircuitConfig
-from entoscope.circuit.discoverer import CircuitDiscoverer
-from entoscope.circuit.input import CircuitInput
-from entoscope.circuit.method.information_flow_routes import InformationFlowRoutesConfig
+from entoscope import CircuitConfig, CircuitDiscoverer, CircuitInput, InformationFlowRoutesConfig
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()

@@ -42,10 +42,15 @@ A logit lens over GPT-2's residual stream, after every layer and at every positi
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope.lens.config import LensConfig, LensMethodConfig
-from entoscope.lens.input import LensInput
-from entoscope.lens.lens import Lens
-from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope import (
+    Lens,
+    LensConfig,
+    LensInput,
+    LensMethodConfig,
+    ModelLayerLocation,
+    ModelLocation,
+    ModelLocatorConfig,
+)
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()

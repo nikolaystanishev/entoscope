@@ -2,6 +2,8 @@
 
 Experiment scripts.
 
+`experiment` is importable from `entoscope.script` and from `entoscope`.
+
 ```{eval-rst}
 .. automodule:: entoscope.script.experiment
    :members:

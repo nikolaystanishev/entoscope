@@ -12,12 +12,7 @@ from pathlib import Path
 
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope.model import CachedModel
-from entoscope.operation.config import ConfigFactory
-from entoscope.patching.config import PatchingConfig
-from entoscope.patching.input import PatchingInput
-from entoscope.patching.patcher import Patcher
-from entoscope.script import experiment
+from entoscope import CachedModel, ConfigFactory, Patcher, PatchingConfig, PatchingInput, experiment
 
 CONFIGS = Path(__file__).with_name("patching.yaml")
 

@@ -13,11 +13,17 @@ and scored by the metrics you name.
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from entoscope.probe.config import PoolingType, ProbeConfig, ProbeMetric
-from entoscope.probe.input import ProbeInput
-from entoscope.probe.method.linear import LinearProbeConfig
-from entoscope.probe.prober import Prober
+from entoscope import (
+    LinearProbeConfig,
+    ModelLayerLocation,
+    ModelLocation,
+    ModelLocatorConfig,
+    PoolingType,
+    ProbeConfig,
+    ProbeInput,
+    ProbeMetric,
+    Prober,
+)
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()

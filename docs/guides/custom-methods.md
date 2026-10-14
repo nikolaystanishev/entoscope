@@ -13,12 +13,16 @@ from dataclasses import dataclass
 
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope.lens.config import LensConfig, LensMethodConfig
-from entoscope.lens.input import LensInput
-from entoscope.lens.lens import Lens
-from entoscope.lens.method.factory import LensMethodFactory
-from entoscope.lens.method.logit_lens import LogitLens
-from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope import (
+    Lens,
+    LensConfig,
+    LensInput,
+    LensMethodConfig,
+    ModelLayerLocation,
+    ModelLocation,
+    ModelLocatorConfig,
+)
+from entoscope.lens import LensMethodFactory, LogitLens
 
 
 # 1. The method's settings, as a dataclass extending the operation's method config.
@@ -78,11 +82,10 @@ is this lens as an experiment script, run from a config file.
 | Activation patching | `PatchingMethodFactory` | `AbstractPatchingMethod` | `PatchingMethodConfig` | `scores`, `passes` | once per run |
 | Circuit discovery | `CircuitMethodFactory` | `AbstractCircuitMethod` | `CircuitMethodConfig` | `build` | once per run |
 
-The factories live in `entoscope.<operation>.method.factory`, the method bases in
-`entoscope.lens.method.lens`, `entoscope.probe.method.probe`, `entoscope.patching.method.patching` and
-`entoscope.circuit.method.circuit`, and the settings bases in `entoscope.<operation>.config`. A method is
-built from `(model, config)` (patching adds `batch_size`) and finds its own settings in
-`self.method_config`.
+The factories, the method bases and the settings bases are importable from the operation's package,
+`entoscope.lens`, `entoscope.probe`, `entoscope.patching` or `entoscope.circuit`, and the settings bases
+from `entoscope` too. A method is built from `(model, config)` (patching adds `batch_size`) and finds its
+own settings in `self.method_config`.
 
 - **Lens.** One instance reads every row of the run, so a lens that handles several kinds of
   activation tells them apart with `index.activation()`. `extract(lens_input, index)` returns the

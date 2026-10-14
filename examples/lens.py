@@ -11,13 +11,8 @@ from pathlib import Path
 
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope.lens.config import LensConfig
-from entoscope.lens.input import LensInput
-from entoscope.lens.lens import Lens
-from entoscope.lens.method.factory import LensMethodFactory
-from entoscope.model import CachedModel
-from entoscope.operation.config import ConfigFactory
-from entoscope.script import experiment
+from entoscope import CachedModel, ConfigFactory, Lens, LensConfig, LensInput, experiment
+from entoscope.lens import LensMethodFactory
 
 CONFIGS = Path(__file__).with_name("lens.yaml")
 

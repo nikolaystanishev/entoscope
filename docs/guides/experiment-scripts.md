@@ -12,11 +12,7 @@ from dataclasses import dataclass, field
 
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope.lens.config import LensConfig
-from entoscope.lens.input import LensInput
-from entoscope.lens.lens import Lens
-from entoscope.operation.config import ConfigFactory
-from entoscope.script import experiment
+from entoscope import ConfigFactory, Lens, LensConfig, LensInput, experiment
 
 
 @dataclass

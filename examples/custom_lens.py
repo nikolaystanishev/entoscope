@@ -11,13 +11,8 @@ from pathlib import Path
 
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope.lens.config import LensConfig, LensMethodConfig
-from entoscope.lens.input import LensInput
-from entoscope.lens.lens import Lens
-from entoscope.lens.method.factory import LensMethodFactory
-from entoscope.lens.method.logit_lens import LogitLens
-from entoscope.operation.config import ConfigFactory
-from entoscope.script import experiment
+from entoscope import ConfigFactory, Lens, LensConfig, LensInput, LensMethodConfig, experiment
+from entoscope.lens import LensMethodFactory, LogitLens
 
 CONFIGS = Path(__file__).with_name("custom_lens.yaml")
 

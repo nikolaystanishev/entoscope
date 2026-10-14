@@ -27,8 +27,7 @@ tuned_lens:
 `ConfigFactory` reads one entry into the config class it is subscripted with:
 
 ```python
-from entoscope.lens.config import LensConfig
-from entoscope.operation.config import ConfigFactory
+from entoscope import ConfigFactory, LensConfig
 
 config = ConfigFactory[LensConfig]("examples/lens.yaml").create("logit_lens")
 print(config.config_id)  # logit_lens
@@ -75,8 +74,7 @@ In code it is an instance of the method's config class, which always names its `
 no settings of their own take their operation's base class:
 
 ```python
-from entoscope.lens.config import LensMethodConfig
-from entoscope.lens.method.tuned_lens import TunedLensConfig
+from entoscope import LensMethodConfig, TunedLensConfig
 
 logit = LensMethodConfig(type="logit_lens")
 tuned = TunedLensConfig(type="tuned_lens", translators="gpt2")
@@ -136,9 +134,7 @@ from pathlib import Path
 
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope.lens.input import LensInput
-from entoscope.lens.lens import Lens
-from entoscope.util.data import from_dict
+from entoscope import Lens, LensInput, from_dict
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()

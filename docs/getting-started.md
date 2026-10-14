@@ -37,10 +37,15 @@ A logit lens reads the residual stream after every layer, at every position of a
 model stopped there and predicted the next token:
 
 ```python
-from entoscope.lens.config import LensConfig, LensMethodConfig
-from entoscope.lens.input import LensInput
-from entoscope.lens.lens import Lens
-from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope import (
+    Lens,
+    LensConfig,
+    LensInput,
+    LensMethodConfig,
+    ModelLayerLocation,
+    ModelLocation,
+    ModelLocatorConfig,
+)
 
 config = LensConfig(
     method=LensMethodConfig(type="logit_lens"),

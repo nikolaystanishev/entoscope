@@ -73,9 +73,9 @@ it, and the base collector writes the data files alone:
 
 <!-- docs-test: skip -->
 ```python
-from entoscope.circuit.collector import CircuitCollector
-from entoscope.lens.collector import LensCollector
-from entoscope.patching.collector import PatchingCollector
+from entoscope.circuit import CircuitCollector
+from entoscope.lens import LensCollector
+from entoscope.patching import PatchingCollector
 
 Lens(model, collector_class=LensCollector)
 Patcher(model, collector_class=PatchingCollector)
@@ -91,10 +91,7 @@ activations it would read and the files it would write, without a forward pass a
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope.lens.config import LensConfig
-from entoscope.lens.input import LensInput
-from entoscope.lens.lens import Lens
-from entoscope.operation.config import ConfigFactory
+from entoscope import ConfigFactory, Lens, LensConfig, LensInput
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()

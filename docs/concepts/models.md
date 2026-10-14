@@ -59,7 +59,7 @@ has already made is read back instead of recomputed. Everything else is forwarde
 model, so an operation cannot tell the difference:
 
 ```python
-from entoscope.model import CachedModel
+from entoscope import CachedModel
 
 cached = CachedModel(TransformerBridge.boot_transformers("gpt2"), cache_dir=".activation_cache")
 cached.eval()

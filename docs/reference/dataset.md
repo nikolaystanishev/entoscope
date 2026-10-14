@@ -2,6 +2,8 @@
 
 The dataset extension point.
 
+Its classes are importable from `entoscope.dataset`.
+
 ```{eval-rst}
 .. automodule:: entoscope.dataset.config
    :members:

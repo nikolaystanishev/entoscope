@@ -16,10 +16,16 @@ writes.
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope.lens.config import LensConfig, LensMethodConfig
-from entoscope.lens.input import LensInput
-from entoscope.lens.lens import Lens
-from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope import (
+    Filter,
+    Lens,
+    LensConfig,
+    LensInput,
+    LensMethodConfig,
+    ModelLayerLocation,
+    ModelLocation,
+    ModelLocatorConfig,
+)
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
@@ -88,7 +94,7 @@ unset, the model's tokenizer name is used, or its model name when it has no toke
 that finds the pretrained translators:
 
 ```python
-from entoscope.lens.method.tuned_lens import TunedLensConfig
+from entoscope import TunedLensConfig
 
 tuned = LensConfig(
     method=TunedLensConfig(type="tuned_lens"),
@@ -120,7 +126,7 @@ weight vector projected onto the vocabulary directly, with no LayerNorm and no b
 depends on an input, so the run takes no prompt:
 
 ```python
-from entoscope.lens.method.parameter_lens import ParameterLensConfig
+from entoscope import ParameterLensConfig
 
 # The value vector neuron 373 writes into the residual stream, in every layer.
 values = LensConfig(

@@ -2,6 +2,9 @@
 
 The shared machinery every operation is built from.
 
+Its classes, with `from_dict` and `to_dict`, are importable from `entoscope.operation`; `ConfigFactory`,
+`from_dict` and `to_dict` from `entoscope` too.
+
 ```{eval-rst}
 .. automodule:: entoscope.operation.config
    :members:
