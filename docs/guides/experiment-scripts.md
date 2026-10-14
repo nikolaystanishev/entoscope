@@ -12,11 +12,7 @@ from dataclasses import dataclass, field
 
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.lens.config import LensConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.operation.config import ConfigFactory
-from intex.script import experiment
+from entoscope import ConfigFactory, Lens, LensConfig, LensInput, experiment
 
 
 @dataclass
@@ -114,5 +110,4 @@ command line. A `main` that takes no parameters gets no parser and simply runs.
 A command line argparse cannot read, such as a missing required option or a value that does not
 convert, exits with status 2 and a usage message.
 
-The scripts in [`examples/`](https://github.com/nikolaystanishev/intex/tree/main/examples) are all
-built this way.
+The scripts on the [Examples](../examples.md) page are all built this way.

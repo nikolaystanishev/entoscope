@@ -1,0 +1,57 @@
+from collections.abc import Iterator
+
+import torch
+from tqdm import tqdm
+
+from entoscope.patching.input import PatchingInput
+from entoscope.patching.method.patching import AbstractPatchingMethod, PatchingMethodConfigT, RowResult
+from entoscope.patching.metric import AbstractMetric
+from entoscope.patching.processor import HookedPatchProcessor
+from entoscope.util.collections import batch_generator
+
+
+class ExactPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
+    """Patch and run the model, once per index row.
+
+    The reference the other methods approximate: nothing is assumed about how the model responds
+    to the intervention, at the price of a forward pass per row.
+    """
+
+    batched = True
+
+    def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[RowResult]:
+        rows = patching_input.rows()
+        batch_width = patching_input.batch_width
+
+        for batch in tqdm(
+            batch_generator(rows, batch_width),
+            total=(len(rows) + batch_width - 1) // batch_width,
+            disable=not verbose,
+        ):
+            fwd_hooks = [
+                HookedPatchProcessor.hook(idx, patching_input, row) for row, group in enumerate(batch) for idx in group
+            ]
+            # Always the width the input's cached runs were made at, a ragged last batch padded with
+            # unpatched copies, so every run has the shape of the runs it is compared with.
+            patched_logits = self.model.run_with_hooks(
+                torch.cat([patching_input.target_tokens] * batch_width, dim=0), fwd_hooks=fwd_hooks
+            ).detach()[: len(batch), -1, :]
+            # One transfer for the whole batch rather than one per row.
+            generations = patched_logits.argmax(dim=-1).tolist()
+
+            for group, logits, generation in zip(batch, patched_logits, generations, strict=True):
+                yield RowResult(
+                    group[0].output,
+                    self._report(
+                        patching_input,
+                        {
+                            metric: AbstractMetric.get(metric).compute(patching_input, logits)
+                            - patching_input.target_baseline(metric)
+                            for metric in self.config.metric
+                        },
+                    ),
+                    generation=generation,
+                )
+
+    def passes(self, runs: int, batches: int) -> tuple[int, int]:
+        return batches, 0

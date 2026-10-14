@@ -1,51 +1,54 @@
-# intex.model
+# entoscope.model
 
 Locating activations, the index operations iterate, and model access.
 
+`Model`, `CachedModel`, the locator classes and the index classes are importable from `entoscope.model`;
+`CachedModel` and the locator classes from `entoscope` too.
+
 ```{eval-rst}
-.. automodule:: intex.model.base
+.. automodule:: entoscope.model.base
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.model.config
+.. automodule:: entoscope.model.config
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.model.index
+.. automodule:: entoscope.model.index
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.model.slicer
+.. automodule:: entoscope.model.slicer
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.model.cache
+.. automodule:: entoscope.model.cache
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.model.token
+.. automodule:: entoscope.model.token
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.model.weight
+.. automodule:: entoscope.model.weight
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.model.unembed
+.. automodule:: entoscope.model.unembed
    :members:
    :show-inheritance:
 ```

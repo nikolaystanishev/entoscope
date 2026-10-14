@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags: [ "v*" ]
+
+permissions:
+  contents: read
+
+jobs:
+  # First, since a tag that does not name the version in pyproject.toml would publish it under another.
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Check the tag names the version
+        run: test "$GITHUB_REF_NAME" = "v$(uv version --short)"
+
+  ci:
+    needs: version
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/entoscope/
+    permissions:
+      # Trusted publishing: PyPI takes this job's OIDC token in place of an API token.
+      id-token: write
+    steps:
+      - name: Download the distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      # Also signs each file and uploads the attestations (PEP 740), which uv publish cannot make.
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.14.2
+
+  # After the publish, so the site always documents the version PyPI serves.
+  docs:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download the docs
+        uses: actions/download-artifact@v8
+        with:
+          name: docs-html
+          path: docs-html/
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs-html/
+
+      - name: Deploy the site
+        id: deployment
+        uses: actions/deploy-pages@v5
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create the release
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -3,12 +3,12 @@ import pytest
 import torch
 from sklearn.linear_model import LogisticRegression
 
-from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from intex.probe.collector import ProbeCollector
-from intex.probe.config import PoolingType, ProbeConfig, ProbeMetric
-from intex.probe.input import ProbeInput
-from intex.probe.method.linear import LinearProbeConfig
-from intex.probe.prober import Prober
+from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.probe.collector import ProbeCollector
+from entoscope.probe.config import PoolingType, ProbeConfig, ProbeMetric
+from entoscope.probe.input import ProbeInput
+from entoscope.probe.method.linear import LinearProbeConfig
+from entoscope.probe.prober import Prober
 
 POSITIVE = ["The movie was absolutely wonderful", "I loved every minute of it"]
 NEGATIVE = ["The movie was dreadful and boring", "I hated every minute of it"]

@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from intex.script import experiment
+from entoscope.script import experiment
 
 DESCRIPTION = "module level description"
 
 SCRIPT = """\
 from dataclasses import dataclass, field
 
-from intex.script import experiment
+from entoscope.script import experiment
 
 DESCRIPTION = "Example experiment script"
 

@@ -9,21 +9,18 @@ same numbers — and that is what makes a result portable between them.
 import pytest
 import torch
 
-from intex.lens.config import LensConfig, LensMethodConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.lens.method.logit_lens import _attention_scale
-from intex.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from intex.model.weight import attention_out_weight, mlp_weight
+from entoscope.lens.config import LensConfig, LensMethodConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.lens.method.logit_lens import _attention_scale
+from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.weight import attention_out_weight, mlp_weight
 
-from ..conftest import _gpt2_hooked
+from ..conftest import HookedTransformer, TransformerBridge, _gpt2_hooked
 
-try:
-    from transformer_lens.model_bridge import TransformerBridge
-except ImportError:  # transformer-lens 2.x (Intel macOS fallback)
-    TransformerBridge = None
-
-pytestmark = pytest.mark.skipif(TransformerBridge is None, reason="transformer_lens has no model bridge")
+pytestmark = pytest.mark.skipif(
+    TransformerBridge is None or HookedTransformer is None, reason="transformer_lens has only one of the backends"
+)
 
 PROMPT = "The capital of France is"
 

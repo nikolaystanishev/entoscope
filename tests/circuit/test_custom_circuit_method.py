@@ -5,12 +5,12 @@ import json
 import networkx as nx
 import pytest
 
-from intex.circuit.config import CircuitConfig
-from intex.circuit.discoverer import CircuitDiscoverer
-from intex.circuit.input import CircuitInput
-from intex.circuit.method.circuit import AbstractCircuitMethod, PromptCircuit
-from intex.circuit.method.factory import CircuitMethodFactory
-from intex.model.token import str_token_labels
+from entoscope.circuit.config import CircuitConfig
+from entoscope.circuit.discoverer import CircuitDiscoverer
+from entoscope.circuit.input import CircuitInput
+from entoscope.circuit.method.circuit import AbstractCircuitMethod, PromptCircuit
+from entoscope.circuit.method.factory import CircuitMethodFactory
+from entoscope.model.token import str_token_labels
 
 from ..conftest import rendered_figures
 

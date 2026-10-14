@@ -1,51 +1,54 @@
-# intex.operation
+# entoscope.operation
 
 The shared machinery every operation is built from.
 
+Its classes, with `from_dict` and `to_dict`, are importable from `entoscope.operation`; `ConfigFactory`,
+`from_dict` and `to_dict` from `entoscope` too.
+
 ```{eval-rst}
-.. automodule:: intex.operation.config
+.. automodule:: entoscope.operation.config
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.operation.method
+.. automodule:: entoscope.operation.method
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.operation.registry
+.. automodule:: entoscope.operation.registry
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.operation.input
+.. automodule:: entoscope.operation.input
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.operation.operator
+.. automodule:: entoscope.operation.operator
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.operation.plan
+.. automodule:: entoscope.operation.plan
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.operation.collector
+.. automodule:: entoscope.operation.collector
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.operation.visualization
+.. automodule:: entoscope.operation.visualization
    :members:
    :show-inheritance:
 ```

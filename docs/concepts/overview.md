@@ -1,4 +1,4 @@
-# How intex is put together
+# How entoscope is put together
 
 Every operation is made of the same four parts, so once one operation makes sense the others mostly
 do too.
@@ -10,10 +10,13 @@ do too.
 | Operator | Runs the config's method over the input | `Lens` | `Prober` | `Patcher` | `CircuitDiscoverer` |
 | Collector | Gathers one result per row and writes the run's files | `LensVisualizationCollector` | `ProbeCollector` | `PatchingVisualizationCollector` | `CircuitVisualizationCollector` |
 
-The classes live in modules named after their part: `intex.lens.config`, `intex.lens.input`,
-`intex.lens.lens` and `intex.lens.collector` for the lens, and the same for `intex.probe`,
-`intex.patching` and `intex.circuit` (the operators are `intex.probe.prober`, `intex.patching.patcher`
-and `intex.circuit.discoverer`).
+The configs, inputs and operators, with the method configs, the locator classes and `CachedModel`, are
+importable from `entoscope` itself: `from entoscope import Lens, LensConfig, LensInput`. Each operation's
+package - `entoscope.lens`, `entoscope.probe`, `entoscope.patching` and `entoscope.circuit` - exports the
+rest of its public classes, such as its collectors, its methods and its method factory, and
+`entoscope.model` and `entoscope.operation` export the shared ones. Each class is defined in a module
+named after its part (`entoscope.lens.config`, `entoscope.lens.input`, `entoscope.lens.lens`,
+`entoscope.lens.collector`, ...), which is how the [API reference](../reference/operation.md) is laid out.
 
 ## A run, step by step
 
@@ -51,7 +54,7 @@ gradients. The config's `method` field picks the way. It is a method config whos
 method, and whose other fields are that method's settings:
 
 ```python
-from intex.lens.method.parameter_lens import ParameterLensConfig
+from entoscope import ParameterLensConfig
 
 method = ParameterLensConfig(type="parameter_lens", scale=-1.0)
 ```
@@ -68,8 +71,8 @@ interactive HTML page; passing the base collector writes the data files alone:
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.lens.collector import LensCollector
-from intex.lens.lens import Lens
+from entoscope import Lens
+from entoscope.lens import LensCollector
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
@@ -81,5 +84,6 @@ Probing has no page: its default collector already writes the data files alone.
 
 ## Models
 
-Operations accept a `TransformerBridge`, a `HookedTransformer`, or either one wrapped in a
-`CachedModel`, which keeps activations on disk between runs. See [Models and caching](models.md).
+Operations accept a `TransformerBridge`, a `HookedTransformer` (on transformer-lens 2 and 3), or either
+one wrapped in a `CachedModel`, which keeps activations on disk between runs. See
+[Models and caching](models.md).

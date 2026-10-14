@@ -1,8 +1,8 @@
 import pytest
 
-from intex.dataset.config import DatasetConfig
-from intex.dataset.dataset import AbstractDataset, Row
-from intex.dataset.factory import DatasetFactory
+from entoscope.dataset.config import DatasetConfig
+from entoscope.dataset.dataset import AbstractDataset, Row
+from entoscope.dataset.factory import DatasetFactory
 
 from .conftest import ROWS, JsonlDataset, dataset_config
 
@@ -39,7 +39,7 @@ def test_a_name_cannot_be_taken_over_by_another_class(jsonl_dataset_class):
 
 
 CELL = """
-from intex.dataset.dataset import AbstractDataset
+from entoscope.dataset.dataset import AbstractDataset
 
 
 class CellDataset(AbstractDataset):

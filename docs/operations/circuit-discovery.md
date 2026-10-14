@@ -16,10 +16,7 @@ may be used for non-commercial purposes only (see [Licensing](#licensing)).
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.circuit.config import CircuitConfig
-from intex.circuit.discoverer import CircuitDiscoverer
-from intex.circuit.input import CircuitInput
-from intex.circuit.method.information_flow_routes import InformationFlowRoutesConfig
+from entoscope import CircuitConfig, CircuitDiscoverer, CircuitInput, InformationFlowRoutesConfig
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
@@ -118,7 +115,7 @@ graph files and no page.
 The contribution math of `information_flow_routes` is vendored from the
 [LM Transparency Tool](https://github.com/facebookresearch/llm-transparency-tool), licensed
 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). The method, and any results produced
-with it, may therefore be used for non-commercial purposes only. `src/intex/circuit/vendor/NOTICE`
+with it, may therefore be used for non-commercial purposes only. `src/entoscope/circuit/vendor/NOTICE`
 records the source, the commit and the changes made.
 
 ## References

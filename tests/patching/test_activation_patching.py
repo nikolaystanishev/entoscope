@@ -7,13 +7,13 @@ import pandas as pd
 import pytest
 import torch
 import yaml
-from transformer_lens import HookedTransformer
 
-from intex.model.cache import CachedModel
-from intex.model.config import Filter, Group, Incremental, ModelLayerLocation, ModelLocation
-from intex.operation.config import ConfigFactory
-from intex.patching.collector import PatchingCollector
-from intex.patching.config import (
+from entoscope.model import Model
+from entoscope.model.cache import CachedModel
+from entoscope.model.config import Filter, Group, Incremental, ModelLayerLocation, ModelLocation
+from entoscope.operation.config import ConfigFactory
+from entoscope.patching.collector import PatchingCollector
+from entoscope.patching.config import (
     MetricComparison,
     PatchingConfig,
     PatchingElementConfig,
@@ -23,11 +23,11 @@ from intex.patching.config import (
     SinglePatchingConfig,
     metric_column,
 )
-from intex.patching.input import PatchingInput
-from intex.patching.method.attribution import IntegratedGradientsConfig
-from intex.patching.method.factory import PatchingMethodFactory
-from intex.patching.patcher import Patcher
-from intex.patching.processor import GaussianNoiseSourceStrategy
+from entoscope.patching.input import PatchingInput
+from entoscope.patching.method.attribution import IntegratedGradientsConfig
+from entoscope.patching.method.factory import PatchingMethodFactory
+from entoscope.patching.patcher import Patcher
+from entoscope.patching.processor import GaussianNoiseSourceStrategy
 
 from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
 
@@ -61,13 +61,11 @@ def _cell_columns(collector: PatchingCollector) -> list[str]:
 GENERATION_COLUMNS = ["generation", "str_generation"]
 
 
-def _run(model: HookedTransformer, config: PatchingConfig, **answers) -> torch.Tensor:
+def _run(model: Model, config: PatchingConfig, **answers) -> torch.Tensor:
     return _metric(_collect(model, config, **answers))
 
 
-def _collect(
-    model: HookedTransformer, config: PatchingConfig, source: str | None = SOURCE_PROMPT, **answers
-) -> PatchingCollector:
+def _collect(model: Model, config: PatchingConfig, source: str | None = SOURCE_PROMPT, **answers) -> PatchingCollector:
     collector = Patcher(model).apply(
         PatchingInput(config, source, TARGET_PROMPT, **answers), return_collector=True, verbose=False
     )
@@ -75,24 +73,24 @@ def _collect(
     return collector
 
 
-def _generations(model: HookedTransformer) -> tuple[int, int]:
+def _generations(model: Model) -> tuple[int, int]:
     """The tokens the two prompts predict — the pair every logit-diff metric falls back to."""
     with torch.no_grad():
         return int(model(SOURCE_PROMPT)[0, -1].argmax()), int(model(TARGET_PROMPT)[0, -1].argmax())
 
 
-def _source_activation(model: HookedTransformer, name: str) -> torch.Tensor:
+def _source_activation(model: Model, name: str) -> torch.Tensor:
     with torch.no_grad():
         _, cache = model.run_with_cache(model.to_tokens(SOURCE_PROMPT), names_filter=[name])
     return cache[name]
 
 
-def _final_logits(model: HookedTransformer, prompt: str) -> torch.Tensor:
+def _final_logits(model: Model, prompt: str) -> torch.Tensor:
     with torch.no_grad():
         return model(prompt)[0, -1]
 
 
-def _expected_logit_diff(model: HookedTransformer, fwd_hooks: list) -> torch.Tensor:
+def _expected_logit_diff(model: Model, fwd_hooks: list) -> torch.Tensor:
     """The metric a patched run must produce, from running the same patch by hand.
 
     The hooks say what the patch writes and where; the logit diff is then read straight off the
@@ -203,7 +201,7 @@ def _patch_config(*elements: PatchingElementConfig, config_id: str = "patch") ->
     )
 
 
-def test_activation_patching_from_source_into_target(model: HookedTransformer) -> None:
+def test_activation_patching_from_source_into_target(model: Model) -> None:
     torch.manual_seed(42)
 
     # A full residual replacement requires matching sequence lengths between the two prompts.
@@ -221,7 +219,7 @@ def test_activation_patching_from_source_into_target(model: HookedTransformer) -
     assert torch.allclose(result.squeeze(), torch.tensor(1.0))
 
 
-def test_caches_restricted_to_used_activations(model: HookedTransformer) -> None:
+def test_caches_restricted_to_used_activations(model: Model) -> None:
     patching_input = PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT).prepare(model)
 
     # Only the last layer's residual is read; both caches are filtered down to it.
@@ -237,7 +235,7 @@ def test_caches_restricted_to_used_activations(model: HookedTransformer) -> None
     assert set(patching_input.source_cache.keys()) < set(full_cache.keys())
 
 
-def test_zero_ablation_patching(model: HookedTransformer) -> None:
+def test_zero_ablation_patching(model: Model) -> None:
     torch.manual_seed(42)
 
     # Zero ablation writes zeros into the target run, so the source run's activations are never read;
@@ -263,7 +261,7 @@ def test_zero_ablation_patching(model: HookedTransformer) -> None:
 _VALUE_SCALE_LAYER = 6
 
 
-def _run_value_scale(model: HookedTransformer, scale: float) -> torch.Tensor:
+def _run_value_scale(model: Model, scale: float) -> torch.Tensor:
     # Scaling the source residual and writing it into the target requires matching sequence lengths.
     assert model.to_tokens(SOURCE_PROMPT).shape == model.to_tokens(TARGET_PROMPT).shape
 
@@ -278,7 +276,7 @@ def _run_value_scale(model: HookedTransformer, scale: float) -> torch.Tensor:
     return result.squeeze()
 
 
-def test_value_scale_patching(model: HookedTransformer) -> None:
+def test_value_scale_patching(model: Model) -> None:
     torch.manual_seed(42)
 
     scaled = _run_value_scale(model, scale=2.0)
@@ -301,7 +299,7 @@ _MULTI_PATCH_LAYER = 5
 _MULTI_PATCH_HEAD = 7
 
 
-def _multi_patch_hooks(model: HookedTransformer) -> list:
+def _multi_patch_hooks(model: Model) -> list:
     """The three replacements done by hand, from the source run's own activations."""
     layer, head = _MULTI_PATCH_LAYER, _MULTI_PATCH_HEAD
     post, queries, pattern = (
@@ -324,7 +322,7 @@ def _multi_patch_hooks(model: HookedTransformer) -> list:
     ]
 
 
-def test_multi_config_patching_mlp_mhsa_and_pattern(model: HookedTransformer) -> None:
+def test_multi_config_patching_mlp_mhsa_and_pattern(model: Model) -> None:
     torch.manual_seed(42)
 
     # Replacing full activations (and a head's pattern) from source requires matching sequence lengths.
@@ -387,7 +385,7 @@ def _metric_config(
     )
 
 
-def test_every_output_distribution_metric_matches_its_formula(model: HookedTransformer) -> None:
+def test_every_output_distribution_metric_matches_its_formula(model: Model) -> None:
     torch.manual_seed(42)
 
     collector = _collect(model, _metric_config(*PatchingMetric))
@@ -408,7 +406,7 @@ def test_every_output_distribution_metric_matches_its_formula(model: HookedTrans
         assert torch.allclose(_metric(collector, metric).squeeze(), value, atol=1e-4), metric
 
 
-def test_the_kl_divergence_runs_from_the_source_distribution_to_the_patched_one(model: HookedTransformer) -> None:
+def test_the_kl_divergence_runs_from_the_source_distribution_to_the_patched_one(model: Model) -> None:
     torch.manual_seed(42)
 
     # The divergence is not symmetric, so the direction is the whole content of the metric: the
@@ -425,7 +423,7 @@ def test_the_kl_divergence_runs_from_the_source_distribution_to_the_patched_one(
     )
 
 
-def test_a_patch_that_reproduces_the_source_run_leaves_no_divergence(model: HookedTransformer) -> None:
+def test_a_patch_that_reproduces_the_source_run_leaves_no_divergence(model: Model) -> None:
     torch.manual_seed(42)
 
     # Replacing the last layer's whole residual makes the patched run the source run, so there is
@@ -435,7 +433,7 @@ def test_a_patch_that_reproduces_the_source_run_leaves_no_divergence(model: Hook
     assert torch.allclose(result.squeeze(), torch.tensor(0.0), atol=1e-5)
 
 
-def test_the_logprob_difference_is_the_logit_difference(model: HookedTransformer) -> None:
+def test_the_logprob_difference_is_the_logit_difference(model: Model) -> None:
     torch.manual_seed(42)
 
     # The softmax's normalizer is shared by the two tokens and cancels in the subtraction. Worth
@@ -447,7 +445,7 @@ def test_the_logprob_difference_is_the_logit_difference(model: HookedTransformer
     )
 
 
-def test_several_metrics_come_off_one_run(model: HookedTransformer) -> None:
+def test_several_metrics_come_off_one_run(model: Model) -> None:
     torch.manual_seed(42)
 
     element = _last_layer_resid_element()
@@ -465,7 +463,7 @@ def test_several_metrics_come_off_one_run(model: HookedTransformer) -> None:
 # The comparisons — the patched run against the two it sits between
 # --------------------------------------------------------------------------------------------------
 @pytest.mark.parametrize("metric", list(PatchingMetric))
-def test_the_three_comparisons_agree_on_one_patch(model: HookedTransformer, metric: PatchingMetric) -> None:
+def test_the_three_comparisons_agree_on_one_patch(model: Model, metric: PatchingMetric) -> None:
     torch.manual_seed(42)
 
     element = _last_layer_resid_element()
@@ -488,7 +486,7 @@ def test_the_three_comparisons_agree_on_one_patch(model: HookedTransformer, metr
     assert torch.allclose(normalized.squeeze(), (absolute.squeeze() - target) / (source - target), atol=1e-4)
 
 
-def test_a_patch_that_changes_nothing_has_no_indirect_effect(model: HookedTransformer) -> None:
+def test_a_patch_that_changes_nothing_has_no_indirect_effect(model: Model) -> None:
     torch.manual_seed(42)
 
     # The doc's zero point: an ineffective patch reproduces the target run, so its effect is nil.
@@ -497,7 +495,7 @@ def test_a_patch_that_changes_nothing_has_no_indirect_effect(model: HookedTransf
     assert torch.allclose(result.squeeze(), torch.tensor(0.0), atol=1e-5)
 
 
-def test_each_metric_is_reported_under_its_own_comparison(model: HookedTransformer) -> None:
+def test_each_metric_is_reported_under_its_own_comparison(model: Model) -> None:
     torch.manual_seed(42)
 
     # The reason the comparison sits on the metric: a divergence is read as an effect, a logit
@@ -525,7 +523,7 @@ def test_each_metric_is_reported_under_its_own_comparison(model: HookedTransform
         assert torch.allclose(_metric(together, metric), alone, atol=1e-5), metric
 
 
-def test_one_metric_may_be_reported_under_several_comparisons(model: HookedTransformer) -> None:
+def test_one_metric_may_be_reported_under_several_comparisons(model: Model) -> None:
     torch.manual_seed(42)
 
     element = _last_layer_resid_element()
@@ -552,7 +550,7 @@ def test_one_metric_may_be_reported_under_several_comparisons(model: HookedTrans
         assert torch.allclose(_metric(together, PatchingMetric.LOGIT_DIFF, comparison), alone, atol=1e-5), comparison
 
 
-def test_a_second_comparison_costs_no_extra_backward_pass(model: HookedTransformer) -> None:
+def test_a_second_comparison_costs_no_extra_backward_pass(model: Model) -> None:
     # The gradient methods differentiate once per metric, and a comparison only re-reads that
     # gradient's delta — so naming three of them is free where naming a second metric is not.
     element = _last_layer_resid_element()
@@ -579,7 +577,7 @@ def test_a_second_comparison_costs_no_extra_backward_pass(model: HookedTransform
 # --------------------------------------------------------------------------------------------------
 # The answer tokens the difference metrics compare
 # --------------------------------------------------------------------------------------------------
-def test_the_answer_tokens_are_what_the_metric_compares(model: HookedTransformer) -> None:
+def test_the_answer_tokens_are_what_the_metric_compares(model: Model) -> None:
     torch.manual_seed(42)
 
     element = _last_layer_resid_element()
@@ -605,7 +603,7 @@ def test_the_answer_tokens_are_what_the_metric_compares(model: HookedTransformer
     assert not torch.allclose(named, _run(model, _metric_config(PatchingMetric.LOGIT_DIFF, element=element)))
 
 
-def test_the_answer_tokens_fall_back_to_what_each_prompt_predicts(model: HookedTransformer) -> None:
+def test_the_answer_tokens_fall_back_to_what_each_prompt_predicts(model: Model) -> None:
     patching_input = PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT).prepare(model)
     source_generation, target_generation = _generations(model)
 
@@ -615,7 +613,7 @@ def test_the_answer_tokens_fall_back_to_what_each_prompt_predicts(model: HookedT
     )
 
 
-def test_two_identical_answer_tokens_raise_rather_than_scoring_zero(model: HookedTransformer) -> None:
+def test_two_identical_answer_tokens_raise_rather_than_scoring_zero(model: Model) -> None:
     # A difference metric whose two tokens coincide is identically zero at every location, which
     # reads as 'the patch did nothing' everywhere rather than as the misconfiguration it is.
     with pytest.raises(ValueError, match="identically zero"):
@@ -626,7 +624,7 @@ def test_two_identical_answer_tokens_raise_rather_than_scoring_zero(model: Hooke
         _collect(model, _last_layer_resid_patch_config(), source=TARGET_PROMPT)
 
 
-def test_a_metric_that_needs_no_distractor_does_not_mind(model: HookedTransformer) -> None:
+def test_a_metric_that_needs_no_distractor_does_not_mind(model: Model) -> None:
     torch.manual_seed(42)
 
     # Only the difference metrics compare two tokens, so the guard above must not reach the others.
@@ -642,7 +640,7 @@ def test_a_metric_that_needs_no_distractor_does_not_mind(model: HookedTransforme
 # --------------------------------------------------------------------------------------------------
 # The generation - the token each patched run predicts next
 # --------------------------------------------------------------------------------------------------
-def test_a_patch_that_reproduces_the_source_run_generates_what_the_source_does(model: HookedTransformer) -> None:
+def test_a_patch_that_reproduces_the_source_run_generates_what_the_source_does(model: Model) -> None:
     collector = _collect(model, _last_layer_resid_patch_config())
     source_generation, target_generation = _generations(model)
 
@@ -652,14 +650,14 @@ def test_a_patch_that_reproduces_the_source_run_generates_what_the_source_does(m
     assert collector.result["str_generation"].tolist() == [model.to_single_str_token(source_generation)]
 
 
-def test_a_patch_that_changes_nothing_generates_what_the_target_does(model: HookedTransformer) -> None:
+def test_a_patch_that_changes_nothing_generates_what_the_target_does(model: Model) -> None:
     collector = _collect(model, _metric_config(PatchingMetric.PROBABILITY))
 
     assert collector.result["generation"].tolist() == [_generations(model)[1]]
 
 
 @pytest.mark.parametrize("batch_size", [1, 3])
-def test_each_row_generates_what_its_own_patched_run_predicts(model: HookedTransformer, batch_size: int) -> None:
+def test_each_row_generates_what_its_own_patched_run_predicts(model: Model, batch_size: int) -> None:
     # The country token, patched layer by layer: early on it still carries the source's answer to the
     # last position, and by the last layers nothing reads it any more - so the rows differ, and a
     # batch that mixed them up would show.
@@ -695,7 +693,7 @@ def test_each_row_generates_what_its_own_patched_run_predicts(model: HookedTrans
 
 
 @pytest.mark.parametrize("method", ["attribution", "integrated_gradients"])
-def test_a_gradient_method_reports_no_generation(model: HookedTransformer, method: str) -> None:
+def test_a_gradient_method_reports_no_generation(model: Model, method: str) -> None:
     # A gradient method never runs the patched model, so there is no next token to read off it.
     collector = _collect(model, _gradient_config(method))
 
@@ -705,7 +703,7 @@ def test_a_gradient_method_reports_no_generation(model: HookedTransformer, metho
 # --------------------------------------------------------------------------------------------------
 # A run with no source prompt at all — the single-input indirect effect
 # --------------------------------------------------------------------------------------------------
-def test_zero_ablation_scores_its_effect_without_a_second_prompt(model: HookedTransformer) -> None:
+def test_zero_ablation_scores_its_effect_without_a_second_prompt(model: Model) -> None:
     torch.manual_seed(42)
 
     # Nothing is read from another run, so the intervention needs no counterfactual prompt: the
@@ -740,7 +738,7 @@ def test_zero_ablation_scores_its_effect_without_a_second_prompt(model: HookedTr
     ],
 )
 def test_a_metric_that_needs_the_source_run_says_so(
-    model: HookedTransformer, metric: PatchingMetric, comparison: MetricComparison
+    model: Model, metric: PatchingMetric, comparison: MetricComparison
 ) -> None:
     config = _last_layer_resid_zero_ablation_config()
     config.metric = {metric: [comparison]}
@@ -791,7 +789,7 @@ def _gradient_config(
     )
 
 
-def _self_scale(model: HookedTransformer, method: str, scale: float, layer: int = _GRADIENT_LAYER):
+def _self_scale(model: Model, method: str, scale: float, layer: int = _GRADIENT_LAYER):
     """Scale one layer's residual by ``scale`` and write it back over itself.
 
     Both prompts are the target one, so the source activation the scale multiplies is the target's
@@ -807,7 +805,7 @@ def _self_scale(model: HookedTransformer, method: str, scale: float, layer: int 
     ).squeeze()
 
 
-def test_attribution_patching_is_a_directional_derivative(model: HookedTransformer) -> None:
+def test_attribution_patching_is_a_directional_derivative(model: Model) -> None:
     torch.manual_seed(42)
 
     # The gradient is read once, at the target's own activation, so ten times the perturbation is
@@ -825,7 +823,7 @@ def test_attribution_patching_is_a_directional_derivative(model: HookedTransform
     assert not torch.allclose(exact_large, 10 * exact_small, rtol=1e-2)
 
 
-def test_attribution_patching_reads_the_models_own_gradient(model: HookedTransformer) -> None:
+def test_attribution_patching_reads_the_models_own_gradient(model: Model) -> None:
     torch.manual_seed(42)
 
     # The estimate is the derivative along the residual, so the model's own central difference is
@@ -840,7 +838,7 @@ def test_attribution_patching_reads_the_models_own_gradient(model: HookedTransfo
     assert torch.allclose(estimated, (up - down) / 2, rtol=0.05)
 
 
-def test_scaling_the_final_residual_moves_neither_the_run_nor_its_estimate(model: HookedTransformer) -> None:
+def test_scaling_the_final_residual_moves_neither_the_run_nor_its_estimate(model: Model) -> None:
     torch.manual_seed(42)
 
     # ``ln_final`` normalizes a uniform scaling of the last layer's residual away, so doubling it is
@@ -850,7 +848,7 @@ def test_scaling_the_final_residual_moves_neither_the_run_nor_its_estimate(model
         assert torch.allclose(_self_scale(model, method, 2.0, layer=-1), torch.tensor(0.0), atol=1e-4), method
 
 
-def test_a_patch_writing_back_what_was_there_scores_zero(model: HookedTransformer) -> None:
+def test_a_patch_writing_back_what_was_there_scores_zero(model: Model) -> None:
     torch.manual_seed(42)
 
     # The perturbation is identically zero, so every method reports nothing -- the exact one because
@@ -866,7 +864,7 @@ def test_a_patch_writing_back_what_was_there_scores_zero(model: HookedTransforme
         assert torch.allclose(result.squeeze(), torch.tensor(0.0), atol=1e-6), method
 
 
-def test_integrated_gradients_of_one_step_is_attribution_patching(model: HookedTransformer) -> None:
+def test_integrated_gradients_of_one_step_is_attribution_patching(model: Model) -> None:
     torch.manual_seed(42)
 
     # A single step puts the only interpolation point at the clean activation, which is exactly
@@ -878,7 +876,7 @@ def test_integrated_gradients_of_one_step_is_attribution_patching(model: HookedT
     assert torch.equal(estimated, _run(model, _gradient_config("attribution")))
 
 
-def test_integrated_gradients_beats_a_single_gradient_on_a_full_resample(model: HookedTransformer) -> None:
+def test_integrated_gradients_beats_a_single_gradient_on_a_full_resample(model: Model) -> None:
     torch.manual_seed(42)
 
     # Resampling a whole layer's residual is far outside the range a gradient at the clean point
@@ -890,7 +888,7 @@ def test_integrated_gradients_beats_a_single_gradient_on_a_full_resample(model: 
     assert abs(integrated - exact) < abs(attribution - exact)
 
 
-def test_a_gradient_method_runs_the_model_once_however_large_the_index(model: HookedTransformer, monkeypatch) -> None:
+def test_a_gradient_method_runs_the_model_once_however_large_the_index(model: Model, monkeypatch) -> None:
     torch.manual_seed(42)
 
     element = PatchingElementConfig(
@@ -925,7 +923,7 @@ def test_a_gradient_method_runs_the_model_once_however_large_the_index(model: Ho
     assert passes == {"exact": model.cfg.n_layers, "attribution": 1, "integrated_gradients": 4}
 
 
-def test_integrated_gradients_needs_a_source_run_to_interpolate_towards(model: HookedTransformer) -> None:
+def test_integrated_gradients_needs_a_source_run_to_interpolate_towards(model: Model) -> None:
     config = replace(
         _last_layer_resid_zero_ablation_config(),
         method=IntegratedGradientsConfig(type="integrated_gradients"),
@@ -939,7 +937,7 @@ def test_integrated_gradients_needs_a_source_run_to_interpolate_towards(model: H
         )
 
 
-def test_integrated_gradients_needs_the_two_prompts_to_line_up(model: HookedTransformer) -> None:
+def test_integrated_gradients_needs_the_two_prompts_to_line_up(model: Model) -> None:
     # The interpolation runs position by position, so a shorter source prompt has nowhere to land.
     config = _gradient_config("integrated_gradients")
 
@@ -1001,7 +999,7 @@ def _explicit_patch_config(
 
 
 def _run_explicit(
-    model: HookedTransformer,
+    model: Model,
     source_coordinates: list[dict],
     target_coordinates: list[dict],
     save_dir: str | None = None,
@@ -1015,7 +1013,7 @@ def _run_explicit(
     return _metric(collector)
 
 
-def test_explicit_coordinates_matches_declarative_patch(model: HookedTransformer) -> None:
+def test_explicit_coordinates_matches_declarative_patch(model: Model) -> None:
     torch.manual_seed(42)
 
     # The explicit twin of ``test_activation_patching_from_source_into_target``: one coordinate covering
@@ -1027,7 +1025,7 @@ def test_explicit_coordinates_matches_declarative_patch(model: HookedTransformer
     assert torch.allclose(result.squeeze(), torch.tensor(1.0))
 
 
-def test_explicit_position_is_respected(model: HookedTransformer) -> None:
+def test_explicit_position_is_respected(model: Model) -> None:
     torch.manual_seed(42)
 
     # The final token's logits depend only on the last position of the final layer's residual, so
@@ -1043,7 +1041,7 @@ def test_explicit_position_is_respected(model: HookedTransformer) -> None:
     assert torch.allclose(first_position.squeeze(), torch.tensor(0.0), atol=1e-5)
 
 
-def test_explicit_pairing_and_artifacts(model: HookedTransformer, tmp_path: Path) -> None:
+def test_explicit_pairing_and_artifacts(model: Model, tmp_path: Path) -> None:
     torch.manual_seed(42)
 
     # Two pairs reading different source layers into different target positions of layer 7.
@@ -1077,7 +1075,7 @@ def test_explicit_pairing_and_artifacts(model: HookedTransformer, tmp_path: Path
     assert all(col.startswith(("source_", "target_")) for col in index_df.columns)
 
 
-def test_explicit_per_coordinate_activation(model: HookedTransformer) -> None:
+def test_explicit_per_coordinate_activation(model: Model) -> None:
     torch.manual_seed(42)
 
     # Each coordinate carries its own activation: pair 0 patches the final layer's residual at the last
@@ -1099,7 +1097,7 @@ def test_explicit_per_coordinate_activation(model: HookedTransformer) -> None:
     assert not torch.allclose(result[1], torch.tensor(1.0), atol=1e-2)
 
 
-def test_two_sources_differing_only_in_activation_keep_their_own_metric(model: HookedTransformer) -> None:
+def test_two_sources_differing_only_in_activation_keep_their_own_metric(model: Model) -> None:
     torch.manual_seed(42)
 
     # Explicit source coordinates against a declarative target: that mix is what sends the index
@@ -1148,7 +1146,7 @@ def test_two_sources_differing_only_in_activation_keep_their_own_metric(model: H
     assert _metric(collector)[0] != _metric(collector)[1]
 
 
-def test_artifacts_saved_to_disk(model: HookedTransformer, tmp_path: Path) -> None:
+def test_artifacts_saved_to_disk(model: Model, tmp_path: Path) -> None:
     torch.manual_seed(42)
 
     # Build the config through ConfigFactory by persisting it to a YAML file and loading it back,
@@ -1236,7 +1234,7 @@ def _gaussian_noise_config() -> PatchingConfig:
     )
 
 
-def test_gaussian_noise_patching(model: HookedTransformer) -> None:
+def test_gaussian_noise_patching(model: Model) -> None:
     torch.manual_seed(42)
 
     noised = _run(model, _gaussian_noise_config())
@@ -1249,7 +1247,7 @@ def test_gaussian_noise_patching(model: HookedTransformer) -> None:
     assert not torch.allclose(noised, _run(model, _resid_value_scale_config(1.0, _VALUE_SCALE_LAYER)))
 
 
-def test_gaussian_noise_is_added_at_three_standard_deviations_of_the_activation(model: HookedTransformer) -> None:
+def test_gaussian_noise_is_added_at_three_standard_deviations_of_the_activation(model: Model) -> None:
     patching_input = PatchingInput(_gaussian_noise_config(), SOURCE_PROMPT, TARGET_PROMPT).prepare(model)
     index = next(iter(patching_input.index[0]))
     activation = patching_input.target_cache[index.source.transformer_activation()]
@@ -1266,7 +1264,7 @@ def test_gaussian_noise_is_added_at_three_standard_deviations_of_the_activation(
 
 
 @pytest.mark.parametrize("source_type", list(PatchingType))
-def test_a_batched_run_scores_what_an_unbatched_one_does(model: HookedTransformer, source_type: PatchingType) -> None:
+def test_a_batched_run_scores_what_an_unbatched_one_does(model: Model, source_type: PatchingType) -> None:
     # A patched run holds one copy of the target prompt per row; every row still reads its source from
     # the one prompt each cache keeps. Five rows a batch leaves a ragged last one, padded to five.
     def element(patching_type: PatchingType) -> PatchingElementConfig:
@@ -1289,7 +1287,7 @@ def test_a_batched_run_scores_what_an_unbatched_one_does(model: HookedTransforme
 
 
 @pytest.mark.parametrize("batch_size", [1, 3])
-def test_a_one_row_element_is_patched_into_every_row_of_a_batch(model: HookedTransformer, batch_size: int) -> None:
+def test_a_one_row_element_is_patched_into_every_row_of_a_batch(model: Model, batch_size: int) -> None:
     # The sweep patches the BOS position, which both prompts share, so on its own it changes nothing;
     # the one-row companion swaps the country token in on every run. Every row is then the
     # companion's effect alone - in each row of a batch, not only the one whose hooks were built last.
@@ -1331,7 +1329,7 @@ def test_a_one_row_element_is_patched_into_every_row_of_a_batch(model: HookedTra
 
 
 @pytest.fixture
-def batch_shape_dependent_model(model: HookedTransformer):
+def batch_shape_dependent_model(model: Model):
     """``model`` with numerics that depend on the batch shape, as MPS kernels' do in half precision.
 
     CPU kernels round the same at every batch size, so without this a run compared against a
@@ -1367,7 +1365,7 @@ def _self_patch_config() -> PatchingConfig:
 
 @pytest.mark.parametrize("batch_size", [1, 5])
 def test_patching_a_prompt_into_itself_reproduces_the_target_run(
-    batch_shape_dependent_model: HookedTransformer, batch_size: int
+    batch_shape_dependent_model: Model, batch_size: int
 ) -> None:
     # Writing back what a run already holds changes nothing, so every row must read exactly what the
     # unpatched run does - which holds only if that run and its patch values were made at the patched
@@ -1386,7 +1384,7 @@ def test_patching_a_prompt_into_itself_reproduces_the_target_run(
 
 
 def test_preparing_at_another_width_remakes_the_runs_and_what_was_read_off_them(
-    batch_shape_dependent_model: HookedTransformer, monkeypatch
+    batch_shape_dependent_model: Model, monkeypatch
 ) -> None:
     model = batch_shape_dependent_model
     probability = PatchingMetric.PROBABILITY
@@ -1413,7 +1411,7 @@ def test_preparing_at_another_width_remakes_the_runs_and_what_was_read_off_them(
     assert patching_input.target_baseline(probability) == fresh.target_baseline(probability)
 
 
-def test_a_batch_wider_than_the_sweep_runs_only_as_wide_as_its_rows(model: HookedTransformer) -> None:
+def test_a_batch_wider_than_the_sweep_runs_only_as_wide_as_its_rows(model: Model) -> None:
     patching_input = PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT)
     Patcher(model, collector_class=PatchingCollector, batch_size=16).apply(patching_input, verbose=False)
 
@@ -1421,7 +1419,7 @@ def test_a_batch_wider_than_the_sweep_runs_only_as_wide_as_its_rows(model: Hooke
     assert patching_input.batch_width == 1
 
 
-def _batched(model: HookedTransformer, config: PatchingConfig, batch_size: int) -> PatchingCollector:
+def _batched(model: Model, config: PatchingConfig, batch_size: int) -> PatchingCollector:
     collector = Patcher(model, collector_class=PatchingCollector, batch_size=batch_size).apply(
         PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), return_collector=True, verbose=False
     )
@@ -1436,7 +1434,7 @@ def _batched(model: HookedTransformer, config: PatchingConfig, batch_size: int) 
         ("target", "Unknown target strategy"),
     ],
 )
-def test_a_patching_type_that_is_not_known_raises(model: HookedTransformer, element: str, message: str) -> None:
+def test_a_patching_type_that_is_not_known_raises(model: Model, element: str, message: str) -> None:
     # A config built in code can name a type no strategy implements — and 'value_replace' is one only
     # a source may carry, so a target is rejected the same way.
     source, target = _last_layer_resid_element(), _last_layer_resid_element()
@@ -1452,7 +1450,7 @@ def test_a_patching_type_that_is_not_known_raises(model: HookedTransformer, elem
         Patcher(model).apply(PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), verbose=False)
 
 
-def test_a_patching_metric_that_is_not_known_raises(model: HookedTransformer) -> None:
+def test_a_patching_metric_that_is_not_known_raises(model: Model) -> None:
     config = _last_layer_resid_patch_config()
     config.metric = {"accuracy": [MetricComparison.ABSOLUTE]}
 
@@ -1460,7 +1458,7 @@ def test_a_patching_metric_that_is_not_known_raises(model: HookedTransformer) ->
         Patcher(model).apply(PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), verbose=False)
 
 
-def test_a_metric_comparison_that_is_not_known_raises(model: HookedTransformer) -> None:
+def test_a_metric_comparison_that_is_not_known_raises(model: Model) -> None:
     config = _last_layer_resid_patch_config()
     config.metric = {PatchingMetric.LOGIT_DIFF: ["ratio"]}
 
@@ -1497,7 +1495,7 @@ def test_integrated_gradients_takes_at_least_one_step() -> None:
         IntegratedGradientsConfig(type="integrated_gradients", interpolation_steps=0)
 
 
-def test_a_prepared_input_moves_to_a_device(model: HookedTransformer) -> None:
+def test_a_prepared_input_moves_to_a_device(model: Model) -> None:
     patching_input = PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT).prepare(model)
     # The baselines and probabilities are built on first read, so ask for them before moving.
     for lazy in (
@@ -1526,7 +1524,7 @@ def test_a_prepared_input_moves_to_a_device(model: HookedTransformer) -> None:
     assert all(activation.device.type == "cpu" for activation in moved.target_cache.values())
 
 
-def test_a_run_without_a_collector_still_writes_its_artifacts(model: HookedTransformer, tmp_path: Path) -> None:
+def test_a_run_without_a_collector_still_writes_its_artifacts(model: Model, tmp_path: Path) -> None:
     torch.manual_seed(42)
 
     # Not asking for the collector is the default, and how the example scripts run an operation.
@@ -1566,7 +1564,7 @@ def _patch_yaml(**overrides) -> dict:
     }
 
 
-def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model: HookedTransformer, config_from_yaml) -> None:
+def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model: Model, config_from_yaml) -> None:
     from_file = config_from_yaml(PatchingConfig, "last_layer_resid_patch", _patch_yaml())
     element = _last_layer_resid_element()
     in_code = PatchingConfig(
@@ -1629,7 +1627,7 @@ def test_the_columns_follow_the_order_the_yaml_names_them(tmp_path: Path) -> Non
     assert config.primary() == (PatchingMetric.KL_DIVERGENCE, MetricComparison.INDIRECT_EFFECT)
 
 
-def test_a_source_and_a_target_may_alias_the_same_yaml_anchor(model: HookedTransformer, tmp_path: Path) -> None:
+def test_a_source_and_a_target_may_alias_the_same_yaml_anchor(model: Model, tmp_path: Path) -> None:
     # A YAML anchor gives the deserializer the very same mapping twice; it must not consume it.
     config_yaml = tmp_path / "configs.yaml"
     config_yaml.write_text(
@@ -1654,7 +1652,7 @@ def test_a_source_and_a_target_may_alias_the_same_yaml_anchor(model: HookedTrans
     assert len(collector.result) == 1
 
 
-def test_the_omitted_keys_of_an_element_fall_back_to_their_defaults(model: HookedTransformer, config_from_yaml) -> None:
+def test_the_omitted_keys_of_an_element_fall_back_to_their_defaults(model: Model, config_from_yaml) -> None:
     # A source that names nothing but its type produces zeros — the zero-ablation shape, from YAML.
     raw = {
         "metric": {"logit_diff": ["absolute"]},
@@ -1673,7 +1671,7 @@ def test_the_omitted_keys_of_an_element_fall_back_to_their_defaults(model: Hooke
     assert torch.equal(_run(model, config), _run(model, _last_layer_resid_zero_ablation_config()))
 
 
-def test_an_exclusion_term_is_deserialized_into_its_own_filter(model: HookedTransformer, config_from_yaml) -> None:
+def test_an_exclusion_term_is_deserialized_into_its_own_filter(model: Model, config_from_yaml) -> None:
     element = {**ELEMENT_YAML, "filter": [{"layer": {"range": [0, 2]}}, {"not": {"layer": 1}}]}
     config = config_from_yaml(
         PatchingConfig,
@@ -1730,7 +1728,7 @@ def test_a_config_id_the_file_does_not_have_raises(tmp_path: Path) -> None:
         factory.create("missing")
 
 
-def test_a_run_through_a_cached_model_patches_the_same_way(model: HookedTransformer, tmp_path: Path) -> None:
+def test_a_run_through_a_cached_model_patches_the_same_way(model: Model, tmp_path: Path) -> None:
     # Patching tokenizes, reads weights and runs with hooks through the wrapper; only its two cached
     # forward passes go through the cache, so the metric must come out exactly as it does unwrapped.
     def patch(target) -> torch.Tensor:
@@ -1760,7 +1758,7 @@ def _every_layer_patch_config() -> PatchingConfig:
     return _patch_config(element, config_id="every_layer_resid_patch")
 
 
-def test_a_plan_counts_the_patch_runs_and_their_batches(model: HookedTransformer, monkeypatch, tmp_path: Path) -> None:
+def test_a_plan_counts_the_patch_runs_and_their_batches(model: Model, monkeypatch, tmp_path: Path) -> None:
     save_dir = tmp_path / "planned"
     patching_input = PatchingInput(_every_layer_patch_config(), SOURCE_PROMPT, TARGET_PROMPT)
 
@@ -1780,9 +1778,7 @@ def test_a_plan_counts_the_patch_runs_and_their_batches(model: HookedTransformer
     assert f"{plan.steps} patch runs in {plan.batches} batches" in str(plan)
 
 
-def test_a_plan_counts_a_gradient_runs_passes_instead_of_its_batches(
-    model: HookedTransformer, monkeypatch, tmp_path: Path
-) -> None:
+def test_a_plan_counts_a_gradient_runs_passes_instead_of_its_batches(model: Model, monkeypatch, tmp_path: Path) -> None:
     config = replace(
         _every_layer_patch_config(),
         metric=dict.fromkeys((PatchingMetric.LOGIT_DIFF, PatchingMetric.PROBABILITY), [MetricComparison.ABSOLUTE]),
@@ -1802,9 +1798,7 @@ def test_a_plan_counts_a_gradient_runs_passes_instead_of_its_batches(
     assert "5 forward passes, 6 backward passes" in str(plan)
 
 
-def test_a_plan_for_a_run_without_a_source_prompt_names_one_prompt(
-    model: HookedTransformer, monkeypatch, tmp_path: Path
-) -> None:
+def test_a_plan_for_a_run_without_a_source_prompt_names_one_prompt(model: Model, monkeypatch, tmp_path: Path) -> None:
     config = _last_layer_resid_zero_ablation_config()
     config.metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]}
     patching_input = PatchingInput(config, None, TARGET_PROMPT, correct_token=" Madrid", distractor_token=" Barcelona")
@@ -1816,7 +1810,7 @@ def test_a_plan_for_a_run_without_a_source_prompt_names_one_prompt(
     assert plan.forward_passes == plan.batches + 1
 
 
-def test_a_plan_describes_the_run_that_follows_it(model: HookedTransformer, tmp_path: Path) -> None:
+def test_a_plan_describes_the_run_that_follows_it(model: Model, tmp_path: Path) -> None:
     save_dir = tmp_path / "patch_run"
     elements = _mlp_mhsa_pattern_elements(_MULTI_PATCH_LAYER, _MULTI_PATCH_HEAD)
     patching_input = PatchingInput(_patch_config(*elements), SOURCE_PROMPT, TARGET_PROMPT)
@@ -1863,7 +1857,7 @@ def _layer_position_config(
 
 
 def _draw(
-    model: HookedTransformer,
+    model: Model,
     config: PatchingConfig,
     save_dir: Path,
     source: str = SOURCE_PROMPT,
@@ -1874,7 +1868,7 @@ def _draw(
     return rendered_figure(save_dir)
 
 
-def test_a_patching_run_writes_an_interactive_result_page(model: HookedTransformer, tmp_path: Path) -> None:
+def test_a_patching_run_writes_an_interactive_result_page(model: Model, tmp_path: Path) -> None:
     save_dir = tmp_path / "patch_run"
     figure = _draw(model, _layer_position_config(), save_dir)
 
@@ -1882,7 +1876,7 @@ def test_a_patching_run_writes_an_interactive_result_page(model: HookedTransform
     assert figure.title.startswith("Patching - exact · logit_diff (config: sweep)")
 
 
-def test_a_gradient_run_names_its_method_on_the_page(model: HookedTransformer, tmp_path: Path) -> None:
+def test_a_gradient_run_names_its_method_on_the_page(model: Model, tmp_path: Path) -> None:
     config = replace(
         _layer_position_config(comparison=MetricComparison.INDIRECT_EFFECT),
         method=PatchingMethodConfig(type="attribution"),
@@ -1895,7 +1889,7 @@ def test_a_gradient_run_names_its_method_on_the_page(model: HookedTransformer, t
     assert not any("generation:" in hover for row in figure.trace["hovertext"] for hover in row)
 
 
-def test_every_column_the_config_names_is_drawn_as_its_own_plot(model: HookedTransformer, tmp_path: Path) -> None:
+def test_every_column_the_config_names_is_drawn_as_its_own_plot(model: Model, tmp_path: Path) -> None:
     save_dir = tmp_path / "three_columns"
     config = _layer_position_config()
     config.metric = {
@@ -1919,9 +1913,7 @@ def test_every_column_the_config_names_is_drawn_as_its_own_plot(model: HookedTra
         assert [value for row in figure.trace["z"] for value in row] == pytest.approx(result[column].tolist())
 
 
-def test_each_plot_is_centred_on_its_own_comparisons_ineffective_value(
-    model: HookedTransformer, tmp_path: Path
-) -> None:
+def test_each_plot_is_centred_on_its_own_comparisons_ineffective_value(model: Model, tmp_path: Path) -> None:
     save_dir = tmp_path / "two_comparisons"
     config = _layer_position_config()
     config.metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE, MetricComparison.INDIRECT_EFFECT]}
@@ -1937,7 +1929,7 @@ def test_each_plot_is_centred_on_its_own_comparisons_ineffective_value(
     assert effect["zmin"] == pytest.approx(-effect["zmax"])
 
 
-def test_a_sweep_is_drawn_with_positions_across_and_layers_down(model: HookedTransformer, tmp_path: Path) -> None:
+def test_a_sweep_is_drawn_with_positions_across_and_layers_down(model: Model, tmp_path: Path) -> None:
     figure = _draw(model, _layer_position_config(), tmp_path / "patch_run")
 
     assert figure.kind == "heatmap"
@@ -1948,7 +1940,7 @@ def test_a_sweep_is_drawn_with_positions_across_and_layers_down(model: HookedTra
     assert len(figure.trace["z"][0]) == model.to_tokens(TARGET_PROMPT).shape[1]
 
 
-def test_the_position_axis_is_labelled_with_the_target_prompts_tokens(model: HookedTransformer, tmp_path: Path) -> None:
+def test_the_position_axis_is_labelled_with_the_target_prompts_tokens(model: Model, tmp_path: Path) -> None:
     # The patched run is the target run, so it is the target's tokens that name the positions — the
     # two prompts differ at position 4, which is what makes the choice observable.
     ticks = _draw(model, _layer_position_config(), tmp_path / "patch_run").ticks("xaxis")
@@ -1957,7 +1949,7 @@ def test_the_position_axis_is_labelled_with_the_target_prompts_tokens(model: Hoo
     assert '4: " France"' not in ticks
 
 
-def test_the_subtitle_names_what_each_unpatched_prompt_generates(model: HookedTransformer, tmp_path: Path) -> None:
+def test_the_subtitle_names_what_each_unpatched_prompt_generates(model: Model, tmp_path: Path) -> None:
     source_generation, target_generation = (model.to_single_str_token(token) for token in _generations(model))
 
     figure = _draw(model, _layer_position_config(), tmp_path / "patch_run")
@@ -1968,7 +1960,7 @@ def test_the_subtitle_names_what_each_unpatched_prompt_generates(model: HookedTr
     ) in figure.title
 
 
-def test_each_cell_names_what_its_patched_run_generates_on_hover(model: HookedTransformer, tmp_path: Path) -> None:
+def test_each_cell_names_what_its_patched_run_generates_on_hover(model: Model, tmp_path: Path) -> None:
     # One layer over every position is drawn as a bar, whose cells are the result's rows in order.
     save_dir = tmp_path / "one_layer"
     config = _layer_position_config(index_filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0}]))
@@ -1982,9 +1974,7 @@ def test_each_cell_names_what_its_patched_run_generates_on_hover(model: HookedTr
         assert hover.split("<br>")[1] == f'generation: "{escape(generation)}"'
 
 
-def test_the_colour_is_centred_on_the_value_an_ineffective_patch_would_produce(
-    model: HookedTransformer, tmp_path: Path
-) -> None:
+def test_the_colour_is_centred_on_the_value_an_ineffective_patch_would_produce(model: Model, tmp_path: Path) -> None:
     save_dir = tmp_path / "patch_run"
     patching_input = PatchingInput(_layer_position_config(), SOURCE_PROMPT, TARGET_PROMPT)
     Patcher(model).apply(patching_input, save_dir=str(save_dir), verbose=False)
@@ -1999,7 +1989,7 @@ def test_the_colour_is_centred_on_the_value_an_ineffective_patch_would_produce(
     assert "text" not in trace
 
 
-def test_patching_a_prompt_with_itself_leaves_the_scale_intact(model: HookedTransformer, tmp_path: Path) -> None:
+def test_patching_a_prompt_with_itself_leaves_the_scale_intact(model: Model, tmp_path: Path) -> None:
     # Every patch writes back what was already there, so every cell scores the same and the colour
     # range has no spread of its own to take. Reported as an effect, that shared value is zero, which
     # is where the scale is centred.
@@ -2016,7 +2006,7 @@ def test_patching_a_prompt_with_itself_leaves_the_scale_intact(model: HookedTran
     assert (figure.trace["zmin"], figure.trace["zmax"]) == (-1.0, 1.0)
 
 
-def test_an_axis_the_run_does_not_vary_over_is_dropped(model: HookedTransformer, tmp_path: Path) -> None:
+def test_an_axis_the_run_does_not_vary_over_is_dropped(model: Model, tmp_path: Path) -> None:
     # One layer over every position: the layer offers no comparison, so it leaves the axes entirely.
     config = _layer_position_config(index_filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0}]))
 
@@ -2028,7 +2018,7 @@ def test_an_axis_the_run_does_not_vary_over_is_dropped(model: HookedTransformer,
     assert len(figure.trace["y"]) == model.to_tokens(TARGET_PROMPT).shape[1]
 
 
-def test_a_sparse_index_leaves_holes_in_the_grid(model: HookedTransformer, tmp_path: Path) -> None:
+def test_a_sparse_index_leaves_holes_in_the_grid(model: Model, tmp_path: Path) -> None:
     # Two correlated points rather than a full grid: the pairs the run never visited stay empty.
     config = _layer_position_config(
         index_filter=Filter(
@@ -2045,9 +2035,7 @@ def test_a_sparse_index_leaves_holes_in_the_grid(model: HookedTransformer, tmp_p
     assert [[cell is None for cell in row] for row in figure.trace["z"]] == [[False, True], [True, False]]
 
 
-def test_explicit_coordinates_are_drawn_as_a_bar_labelled_by_coordinate(
-    model: HookedTransformer, tmp_path: Path
-) -> None:
+def test_explicit_coordinates_are_drawn_as_a_bar_labelled_by_coordinate(model: Model, tmp_path: Path) -> None:
     # An explicit index is a list of points, not a grid, so there is no second axis to lay out.
     coordinates = [
         {ModelLocation.LAYER: -2, ModelLocation.POSITION: -1},
@@ -2061,9 +2049,7 @@ def test_explicit_coordinates_are_drawn_as_a_bar_labelled_by_coordinate(
     assert figure.ticks("xaxis")[0].startswith("resid.post · layer")
 
 
-def test_the_axis_falls_back_to_the_target_when_the_source_does_not_span_it(
-    model: HookedTransformer, tmp_path: Path
-) -> None:
+def test_the_axis_falls_back_to_the_target_when_the_source_does_not_span_it(model: Model, tmp_path: Path) -> None:
     # One source coordinate read into two target coordinates: the source is repeated, so its columns
     # are half empty in the result and cannot name the axis the target laid out.
     source = [{ModelLocation.LAYER: -1, ModelLocation.POSITION: -1}]
@@ -2080,7 +2066,7 @@ def test_the_axis_falls_back_to_the_target_when_the_source_does_not_span_it(
     assert figure.ticks("xaxis")[0].endswith(f"position {positions - 2}")
 
 
-def test_a_single_coordinate_run_still_writes_a_page(model: HookedTransformer, tmp_path: Path) -> None:
+def test_a_single_coordinate_run_still_writes_a_page(model: Model, tmp_path: Path) -> None:
     # One row has no axis to vary over at all, so the grid degenerates to a single bar.
     coordinates = [{ModelLocation.LAYER: -1, ModelLocation.POSITION: -1}]
 
@@ -2091,9 +2077,7 @@ def test_a_single_coordinate_run_still_writes_a_page(model: HookedTransformer, t
     assert figure.title.startswith("Patching - exact · normalized_logit_diff")
 
 
-def test_a_page_for_a_run_without_a_source_prompt_names_only_the_target(
-    model: HookedTransformer, tmp_path: Path
-) -> None:
+def test_a_page_for_a_run_without_a_source_prompt_names_only_the_target(model: Model, tmp_path: Path) -> None:
     save_dir = tmp_path / "ablated"
     config = _last_layer_resid_zero_ablation_config()
     config.metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]}
@@ -2110,7 +2094,7 @@ def test_a_page_for_a_run_without_a_source_prompt_names_only_the_target(
     assert "source:" not in figure.title
 
 
-def test_a_grouped_location_does_not_break_the_page(model: HookedTransformer, tmp_path: Path) -> None:
+def test_a_grouped_location_does_not_break_the_page(model: Model, tmp_path: Path) -> None:
     # Grouping puts a list of heads in one index cell; it has to survive being turned into a label.
     element = PatchingElementConfig(
         activation=ModelLayerLocation.ATTENTION_Z,
@@ -2131,7 +2115,7 @@ def test_a_grouped_location_does_not_break_the_page(model: HookedTransformer, tm
     assert any("[0, 1]" in tick for tick in figure.ticks("xaxis"))
 
 
-def test_the_other_patched_elements_are_named_on_the_page(model: HookedTransformer, tmp_path: Path) -> None:
+def test_the_other_patched_elements_are_named_on_the_page(model: Model, tmp_path: Path) -> None:
     # A companion element patched identically on every run is constant, so it belongs in the subtitle
     # rather than in every cell's hover.
     companion = PatchingElementConfig(
@@ -2148,7 +2132,7 @@ def test_the_other_patched_elements_are_named_on_the_page(model: HookedTransform
     assert "also patched: attn.pattern · layer 0 · head 0" in figure.title
 
 
-def test_the_base_collector_skips_the_html(model: HookedTransformer, tmp_path: Path) -> None:
+def test_the_base_collector_skips_the_html(model: Model, tmp_path: Path) -> None:
     # The base collector persists the CSVs only; visualization is opt-in via the subclass.
     save_dir = tmp_path / "no_viz"
     collector = Patcher(model, collector_class=PatchingCollector).apply(
@@ -2164,7 +2148,7 @@ def test_the_base_collector_skips_the_html(model: HookedTransformer, tmp_path: P
     assert not (save_dir / "result.html").exists()
 
 
-def test_a_plan_for_the_base_collector_promises_no_html(model: HookedTransformer, tmp_path: Path) -> None:
+def test_a_plan_for_the_base_collector_promises_no_html(model: Model, tmp_path: Path) -> None:
     save_dir = tmp_path / "no_viz_plan"
     patching_input = PatchingInput(_layer_position_config(), SOURCE_PROMPT, TARGET_PROMPT)
     patcher = Patcher(model, collector_class=PatchingCollector)

@@ -6,14 +6,14 @@ import networkx as nx
 import pytest
 import torch
 
-from intex.circuit.collector import CircuitCollector
-from intex.circuit.config import CircuitConfig
-from intex.circuit.discoverer import CircuitDiscoverer
-from intex.circuit.input import CircuitInput
-from intex.circuit.method.circuit import PromptCircuit
-from intex.circuit.method.factory import CircuitMethodFactory
-from intex.circuit.method.information_flow_routes import InformationFlowRoutesConfig, decomposed_attn
-from intex.model.cache import CachedModel
+from entoscope.circuit.collector import CircuitCollector
+from entoscope.circuit.config import CircuitConfig
+from entoscope.circuit.discoverer import CircuitDiscoverer
+from entoscope.circuit.input import CircuitInput
+from entoscope.circuit.method.circuit import PromptCircuit
+from entoscope.circuit.method.factory import CircuitMethodFactory
+from entoscope.circuit.method.information_flow_routes import InformationFlowRoutesConfig, decomposed_attn
+from entoscope.model.cache import CachedModel
 
 PROMPT = "The capital of France is"
 

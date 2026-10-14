@@ -16,10 +16,16 @@ writes.
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.lens.config import LensConfig, LensMethodConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope import (
+    Filter,
+    Lens,
+    LensConfig,
+    LensInput,
+    LensMethodConfig,
+    ModelLayerLocation,
+    ModelLocation,
+    ModelLocatorConfig,
+)
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
@@ -38,7 +44,7 @@ Lens(model).apply(LensInput(config, "The capital of France is"), save_dir="runs/
 ```
 
 The same config in a file is the `head_logit_lens` entry of
-[`examples/lens.yaml`](https://github.com/nikolaystanishev/intex/blob/main/examples/lens.yaml).
+[`examples/lens.yaml`](../examples.md#lens).
 
 ### Config and input
 
@@ -88,7 +94,7 @@ unset, the model's tokenizer name is used, or its model name when it has no toke
 that finds the pretrained translators:
 
 ```python
-from intex.lens.method.tuned_lens import TunedLensConfig
+from entoscope import TunedLensConfig
 
 tuned = LensConfig(
     method=TunedLensConfig(type="tuned_lens"),
@@ -120,7 +126,7 @@ weight vector projected onto the vocabulary directly, with no LayerNorm and no b
 depends on an input, so the run takes no prompt:
 
 ```python
-from intex.lens.method.parameter_lens import ParameterLensConfig
+from entoscope import ParameterLensConfig
 
 # The value vector neuron 373 writes into the residual stream, in every layer.
 values = LensConfig(

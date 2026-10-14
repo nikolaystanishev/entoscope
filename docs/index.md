@@ -1,6 +1,6 @@
-# intex
+# entoscope
 
-intex is a framework for mechanistic interpretability of transformer language models, built on
+entoscope is a framework for mechanistic interpretability of transformer language models, built on
 [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens). It reads a model through
 four operations, each with its own methods:
 
@@ -27,9 +27,10 @@ The operations share most of what you need to learn about them:
 
 ## Where to go
 
-- [Getting started](getting-started.md): install intex and make a first run.
+- [Getting started](getting-started.md): install entoscope and make a first run.
+- [Examples](examples.md): a script and a YAML file of configs for every operation.
 - Concepts:
-  - [How intex is put together](concepts/overview.md)
+  - [How entoscope is put together](concepts/overview.md)
   - [Locating activations](concepts/locating.md)
   - [Configuration files](concepts/configuration.md)
   - [Running and reading results](concepts/running.md)
@@ -39,17 +40,16 @@ The operations share most of what you need to learn about them:
 - Guides: [Experiment scripts](guides/experiment-scripts.md), [Custom methods](guides/custom-methods.md),
   [Datasets](guides/datasets.md).
 - [API reference](reference/operation.md), generated from the docstrings.
-- [Development](development.md): working on intex itself.
+- [Development](development.md): working on entoscope itself.
 
-The repository's
-[`examples/`](https://github.com/nikolaystanishev/intex/tree/main/examples) directory has a runnable
-script and a YAML file of configs for every operation.
+[Examples](examples.md) has a runnable script and a YAML file of configs for every operation.
 
 ```{toctree}
 :hidden:
 :caption: Start
 
 getting-started
+examples
 ```
 
 ```{toctree}

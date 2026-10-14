@@ -10,9 +10,9 @@ import pathlib
 import pytest
 import torch
 
-from intex.model.cache import CachedModel
+from entoscope.model.cache import CachedModel
 
-from ..conftest import build_tiny_model
+from ..conftest import build_small_model
 
 PROMPT = "Paris is located in"
 OTHER_PROMPT = "Rome is located in"
@@ -20,9 +20,9 @@ NAMES = ["blocks.0.hook_resid_post", "blocks.1.hook_resid_post"]
 
 
 @pytest.fixture
-def wrapped(tmp_path):
+def wrapped(backend, tmp_path):
     """A real tiny model behind the disk cache, plus the plain model to compare against."""
-    return CachedModel(build_tiny_model(), str(tmp_path))
+    return CachedModel(build_small_model(backend), str(tmp_path))
 
 
 def cache_files(cache_dir) -> list[pathlib.Path]:
@@ -56,7 +56,7 @@ def test_the_first_call_returns_what_the_unwrapped_model_returns(wrapped, tmp_pa
     direct_logits, direct_cache = wrapped._model.run_with_cache(tokens, names_filter=NAMES)
 
     assert torch.equal(logits, direct_logits)
-    assert set(cache.keys()) == set(NAMES)
+    assert set(NAMES) <= set(cache.keys())  # a bridge also returns each under its own name for the hook
     assert_same_cache(cache, direct_cache)
 
 
@@ -64,7 +64,7 @@ def test_the_first_call_writes_one_entry_under_the_models_own_directory(wrapped,
     wrapped.run_with_cache(tokens_of(wrapped), names_filter=NAMES)
 
     (entry,) = cache_files(tmp_path)
-    assert entry.parent.name == wrapped.cfg.model_name  # "custom" for a model built from a config
+    assert entry.parent.name == wrapped.cfg.model_name  # "custom" for a HookedTransformer built from a config
     assert list(tmp_path.rglob("*.tmp*")) == []  # the write is atomic, nothing half-written is left
 
 
@@ -102,9 +102,10 @@ def test_a_single_name_is_the_same_request_as_a_one_element_filter(wrapped, tmp_
 
     _, from_string = wrapped.run_with_cache(tokens, names_filter=NAMES[0])
     _, from_list = wrapped.run_with_cache(tokens, names_filter=[NAMES[0]])
+    _, direct = wrapped._model.run_with_cache(tokens, names_filter=[NAMES[0]])
 
     assert len(cache_files(tmp_path)) == 1
-    assert set(from_string.keys()) == set(from_list.keys()) == {NAMES[0]}
+    assert set(from_string.keys()) == set(from_list.keys()) == set(direct.keys())
 
 
 def test_a_subset_of_the_names_is_its_own_entry(wrapped, tmp_path):
@@ -150,15 +151,18 @@ def test_a_prompt_and_its_tokens_are_separate_entries(wrapped, tmp_path):
     assert len(cache_files(tmp_path)) == 2
 
 
-def test_an_input_numpy_cannot_hold_is_keyed_by_its_raw_bytes(tmp_path):
+def test_an_input_numpy_cannot_hold_is_keyed_by_its_raw_bytes(backend, tmp_path):
     # A bfloat16 tensor has no NumPy equivalent, so the key reads its bytes through an integer view of
     # the same width. (Only the two-byte side is reachable — no transformer_lens model runs in float8.)
-    model = build_tiny_model(dtype=torch.bfloat16)
+    model = build_small_model(backend, dtype=torch.bfloat16)
     wrapped = CachedModel(model, str(tmp_path))
     residual = model.embed(tokens_of(model))
     assert residual.dtype is torch.bfloat16
 
-    logits, cache = wrapped.run_with_cache(residual, start_at_layer=0, names_filter=NAMES)
+    try:
+        logits, cache = wrapped.run_with_cache(residual, start_at_layer=0, names_filter=NAMES)
+    except NotImplementedError:
+        pytest.skip("this transformer-lens's bridge cannot run from a residual")
 
     bump_weights(model)
     cached_logits, cached_cache = wrapped.run_with_cache(residual, start_at_layer=0, names_filter=NAMES)
@@ -182,22 +186,22 @@ def test_different_tokens_are_different_entries(wrapped, tmp_path):
     assert not torch.equal(first, second)
 
 
-def test_two_models_are_kept_apart_by_name(tmp_path):
+def test_two_models_are_kept_apart_by_name(backend, tmp_path):
     # Same shape, same prompt, same activations — only the model differs, and its name becomes the
     # directory (with anything a path cannot carry replaced).
     for name in ("org/tiny-a", "org/tiny-b"):
-        model = build_tiny_model(model_name=name)
+        model = build_small_model(backend, name=name)
         CachedModel(model, str(tmp_path)).run_with_cache(tokens_of(model), names_filter=NAMES)
 
     assert sorted(path.name for path in tmp_path.iterdir()) == ["org_tiny-a", "org_tiny-b"]
     assert len(cache_files(tmp_path)) == 2
 
 
-def test_two_models_are_kept_apart_by_their_weights(tmp_path):
+def test_two_models_are_kept_apart_by_their_weights(backend, tmp_path):
     # A fine-tune reads back the config it was derived from, so the name and every shape match and
     # only the weights tell the two apart. The wrapper takes their fingerprint as it is built, which
     # is why the change here is made before the wrapping and not, as above, after it.
-    original, finetuned = build_tiny_model(), build_tiny_model()
+    original, finetuned = build_small_model(backend), build_small_model(backend)
     bump_weights(finetuned)
 
     for model in (original, finetuned):
@@ -264,17 +268,20 @@ def test_a_backward_cache_is_never_cached(wrapped, tmp_path):
     tokens = tokens_of(wrapped)
 
     loss, cache = wrapped.run_with_cache(tokens, names_filter=NAMES, incl_bwd=True, return_type="loss")
+    _, direct = wrapped._model.run_with_cache(tokens, names_filter=NAMES, incl_bwd=True, return_type="loss")
 
     assert loss.ndim == 0
-    assert set(cache.keys()) == set(NAMES) | {f"{name}_grad" for name in NAMES}
+    # The model's own answer: which names a bridge files the gradients under, if it returns them at all,
+    # depends on the transformer-lens release.
+    assert set(cache.keys()) == set(direct.keys())
     assert cache_files(tmp_path) == []
 
 
 # --------------------------------------------------------------------------------------------------
 # The wrapper is otherwise the model
 # --------------------------------------------------------------------------------------------------
-def test_without_a_cache_dir_every_call_recomputes(tmp_path):
-    model = build_tiny_model()
+def test_without_a_cache_dir_every_call_recomputes(backend, tmp_path):
+    model = build_small_model(backend)
     wrapped = CachedModel(model, cache_dir=None)
     tokens = tokens_of(model)
 

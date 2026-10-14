@@ -8,9 +8,9 @@ Operations accept any of three model types:
 
 ## TransformerBridge
 
-`TransformerBridge` is how transformer-lens 3 loads a HuggingFace model. intex reads it as it is, so
-its activations and weights are HuggingFace's own, and a run means the same as the same computation
-done on the HuggingFace model directly:
+`TransformerBridge` is how transformer-lens 3 and later load a HuggingFace model. entoscope reads it as
+it is, so its activations and weights are HuggingFace's own, and a run means the same as the same
+computation done on the HuggingFace model directly:
 
 ```python
 from transformer_lens.model_bridge import TransformerBridge
@@ -37,8 +37,9 @@ and centering separate them.
 
 ## HookedTransformer
 
-`HookedTransformer` is accepted wherever a bridge is, and intex's test suite runs against both. It is
-the only option on Intel macOS, whose transformer-lens 2.15 has no bridge:
+`HookedTransformer` is accepted wherever a bridge is, with the transformer-lens releases that have it:
+2.x and 3.x, since transformer-lens 4 removed it in favour of the bridge. It is the only option on
+Intel macOS, whose transformer-lens 2.15 has no bridge:
 
 <!-- docs-test: skip -->
 ```python
@@ -58,7 +59,7 @@ has already made is read back instead of recomputed. Everything else is forwarde
 model, so an operation cannot tell the difference:
 
 ```python
-from intex.model import CachedModel
+from entoscope import CachedModel
 
 cached = CachedModel(TransformerBridge.boot_transformers("gpt2"), cache_dir=".activation_cache")
 cached.eval()

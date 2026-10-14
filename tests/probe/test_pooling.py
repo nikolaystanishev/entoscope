@@ -8,10 +8,10 @@ run's coefficients exactly when — and only when — the run pooled the same wa
 import pytest
 import torch
 
-from intex.model.config import Filter, Group, ModelLayerLocation, ModelLocation
-from intex.probe.config import PoolingType, ProbeConfig
-from intex.probe.input import ProbeInput
-from intex.probe.prober import Prober
+from entoscope.model.config import Filter, Group, ModelLayerLocation, ModelLocation
+from entoscope.probe.config import PoolingType, ProbeConfig
+from entoscope.probe.input import ProbeInput
+from entoscope.probe.prober import Prober
 
 from .conftest import (
     NEGATIVE,

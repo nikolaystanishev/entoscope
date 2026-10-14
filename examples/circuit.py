@@ -11,12 +11,7 @@ from pathlib import Path
 
 from transformer_lens.model_bridge import TransformerBridge
 
-from intex.circuit.config import CircuitConfig
-from intex.circuit.discoverer import CircuitDiscoverer
-from intex.circuit.input import CircuitInput
-from intex.model import CachedModel
-from intex.operation.config import ConfigFactory
-from intex.script import experiment
+from entoscope import CachedModel, CircuitConfig, CircuitDiscoverer, CircuitInput, ConfigFactory, experiment
 
 CONFIGS = Path(__file__).with_name("circuit.yaml")
 

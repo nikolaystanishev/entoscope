@@ -1,15 +1,17 @@
-# intex.script
+# entoscope.script
 
 Experiment scripts.
 
+`experiment` is importable from `entoscope.script` and from `entoscope`.
+
 ```{eval-rst}
-.. automodule:: intex.script.experiment
+.. automodule:: entoscope.script.experiment
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.script.argument
+.. automodule:: entoscope.script.argument
    :members:
    :show-inheritance:
 ```

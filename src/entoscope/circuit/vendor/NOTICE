@@ -1,0 +1,29 @@
+Vendored third-party code
+=========================
+
+contributions.py
+----------------
+Source:  LM Transparency Tool
+         https://github.com/facebookresearch/llm-transparency-tool
+         llm_transparency_tool/routes/contributions.py
+Commit:  f1340f0757b959c75c139f7aa91aef16eddced67
+Author:  Meta Platforms, Inc. and affiliates
+License: Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)
+         https://creativecommons.org/licenses/by-nc/4.0/
+
+Modifications: an attribution header was prepended to the file, and the typeguard import and
+the five @typechecked decorators were removed (typeguard 4.x parses the jaxtyping shape strings as
+Python and fails at import time; the header gives the details). No numerical behaviour changed.
+
+Reference paper:
+  Javier Ferrando and Elena Voita.
+  "Information Flow Routes: Automatically Interpreting Language Models at Scale." 2024.
+  https://arxiv.org/abs/2403.00824
+
+IMPORTANT: The CC BY-NC 4.0 license permits NON-COMMERCIAL use only. The graph-building
+math in this file, and any entoscope code that imports it (the Circuit Discovery
+"information_flow_routes" method), may therefore be used for non-commercial purposes only.
+
+The entoscope per-head graph assembly and route-pruning in ../method/information_flow_routes.py are
+original entoscope code, inspired by the structure of the same tool's
+llm_transparency_tool/routes/graph.py (node naming X0_/A/M/I and the layer/token contribution loop).

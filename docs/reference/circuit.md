@@ -1,51 +1,54 @@
-# intex.circuit
+# entoscope.circuit
 
 Circuit discovery.
 
+The operator, its input, configs, collectors and methods are importable from `entoscope.circuit`; the
+operator, its input and configs from `entoscope` too.
+
 ```{eval-rst}
-.. automodule:: intex.circuit.config
+.. automodule:: entoscope.circuit.config
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.circuit.input
+.. automodule:: entoscope.circuit.input
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.circuit.discoverer
+.. automodule:: entoscope.circuit.discoverer
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.circuit.collector
+.. automodule:: entoscope.circuit.collector
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.circuit.visualization
+.. automodule:: entoscope.circuit.visualization
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.circuit.method.circuit
+.. automodule:: entoscope.circuit.method.circuit
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.circuit.method.information_flow_routes
+.. automodule:: entoscope.circuit.method.information_flow_routes
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.circuit.method.factory
+.. automodule:: entoscope.circuit.method.factory
    :members:
    :show-inheritance:
 ```

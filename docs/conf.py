@@ -6,10 +6,10 @@ intersphinx: a build that fetches inventories over the network fails whenever on
 
 from importlib.metadata import version as package_version
 
-project = "intex"
+project = "entoscope"
 author = "Nikolay Stanishev"
 copyright = "2026, Nikolay Stanishev"
-release = package_version("intex")
+release = package_version("entoscope")
 
 extensions = [
     "myst_parser",
@@ -28,4 +28,4 @@ autodoc_typehints = "signature"
 autodoc_preserve_defaults = True
 
 html_theme = "furo"
-html_title = "intex"
+html_title = "entoscope"

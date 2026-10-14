@@ -6,10 +6,10 @@ from typing import Any
 
 import pytest
 
-from intex.dataset.config import DatasetConfig
-from intex.dataset.dataset import AbstractDataset, Row
-from intex.dataset.factory import DatasetFactory
-from intex.operation.config import ConfigFactory
+from entoscope.dataset.config import DatasetConfig
+from entoscope.dataset.dataset import AbstractDataset, Row
+from entoscope.dataset.factory import DatasetFactory
+from entoscope.operation.config import ConfigFactory
 
 from .conftest import ROWS, dataset_config
 
@@ -174,9 +174,9 @@ def test_a_config_file_may_name_environment_variables(monkeypatch, jsonl_dataset
     # read_yaml resolves ${VAR} while loading: on its own it becomes the value (as an int when the
     # value is a number), and inside a longer string it is substituted in place.
     path = prompts_file()
-    monkeypatch.setenv("INTEX_TEST_DIR", str(Path(path).parent))
-    monkeypatch.setenv("INTEX_TEST_LIMIT", "2")
-    raw = {"type": "jsonl", "path": "${INTEX_TEST_DIR}/prompts.jsonl", "limit": "${INTEX_TEST_LIMIT}"}
+    monkeypatch.setenv("ENTOSCOPE_TEST_DIR", str(Path(path).parent))
+    monkeypatch.setenv("ENTOSCOPE_TEST_LIMIT", "2")
+    raw = {"type": "jsonl", "path": "${ENTOSCOPE_TEST_DIR}/prompts.jsonl", "limit": "${ENTOSCOPE_TEST_LIMIT}"}
 
     config = config_from_yaml(DatasetConfig, "my_data", raw, file_name="env.yaml")
 
@@ -200,6 +200,6 @@ def test_a_value_tagged_for_the_environment_without_naming_one_is_left_alone(
 
 
 def test_an_environment_variable_that_is_not_set_stays_as_its_name(config_from_yaml):
-    config = config_from_yaml(DatasetConfig, "my_data", {"type": "jsonl", "path": "${INTEX_UNSET}"}, "unset.yaml")
+    config = config_from_yaml(DatasetConfig, "my_data", {"type": "jsonl", "path": "${ENTOSCOPE_UNSET}"}, "unset.yaml")
 
-    assert config.path == "INTEX_UNSET"
+    assert config.path == "ENTOSCOPE_UNSET"

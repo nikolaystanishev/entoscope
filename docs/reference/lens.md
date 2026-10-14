@@ -1,63 +1,66 @@
-# intex.lens
+# entoscope.lens
 
 Logit, tuned and parameter lens.
 
+The operator, its input, configs, enums, collectors and methods are importable from `entoscope.lens`;
+the operator, its input, configs and enums from `entoscope` too.
+
 ```{eval-rst}
-.. automodule:: intex.lens.config
+.. automodule:: entoscope.lens.config
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.lens.input
+.. automodule:: entoscope.lens.input
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.lens.lens
+.. automodule:: entoscope.lens.lens
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.lens.collector
+.. automodule:: entoscope.lens.collector
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.lens.visualization
+.. automodule:: entoscope.lens.visualization
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.lens.method.lens
+.. automodule:: entoscope.lens.method.lens
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.lens.method.logit_lens
+.. automodule:: entoscope.lens.method.logit_lens
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.lens.method.tuned_lens
+.. automodule:: entoscope.lens.method.tuned_lens
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.lens.method.parameter_lens
+.. automodule:: entoscope.lens.method.parameter_lens
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.lens.method.factory
+.. automodule:: entoscope.lens.method.factory
    :members:
    :show-inheritance:
 ```

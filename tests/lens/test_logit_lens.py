@@ -10,17 +10,17 @@ import pytest
 import torch
 import yaml
 
-from intex.lens.collector import LensCollector
-from intex.lens.config import LensConfig, LensMethodConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.lens.method.logit_lens import _attention_scale
-from intex.model.cache import CachedModel
-from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from intex.operation.config import ConfigFactory
-from intex.operation.visualization import format_value
+from entoscope.lens.collector import LensCollector
+from entoscope.lens.config import LensConfig, LensMethodConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.lens.method.logit_lens import _attention_scale
+from entoscope.model.cache import CachedModel
+from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.operation.config import ConfigFactory
+from entoscope.operation.visualization import format_value
 
-from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
+from ..conftest import RenderedFigure, TransformerBridge, forbid_model_runs, rendered_figure, rendered_figures
 from .conftest import (
     HEAD,
     NEURON,
@@ -39,8 +39,8 @@ LAYER_POSITION_GRID = dict(
     activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelLocation.LAYER, ModelLocation.POSITION]
 )
 
-# What intex's own handler puts before every message it writes to stderr.
-LOG_PREFIX = r"\[intex\] INFO \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} "
+# What entoscope's own handler puts before every message it writes to stderr.
+LOG_PREFIX = r"\[entoscope\] INFO \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} "
 
 LENS_YAML = {
     "my_lens": {
@@ -402,13 +402,15 @@ def test_a_config_id_the_file_does_not_have_raises(tmp_path):
 LENS_SCRIPT = """\
 from dataclasses import dataclass
 
-from transformer_lens import HookedTransformer, HookedTransformerConfig
+import torch
+from transformer_lens.model_bridge import TransformerBridge
+from transformers import AutoTokenizer, GPT2Config, GPT2LMHeadModel
 
-from intex.lens.config import LensConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.operation.config import ConfigFactory
-from intex.script import experiment
+from entoscope.lens.config import LensConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.operation.config import ConfigFactory
+from entoscope.script import experiment
 
 DESCRIPTION = "Run a lens from a YAML config"
 
@@ -422,11 +424,10 @@ class Config:
 
 @experiment
 def main(config: Config):
-    model = HookedTransformer(
-        HookedTransformerConfig(
-            n_layers=2, d_model=8, n_ctx=16, d_head=4, n_heads=4, d_mlp=6, d_vocab=50257,
-            act_fn="gelu", tokenizer_name="gpt2", seed=0,
-        )
+    torch.manual_seed(0)
+    hf_model = GPT2LMHeadModel(GPT2Config(n_layer=2, n_embd=8, n_head=4, n_inner=6, n_positions=16)).eval()
+    model = TransformerBridge.boot_transformers(
+        "tiny", hf_model=hf_model, tokenizer=AutoTokenizer.from_pretrained("gpt2"), device="cpu"
     )
     lens_config = ConfigFactory[LensConfig](config.config_path).create(config.config_id)
     collector = Lens(model).apply(
@@ -436,6 +437,7 @@ def main(config: Config):
 """
 
 
+@pytest.mark.skipif(TransformerBridge is None, reason="the script loads its model as a TransformerBridge")
 def test_the_lens_runs_from_an_experiment_script(tmp_path):
     # A fresh process, the config read off a file by its id, and the artifacts left behind.
     script = tmp_path / "lens_script.py"
@@ -452,7 +454,7 @@ def test_the_lens_runs_from_an_experiment_script(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    # The script's own output alone on stdout; intex reports on stderr without any logging set up.
+    # The script's own output alone on stdout; entoscope reports on stderr without any logging set up.
     assert result.stdout.strip() == str(len(pd.read_csv(save_dir / "result.csv")))
     saved = re.compile(LOG_PREFIX + re.escape(f"Results saved to {save_dir}"))
     assert any(saved.fullmatch(line) for line in result.stderr.splitlines()), result.stderr

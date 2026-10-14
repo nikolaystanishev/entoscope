@@ -6,11 +6,11 @@ import pandas as pd
 import pytest
 import torch
 
-from intex.lens.config import LensConfig
-from intex.lens.input import LensInput
-from intex.lens.lens import Lens
-from intex.lens.method.parameter_lens import ParameterLensConfig, ProjectionSpace
-from intex.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.lens.config import LensConfig
+from entoscope.lens.input import LensInput
+from entoscope.lens.lens import Lens
+from entoscope.lens.method.parameter_lens import ParameterLensConfig, ProjectionSpace
+from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
 
 from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
 from .conftest import (

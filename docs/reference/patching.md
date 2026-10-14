@@ -1,69 +1,72 @@
-# intex.patching
+# entoscope.patching
 
 Activation patching.
 
+The operator, its input, configs, enums, collectors and methods are importable from
+`entoscope.patching`; the operator, its input, configs and enums from `entoscope` too.
+
 ```{eval-rst}
-.. automodule:: intex.patching.config
+.. automodule:: entoscope.patching.config
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.patching.input
+.. automodule:: entoscope.patching.input
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.patching.patcher
+.. automodule:: entoscope.patching.patcher
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.patching.collector
+.. automodule:: entoscope.patching.collector
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.patching.metric
+.. automodule:: entoscope.patching.metric
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.patching.processor
+.. automodule:: entoscope.patching.processor
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.patching.visualization
+.. automodule:: entoscope.patching.visualization
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.patching.method.patching
+.. automodule:: entoscope.patching.method.patching
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.patching.method.exact
+.. automodule:: entoscope.patching.method.exact
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.patching.method.attribution
+.. automodule:: entoscope.patching.method.attribution
    :members:
    :show-inheritance:
 ```
 
 ```{eval-rst}
-.. automodule:: intex.patching.method.factory
+.. automodule:: entoscope.patching.method.factory
    :members:
    :show-inheritance:
 ```

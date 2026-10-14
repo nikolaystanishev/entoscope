@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from intex.dataset.config import DatasetConfig
-from intex.dataset.dataset import AbstractDataset, Row
-from intex.dataset.factory import DatasetFactory
+from entoscope.dataset.config import DatasetConfig
+from entoscope.dataset.dataset import AbstractDataset, Row
+from entoscope.dataset.factory import DatasetFactory
 
 ROWS = [
     {"prompt": "The movie was absolutely wonderful", "label": 1},
