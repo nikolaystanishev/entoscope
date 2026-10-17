@@ -22,7 +22,6 @@ class ModelWeight(StrEnum):
     MLP_OUT = "W_out"
 
 
-# The bridge submodule holding each MLP weight.
 _MLP_SUBMODULE = {ModelWeight.MLP_IN: "in", ModelWeight.MLP_GATE: "gate", ModelWeight.MLP_OUT: "out"}
 
 ACTIVATION_WEIGHT: dict[ModelLayerLocation, ModelWeight] = {

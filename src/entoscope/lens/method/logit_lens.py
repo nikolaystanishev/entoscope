@@ -21,9 +21,6 @@ _RESIDUAL_STREAM = (
     ModelLayerLocation.ATTENTION_OUT,
     ModelLayerLocation.MLP_OUT,
 )
-# The activation each one is written into the residual stream as, whose weight writes it there: a value
-# is read as if its head attended to its own position alone, and an MLP's pre-activation as if the
-# nonlinearity passed it through.
 _WRITTEN_AS = {
     ModelLayerLocation.ATTENTION_V: ModelLayerLocation.ATTENTION_Z,
     ModelLayerLocation.ATTENTION_Z: ModelLayerLocation.ATTENTION_Z,
