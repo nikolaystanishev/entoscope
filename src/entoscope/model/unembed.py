@@ -4,6 +4,7 @@ import torch
 from tuned_lens.nn.unembed import Unembed
 
 from entoscope.model.base import Model, is_bridge, unwrap
+from entoscope.model.weight import ModelWeight, model_weight
 
 
 class _BridgeUnembed(Unembed):
@@ -17,7 +18,7 @@ class _BridgeUnembed(Unembed):
     def __init__(self, model: Model):
         torch.nn.Module.__init__(self)
         unembedding = torch.nn.Linear(model.cfg.d_model, model.cfg.d_vocab_out)
-        unembedding.weight.data = model.W_U.T
+        unembedding.weight.data = model_weight(model, ModelWeight.UNEMBED)
         unembedding.bias.data = model.b_U
 
         self.final_norm = copy.deepcopy(model.ln_final.original_component)

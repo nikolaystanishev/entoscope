@@ -61,7 +61,7 @@ def single_row(model, config: LensConfig, prompt: str | None = PROMPT) -> pd.Ser
 def mlp_matrix(model, layer: int, attribute: str) -> torch.Tensor:
     """A block's MLP weight in HookedTransformer's orientation, read without the reader under test.
 
-    ``entoscope.model.weight.mlp_weight`` is what a lens reads, so an expectation taken from it would
+    ``entoscope.model.weight.model_weight`` is what a lens reads, so an expectation taken from it would
     only restate the run. This reads the parameter the backend stores and settles the orientation by
     its shape - ``W_in``/``W_gate`` [d_model, d_mlp], ``W_out`` [d_mlp, d_model] - which no fixture
     here leaves ambiguous, none of them having ``d_model == d_mlp``.

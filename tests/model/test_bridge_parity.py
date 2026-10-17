@@ -14,7 +14,7 @@ from entoscope.lens.input import LensInput
 from entoscope.lens.lens import Lens
 from entoscope.lens.method.logit_lens import _attention_scale
 from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from entoscope.model.weight import attention_out_weight, mlp_weight
+from entoscope.model.weight import ModelWeight, model_weight
 
 from ..conftest import HookedTransformer, TransformerBridge, _gpt2_hooked
 
@@ -46,17 +46,17 @@ def hooked():
 
 
 def test_the_weights_a_lens_reads_are_the_same(compatible_bridge, hooked):
-    assert torch.equal(compatible_bridge.W_U, hooked.W_U)
     assert torch.equal(compatible_bridge.b_U, hooked.b_U)
-    assert torch.equal(compatible_bridge.W_E, hooked.W_E)
+    for name in (ModelWeight.EMBED, ModelWeight.UNEMBED):
+        assert torch.equal(model_weight(compatible_bridge, name), model_weight(hooked, name))
 
+    # GPT-2's MLP has no gate.
+    block_weights = [
+        name for name in ModelWeight if name not in (ModelWeight.EMBED, ModelWeight.UNEMBED, ModelWeight.MLP_GATE)
+    ]
     for layer in range(hooked.cfg.n_layers):
-        assert torch.equal(mlp_weight(compatible_bridge, layer, "W_in"), mlp_weight(hooked, layer, "W_in"))
-        assert torch.equal(mlp_weight(compatible_bridge, layer, "W_out"), mlp_weight(hooked, layer, "W_out"))
-        assert torch.equal(attention_out_weight(compatible_bridge, layer), attention_out_weight(hooked, layer))
-        for name in ("W_Q", "W_K", "W_V"):
-            bridge_attention = getattr(compatible_bridge.blocks[layer].attn, name)
-            assert torch.equal(bridge_attention, getattr(hooked.blocks[layer].attn, name))
+        for name in block_weights:
+            assert torch.equal(model_weight(compatible_bridge, name, layer), model_weight(hooked, name, layer)), name
 
 
 def test_the_attention_scale_resolves_the_same(compatible_bridge, hooked):

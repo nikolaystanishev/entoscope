@@ -12,6 +12,7 @@ from entoscope.model import Model
 from entoscope.model.config import ModelLayerLocation, ModelLocatorConfig
 from entoscope.model.index import IndexElement
 from entoscope.model.unembed import build_unembed
+from entoscope.model.weight import ModelWeight, model_weight
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,8 @@ def load_translators(model: Model, resource: str) -> torch.nn.ModuleList:
             f"The tuned lens '{resource}' was trained for a model with {lens.config.num_hidden_layers} layers of "
             f"width {lens.config.d_model}, but this model has {model.cfg.n_layers} of width {model.cfg.d_model}"
         )
-    return lens.layer_translators.to(device=model.W_U.device, dtype=model.W_U.dtype).requires_grad_(False)
+    unembedding = model_weight(model, ModelWeight.UNEMBED)
+    return lens.layer_translators.to(device=unembedding.device, dtype=unembedding.dtype).requires_grad_(False)
 
 
 @dataclass(kw_only=True)
@@ -61,7 +63,6 @@ class TunedLens(LogitLens[TunedLensConfig]):
     def __init__(self, model: Model, config: LensConfig):
         super().__init__(model, config)
         self.resource = self.method_config.translators or resource_id(model)
-        self._untranslated: set[tuple[ModelLayerLocation, int | None]] = set()
 
     @cached_property
     def translators(self) -> torch.nn.ModuleList:
@@ -85,7 +86,12 @@ class TunedLens(LogitLens[TunedLensConfig]):
     ) -> Float[torch.Tensor, "... d_model"]:
         translator_index = self._translator_index(index)
         if translator_index is None:
-            self._warn_untranslated(index)
+            logger.warning(
+                "'%s' of layer %s writes into the final residual state, which the model unembeds as it is: no "
+                "translator maps it, so the tuned lens reads it as the logit lens does",
+                index.activation().value,
+                index.layer(),
+            )
             return residual
 
         translator = self.translators[translator_index]
@@ -107,15 +113,3 @@ class TunedLens(LogitLens[TunedLensConfig]):
         layer = projection_layer(self.model, index)
         translator_index = layer if index.activation() is ModelLayerLocation.RESIDUAL_PRE else layer + 1
         return translator_index if translator_index < self.model.cfg.n_layers else None
-
-    def _warn_untranslated(self, index: IndexElement[ModelLocatorConfig]) -> None:
-        key = (index.activation(), index.layer())
-        if key in self._untranslated:
-            return
-        self._untranslated.add(key)
-        logger.warning(
-            "'%s' of layer %s writes into the final residual state, which the model unembeds as it is: no "
-            "translator maps it, so the tuned lens reads it as the logit lens does",
-            index.activation().value,
-            index.layer(),
-        )

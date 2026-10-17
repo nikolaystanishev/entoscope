@@ -109,8 +109,9 @@ missing. **Any new `transformer_lens` import that moved or went away between 2.x
 the same `try/except ImportError` fallback** used in `model/index.py`,
 `model/base.py` and `tests/conftest.py`. Backend-dependent weight access is centralized in
 `model/weight.py` and `model/unembed.py` - go through those rather than reading `model.W_*`
-directly. `READ_WEIGHT` and `WRITE_WEIGHT` there map an activation to the weight that computes it off
-the residual stream and the one that writes it back, and the lenses read every weight through them.
+directly. `model_weight` returns any `ModelWeight` with `d_model` last, whichever side of the residual
+stream it sits on, and `ACTIVATION_WEIGHT` maps an activation to its own weight; the lenses read every
+weight through them.
 
 `CachedModel` (`model/cache.py`) is a transparent read-through disk cache that overrides only
 `run_with_cache` and forwards everything else via `__getattr__`; `cache_dir=None` makes it a

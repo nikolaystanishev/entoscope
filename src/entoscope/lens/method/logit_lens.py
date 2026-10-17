@@ -8,7 +8,7 @@ from entoscope.lens.method.lens import AbstractLensMethod, LensMethodConfigT
 from entoscope.model import Model
 from entoscope.model.config import ModelLayerLocation, ModelLocatorConfig
 from entoscope.model.index import IndexElement
-from entoscope.model.weight import WRITE_WEIGHT, read_weight, write_weight
+from entoscope.model.weight import ModelWeight, activation_weight, model_weight
 
 if TYPE_CHECKING:
     from entoscope.lens.input import LensInput
@@ -21,6 +21,16 @@ _RESIDUAL_STREAM = (
     ModelLayerLocation.ATTENTION_OUT,
     ModelLayerLocation.MLP_OUT,
 )
+# The activation each one is written into the residual stream as, whose weight writes it there: a value
+# is read as if its head attended to its own position alone, and an MLP's pre-activation as if the
+# nonlinearity passed it through.
+_WRITTEN_AS = {
+    ModelLayerLocation.ATTENTION_V: ModelLayerLocation.ATTENTION_Z,
+    ModelLayerLocation.ATTENTION_Z: ModelLayerLocation.ATTENTION_Z,
+    ModelLayerLocation.MLP_PRE: ModelLayerLocation.MLP_POST,
+    ModelLayerLocation.MLP_PRE_LINEAR: ModelLayerLocation.MLP_POST,
+    ModelLayerLocation.MLP_POST: ModelLayerLocation.MLP_POST,
+}
 _QUERY_KEY_PARTNER = {
     ModelLayerLocation.ATTENTION_Q: ModelLayerLocation.ATTENTION_K,
     ModelLayerLocation.ATTENTION_K: ModelLayerLocation.ATTENTION_Q,
@@ -94,7 +104,7 @@ class LogitLens(AbstractLensMethod[LensMethodConfigT]):
         if index.activation() in _QUERY_KEY_PARTNER:
             return self._query_key_logits(activation, index)
         residual = self._to_final_residual(self._to_residual(activation, index), index)
-        return self.model.ln_final(residual) @ self.model.W_U + self.model.b_U
+        return self.model.ln_final(residual) @ model_weight(self.model, ModelWeight.UNEMBED).T + self.model.b_U
 
     def _to_residual(
         self,
@@ -103,8 +113,8 @@ class LogitLens(AbstractLensMethod[LensMethodConfigT]):
     ) -> Float[torch.Tensor, "... d_model"]:
         if index.activation() in _RESIDUAL_STREAM:
             return activation
-        if index.activation() in WRITE_WEIGHT:
-            weight = write_weight(self.model, projection_layer(self.model, index), index.activation())
+        if index.activation() in _WRITTEN_AS:
+            weight = activation_weight(self.model, _WRITTEN_AS[index.activation()], projection_layer(self.model, index))
             return _through(activation, weight, index)
         raise ValueError(
             f"{type(self).__name__} cannot project {index.activation().value}: only residual-stream, MLP-hidden "
@@ -124,5 +134,8 @@ class LogitLens(AbstractLensMethod[LensMethodConfigT]):
         activation: Float[torch.Tensor, "..."],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_vocab"]:
-        partner = read_weight(self.model, projection_layer(self.model, index), _QUERY_KEY_PARTNER[index.activation()])
-        return _through(activation, partner, index) @ self.model.W_E.T / _attention_scale(self.model)
+        partner = activation_weight(
+            self.model, _QUERY_KEY_PARTNER[index.activation()], projection_layer(self.model, index)
+        )
+        embedding = model_weight(self.model, ModelWeight.EMBED)
+        return _through(activation, partner, index) @ embedding.T / _attention_scale(self.model)

@@ -36,7 +36,7 @@ from entoscope.model import Model
 from entoscope.model.config import ModelLayerLocation
 from entoscope.model.index import TRANSFORMER_ACT_NAME, get_act_name
 from entoscope.model.token import str_token_labels
-from entoscope.model.weight import attention_out_weight
+from entoscope.model.weight import ModelWeight, model_weight
 
 # Sentinel head id for edges that are not attention (residual skips and the MLP block).
 NON_ATTENTION_HEAD = -1
@@ -171,7 +171,7 @@ def decomposed_attn(
     )
     return einops.einsum(
         z,
-        attention_out_weight(model, layer),  # [head, d_head, d_model]
+        model_weight(model, ModelWeight.ATTENTION_OUT, layer),  # [head, d_head, d_model]
         "query_pos key_pos head d_head, head d_head d_model -> query_pos key_pos head d_model",
     )
 

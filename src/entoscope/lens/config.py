@@ -36,27 +36,30 @@ class LensConfig(AbstractConfig):
     def __post_init__(self):
         if not isinstance(self.top_k, int) or self.top_k < 1:
             raise ValueError(f"top_k must be at least 1, got {self.top_k}")
-        reads_activations = LensMethodConfig.factory().get(self.method.type).reads_activations
-        if not reads_activations and (
-            ModelLocation.POSITION in self.source.location
-            or any(ModelLocation.POSITION in coordinate for coordinate in self.source.coordinates or [])
-        ):
-            raise ValueError(
-                f"'position' is not a location of '{self.method.type}': it reads the model's weights, "
-                "which have no position axis"
+
+        source = self.source
+        if not LensMethodConfig.factory().get(self.method.type).reads_activations:
+            if ModelLocation.POSITION in source.location or any(
+                ModelLocation.POSITION in coordinate for coordinate in source.coordinates or []
+            ):
+                raise ValueError(
+                    f"'position' is not a location of '{self.method.type}': it reads the model's weights, "
+                    "which have no position axis"
+                )
+            return
+
+        if source.coordinates is not None:
+            one_position_per_row = all(
+                isinstance(coordinate.get(ModelLocation.POSITION), int) for coordinate in source.coordinates
             )
-        if reads_activations and not self._reads_one_position_per_row():
+        else:
+            one_position_per_row = ModelLocation.POSITION in source.location and ModelLocation.POSITION not in (
+                *source.group,
+                *source.incremental,
+                *source.combination.location,
+            )
+        if not one_position_per_row:
             raise ValueError(
                 f"'{self.method.type}' ranks the tokens of one position per row, so its locator names a single "
                 "'position' in every coordinate, or has 'position' in 'location' without grouping it"
             )
-
-    def _reads_one_position_per_row(self) -> bool:
-        source = self.source
-        if source.coordinates is not None:
-            return all(isinstance(coordinate.get(ModelLocation.POSITION), int) for coordinate in source.coordinates)
-        return ModelLocation.POSITION in source.location and ModelLocation.POSITION not in (
-            *source.group,
-            *source.incremental,
-            *source.combination.location,
-        )

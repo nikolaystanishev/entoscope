@@ -12,7 +12,7 @@ from entoscope.lens.method.logit_lens import projection_layer
 from entoscope.model.config import ModelLocation, ModelLocatorConfig
 from entoscope.model.index import IndexElement
 from entoscope.model.slicer import ActivationSlicer
-from entoscope.model.weight import READ_WEIGHT, WRITE_WEIGHT, read_weight, write_weight
+from entoscope.model.weight import ACTIVATION_WEIGHT, ModelWeight, activation_weight, model_weight
 
 if TYPE_CHECKING:
     from entoscope.lens.input import LensInput
@@ -38,6 +38,9 @@ class ProjectionSpace(StrEnum):
     UNEMBEDDING = "unembedding"
 
 
+_PROJECTION_WEIGHT = {ProjectionSpace.EMBEDDING: ModelWeight.EMBED, ProjectionSpace.UNEMBEDDING: ModelWeight.UNEMBED}
+
+
 @dataclass(kw_only=True)
 class ParameterLensConfig(LensMethodConfig):
     """``projection`` picks the vocabulary space a weight is read in, and ``scale`` multiplies the weight
@@ -50,9 +53,9 @@ class ParameterLensConfig(LensMethodConfig):
 class ParameterLens(AbstractLensMethod[ParameterLensConfig]):
     """Reads a weight vector onto the vocabulary: what a neuron or a head dimension reads or writes.
 
-    A unit is read through the weight that computes it off the residual stream, or, for one no weight
-    computes (``mlp.post``, ``attn.z``), through the weight that writes it back. It reads the model's
-    weights rather than a prompt's activations, so a run takes no prompt.
+    A unit is read through the weight ``ACTIVATION_WEIGHT`` names for its activation: the one computing it off
+    the residual stream, or, for one no weight computes (``mlp.post``, ``attn.z``), the one writing it back. It
+    reads the model's weights rather than a prompt's activations, so a run takes no prompt.
     """
 
     reads_activations = False
@@ -63,17 +66,14 @@ class ParameterLens(AbstractLensMethod[ParameterLensConfig]):
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, " d_model"]:
         activation = index.activation()
-        if activation in READ_WEIGHT:
-            weight = read_weight(self.model, projection_layer(self.model, index), activation)
-        elif activation in WRITE_WEIGHT:
-            weight = write_weight(self.model, projection_layer(self.model, index), activation)
-        else:
+        if activation not in ACTIVATION_WEIGHT:
             raise ValueError(
                 f"{type(self).__name__} cannot project {activation.value}: only MLP-hidden and attention head "
                 "locations name a weight vector, one per neuron or head dimension. Residual-stream locations "
                 "('embed', 'resid.*', 'attn.out', 'mlp.out') index the residual basis instead of a weight"
             )
 
+        weight = activation_weight(self.model, activation, projection_layer(self.model, index))
         for dim, location in enumerate(ActivationSlicer.get(activation).AXES[2:]):
             weight = weight[(slice(None),) * dim + (_selection(index, location),)]
         return weight.flatten(end_dim=-2).sum(0)
@@ -84,9 +84,5 @@ class ParameterLens(AbstractLensMethod[ParameterLensConfig]):
         weight: Float[torch.Tensor, " d_model"],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, " d_vocab"]:
-        return (self.method_config.scale * weight) @ self._projection()
-
-    def _projection(self) -> Float[torch.Tensor, "d_model d_vocab"]:
-        if self.method_config.projection is ProjectionSpace.EMBEDDING:
-            return self.model.W_E.T
-        return self.model.W_U
+        vocabulary = model_weight(self.model, _PROJECTION_WEIGHT[self.method_config.projection])
+        return (self.method_config.scale * weight) @ vocabulary.T
