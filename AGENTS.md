@@ -29,7 +29,7 @@ uv run --group docs sphinx-build -W --keep-going docs docs/_build/html
 ```
 
 CI (`.github/workflows/ci.yml`) runs exactly the lint, format-check and `pytest` above, the tests with `--cov` on
-Python 3.10–3.14; a `coverage` job combines the versions into the job summary and a `coverage-html` artifact
+Python 3.11 to 3.14 (and on 3.15, allowed to fail until torch publishes wheels for it); a `coverage` job combines the versions into the job summary and a `coverage-html` artifact
 (report-only, no threshold), and a `docs` job builds the site above into a `docs-html` artifact. A `lowest`
 job runs the tests on the lowest dependency versions `pyproject.toml` allows, and a `package` job builds the
 sdist and wheel and runs the tests against the installed wheel. A `v*` tag runs `release.yml`: the whole of
@@ -55,14 +55,15 @@ follows the same four-part shape, and adding one means writing the same four pie
   which `from_dict` reads back - so a config holds only data, and `to_dict` rejects what has no JSON form.
 - **Input** (`<op>/input.py`) - a dataclass extending `OperationInput` that holds prompts and the
   lazily-filled tensors. `prepare_index(model)` resolves everything that needs no forward pass;
-  `prepare(model)` calls it and then gathers activations. Both are idempotent, guarded on the
-  *cache* rather than the index, so `plan()` followed by `apply()` on the same object costs one
-  index resolution.
+  `prepare(model)` calls it and then gathers activations (by default nothing more, for an input whose
+  method runs the model itself). Both are idempotent, guarded on the *cache* rather than the index, so
+  `plan()` followed by `apply()` on the same object costs one index resolution. What needs no model is
+  checked in `__post_init__`, so a bad config fails as the input is built.
 - **Operator** (`<op>/<name>.py`) - `apply(input, save_dir, return_collector, verbose)` iterates
   `input.index`, and `plan(input, save_dir, verbose)` builds an `OperationPlan` describing the same
   run without touching the model or `save_dir`. Constructor takes `(model, collector_class=...)`.
-- **Collector** (`<op>/collector.py`) - accumulates one cell per index row and writes the run's
-  files. `FrameCollector` glues cells onto the index's own columns to produce `result.csv`;
+- **Collector** (`<op>/collector.py`) - allocates its result as it is built, accumulates one cell per
+  index row and writes the run's files. `FrameCollector` glues cells onto the index's own columns to produce `result.csv`;
   `VisualizationCollector` additionally renders `result.html`.
 
 An operation (or a method) also gets its exports in its package's `__init__.py` (see
@@ -83,13 +84,16 @@ the model to look, in one of two mutually exclusive modes:
 varies (probing over unequal-length prompts): positions stay symbolic so torch resolves a negative
 against each prompt's own cache at slice time, and an unfiltered `position` axis is rejected.
 
-`Index` (`model/index.py`) wraps the DataFrame(s) and is what operators iterate. Each `SingleIndex`
+`Index` (`model/index.py`) wraps the DataFrame(s) and is what operators iterate. A source and a target
+pair row by row by position: as many rows, or one side of a single row repeated along the other; any
+other pairing raises as the index is built. Each `SingleIndex`
 carries an `output` position - the row a collector files its cell under - plus a source
 `IndexElement` and, for patching, a target one. `IndexElement.slices()` turns a row into the tuple
 of tensor slices for that activation, via `ActivationSlicer` (`model/slicer.py`), which owns the
 axis order per activation kind (`[batch, pos, neuron]`, `[batch, pos, head, neuron]`,
 `[batch, head, dest_pos, src_pos]`). `transformer_activation()` maps entoscope's dotted
-`ModelLayerLocation` values onto `transformer_lens` hook names.
+`ModelLayerLocation` values onto `transformer_lens` hook names. pandas 3 stores a frame's enum cells as
+plain `str`, so a row's activation is read through `IndexElement.activation()`, which returns the member.
 
 Adding a location or activation therefore means touching `ModelLayerLocation`,
 `MODEL_LOCATION_MAPPER`, `TRANSFORMER_ACT_NAME` and `ActivationSlicer` together.
@@ -105,7 +109,8 @@ missing. **Any new `transformer_lens` import that moved or went away between 2.x
 the same `try/except ImportError` fallback** used in `model/index.py`,
 `model/base.py` and `tests/conftest.py`. Backend-dependent weight access is centralized in
 `model/weight.py` and `model/unembed.py` - go through those rather than reading `model.W_*`
-directly.
+directly. `READ_WEIGHT` and `WRITE_WEIGHT` there map an activation to the weight that computes it off
+the residual stream and the one that writes it back, and the lenses read every weight through them.
 
 `CachedModel` (`model/cache.py`) is a transparent read-through disk cache that overrides only
 `run_with_cache` and forwards everything else via `__getattr__`; `cache_dir=None` makes it a
@@ -128,8 +133,8 @@ supplies only the per-panel payload (`value_column`, `hover`, `value_range`, ...
 
 An operation's methods are an open registry: each `<op>/method/factory.py` is a `RegistryFactory`
 (`operation/registry.py`), which knows its methods only by name, the built-ins registered through the same
-`register` users call. The config's `method.type` picks one, and a method is built from
-`(model, config)`, taking `config.method` as its `self.method_config`. Each op's method base is generic in the
+`register` users call. The config's `method.type` picks one, and the factory's `create(model, config)` builds
+it from `(model, config)`, taking `config.method` as its `self.method_config`. Each op's method base is generic in the
 dataclass of its method config: a method's first type argument (`LogitLens[TheConfig]`) types `self.method_config`
 and is what `method_config_class` (`operation/method.py`) reads to parse a config, a TypeVar left open (the op
 bases and the built-ins without fields of their own) giving its bound. Each op's method config base extends
@@ -138,7 +143,9 @@ factory imports the methods, which import the method config): its `from_config` 
 strictly into the class its `type` names, so a bad name or field fails as the file is read; one built in code
 is taken as given. Each `<op>/__init__.py`
 imports its factory so the built-ins are registered whatever is imported first. A lens is a single
-class that tells activations apart by `index.activation()` itself. `DatasetFactory` is the same plain name registry; entoscope ships no datasets.
+class that tells activations apart by `index.activation()` itself. `DatasetFactory` is the same registry for
+datasets: `DatasetConfig` is a `MethodConfig`, and a dataset's type argument names its config class;
+entoscope ships no datasets.
 
 Everything else dispatches by `match` on an enum in an `AbstractX.get(enum)` static method
 (`patching/metric.py`'s metrics and comparisons, `patching/processor.py`'s source/target strategies,
@@ -146,7 +153,8 @@ Everything else dispatches by `match` on an enum in an `AbstractX.get(enum)` sta
 
 Patching composes three of those: `PatchingMetric` picks the scalar read off a run, `MetricComparison`
 picks what the patched run is reported against, and the config's `method` picks how the change in
-the metric is obtained. The config's `metric` maps the first onto a list of the second, one result column
+the metric is obtained. Patched run `i` applies row `i` of every patch element, and the result is laid
+out along the element with the most rows. The config's `metric` maps the first onto a list of the second, one result column
 per pair, so the comparison is chosen per metric and a metric may carry several. Every method yields
 the same primitive - the patched run's metric minus the unpatched target run's, one per *metric* -
 so adding one means implementing `AbstractPatchingMethod.scores` and nothing else; `_report` fans
@@ -161,9 +169,10 @@ back what was there must reproduce the target run exactly.
 
 Each package's `__init__.py` re-exports its public classes in a sorted `__all__`, and
 `entoscope/__init__.py` re-exports the everyday ones from those (operators, inputs, configs, method
-configs, enums, locator classes, `CachedModel`, `ConfigFactory`, `from_dict`, `experiment`), so
+configs, enums, locator transforms, `CachedModel`, `ConfigFactory`, `experiment`), so
 `from entoscope import Lens, LensConfig, LensInput` works; `tests/test_public_api.py` keeps the levels in
-step. The docs and examples import from these. Code in `src/` imports from the defining module instead,
+step. The built-in method classes, `ModelLocatorConfig`, the index classes and `from_dict`/`to_dict` are
+not re-exported: they are imported from the modules defining them. The docs and examples import from these. Code in `src/` imports from the defining module instead,
 never from `entoscope` or an operation's package, whose `__init__` imports everything and would cycle.
 
 ### Scripts

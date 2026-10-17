@@ -171,7 +171,7 @@ class FullConfig:
 
 
 def parse_argv(config_cls: type, argv: list[str]):
-    """The config a decorated main builds from ``argv`` — the wrapper's own API."""
+    """The config a decorated main builds from ``argv`` - the wrapper's own API."""
 
     @experiment
     def main(config: config_cls):
@@ -224,7 +224,7 @@ def test_the_defaults_of_every_field_type_are_applied():
 
 
 # --------------------------------------------------------------------------------------------------
-# dict fields — key:value tokens collected by DictAction
+# dict fields - key:value tokens collected by DictAction
 # --------------------------------------------------------------------------------------------------
 @dataclass
 class DictConfig:
@@ -276,7 +276,7 @@ def test_a_dict_option_that_cannot_be_read_exits(capsys, argv, message):
 
 
 # --------------------------------------------------------------------------------------------------
-# tuple fields — values collected per position by TupleAction
+# tuple fields - values collected per position by TupleAction
 # --------------------------------------------------------------------------------------------------
 @dataclass
 class TupleConfig:

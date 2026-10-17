@@ -24,7 +24,7 @@ The four operations share a common design:
 
 ## Install
 
-entoscope needs Python 3.10 to 3.14 and is published on PyPI:
+entoscope needs Python 3.11 to 3.14 and is published on PyPI:
 
 ```bash
 pip install entoscope
@@ -49,8 +49,8 @@ from entoscope import (
     LensMethodConfig,
     ModelLayerLocation,
     ModelLocation,
-    ModelLocatorConfig,
 )
+from entoscope.model.config import ModelLocatorConfig
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()

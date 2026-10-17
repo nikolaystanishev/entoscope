@@ -63,7 +63,7 @@ def mlp_matrix(model, layer: int, attribute: str) -> torch.Tensor:
 
     ``entoscope.model.weight.mlp_weight`` is what a lens reads, so an expectation taken from it would
     only restate the run. This reads the parameter the backend stores and settles the orientation by
-    its shape — ``W_in``/``W_gate`` [d_model, d_mlp], ``W_out`` [d_mlp, d_model] — which no fixture
+    its shape - ``W_in``/``W_gate`` [d_model, d_mlp], ``W_out`` [d_mlp, d_model] - which no fixture
     here leaves ambiguous, none of them having ``d_model == d_mlp``.
     """
     weight = getattr(model.blocks[layer].mlp, attribute)
@@ -78,7 +78,7 @@ def unembed(model, residual: torch.Tensor) -> torch.Tensor:
 
 
 def assert_row_reads(model, row: pd.Series, logits: torch.Tensor, top_k: int = 1) -> None:
-    """The row's top-k columns are the top-k of ``logits`` — token, escaped string and probability."""
+    """The row's top-k columns are the top-k of ``logits`` - token, escaped string and probability."""
     probabilities, tokens = logits.detach().flatten().softmax(dim=-1).topk(top_k)
 
     for i, (token, probability) in enumerate(zip(tokens.tolist(), probabilities.tolist(), strict=True)):
@@ -89,7 +89,7 @@ def assert_row_reads(model, row: pd.Series, logits: torch.Tensor, top_k: int = 1
 
 @pytest.fixture(scope="module")
 def activations(model):
-    """The prompt's activations from a plain forward pass — what a run's projections are checked against."""
+    """The prompt's activations from a plain forward pass - what a run's projections are checked against."""
     with torch.no_grad():
         logits, cache = model.run_with_cache(model.to_tokens(PROMPT))
     return logits, cache

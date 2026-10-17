@@ -1,4 +1,4 @@
-"""The parameter lens, run end to end — it reads weights, so a run takes no prompt at all."""
+"""The parameter lens, run end to end - it reads weights, so a run takes no prompt at all."""
 
 import json
 
@@ -84,7 +84,7 @@ def test_a_parameter_lens_config_with_a_prompt_raises():
 
 
 # --------------------------------------------------------------------------------------------------
-# One weight vector per row — the value vector a neuron writes, the key vector it reads with, and the
+# One weight vector per row - the value vector a neuron writes, the key vector it reads with, and the
 # subhead vectors of attention
 # --------------------------------------------------------------------------------------------------
 def test_an_mlp_value_vector_is_the_row_of_w_out(model):
@@ -123,7 +123,7 @@ def test_the_projection_space_switches_from_the_unembedding_to_the_embedding(mod
     assert_row_reads(model, embedding, _projected(model, weight, ProjectionSpace.EMBEDDING))
     assert_row_reads(model, unembedding, _projected(model, weight))
     # The two spaces score the vocabulary alike exactly when the model ties its embedding and its
-    # unembedding — which GPT-2 does, until transformer_lens folds LayerNorm in and centers the
+    # unembedding - which GPT-2 does, until transformer_lens folds LayerNorm in and centers the
     # unembedding and the two come apart.
     tied = torch.equal(model.W_E.T, model.W_U)
     assert bool(embedding["probability_0"] == unembedding["probability_0"]) == tied
@@ -152,7 +152,7 @@ def test_a_positive_scale_sharpens_probabilities_without_changing_the_top_token(
 
 
 # --------------------------------------------------------------------------------------------------
-# Grouping — a list of neurons (or heads), and a location left out entirely, sum into one direction
+# Grouping - a list of neurons (or heads), and a location left out entirely, sum into one direction
 # --------------------------------------------------------------------------------------------------
 def test_grouped_neurons_sum_their_value_vectors_into_one_row(model):
     neurons = [NEURON, NEURON + 1]
@@ -208,10 +208,25 @@ def test_top_k_tokens_come_from_the_projected_weight(model):
 
 
 # --------------------------------------------------------------------------------------------------
-# Gated MLPs — the key vector comes from the gate, and the linear branch has its own location
+# Gated MLPs - the key vector comes from the gate, and the linear branch has its own location
 # --------------------------------------------------------------------------------------------------
 def test_a_gated_mlp_reads_its_key_vector_from_the_gate(gated_model):
     row = _weight_row(gated_model, {"activation": "mlp.pre", "layer": 0, "neuron": 1})
+
+    assert_row_reads(gated_model, row, _projected(gated_model, mlp_matrix(gated_model, 0, "W_gate")[:, 1]))
+
+
+def test_a_declarative_gated_mlp_reads_its_key_vector_from_the_gate(gated_model):
+    config = LensConfig(
+        method=ParameterLensConfig(type="parameter_lens"),
+        source=ModelLocatorConfig(
+            activation=ModelLayerLocation.MLP_PRE,
+            location=[ModelLocation.LAYER, ModelLocation.NEURON],
+            filter=Filter.from_config([{"layer": 0, "neuron": 1}]),
+        ),
+    )
+
+    row = single_row(gated_model, config, prompt=None)
 
     assert_row_reads(gated_model, row, _projected(gated_model, mlp_matrix(gated_model, 0, "W_gate")[:, 1]))
 
@@ -369,7 +384,7 @@ def _draw(model, config: LensConfig, save_dir) -> RenderedFigure:
 
 
 def test_a_parameter_lens_page_needs_no_prompt(model, tmp_path):
-    # One neuron read across every layer varies over the layer alone, so it is drawn as a bar — and
+    # One neuron read across every layer varies over the layer alone, so it is drawn as a bar - and
     # with no prompt there are no tokens to name the axis with, so the layers label themselves.
     save_dir = tmp_path / "parameter_lens_run"
     expected = lens_rows(model, _parameter_config(top_k=3))
@@ -400,7 +415,7 @@ def test_a_neuron_axis_goes_across_with_the_layers_down(small_model, tmp_path):
 
 def test_an_empty_index_still_writes_a_page(model, tmp_path):
     # Including and excluding the same layer leaves nothing to run, and a result with no rows has no
-    # value column either — the page says so rather than failing to render. It says it once: with
+    # value column either - the page says so rather than failing to render. It says it once: with
     # nothing to read, every rank of the top-k would draw the same empty plot.
     config = LensConfig(
         method=ParameterLensConfig(type="parameter_lens"),

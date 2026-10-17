@@ -17,8 +17,6 @@ class LensCollector(FrameCollector[LensInput]):
     """
 
     def collect(self, logits: torch.Tensor, index: int):
-        # Each cell holds the top-k tokens of a single-position slice; elements spanning
-        # multiple positions (e.g. a layer-only location) do not fit this per-row layout.
         probabilities, tokens = logits.detach().softmax(dim=-1).squeeze(0).topk(self.operation_input.config.top_k)
 
         cell: dict[str, int | str | float] = {}

@@ -1,10 +1,64 @@
 import einops
 import torch
+from jaxtyping import Float
 
 from entoscope.model.base import Model, is_bridge
+from entoscope.model.config import ModelLayerLocation
 
 # The bridge submodule holding each HookedTransformer-style MLP weight.
 _MLP_SUBMODULE = {"W_in": "in", "W_gate": "gate", "W_out": "out"}
+
+READ_WEIGHT: dict[ModelLayerLocation, str] = {
+    ModelLayerLocation.MLP_PRE: "W_gate",
+    ModelLayerLocation.MLP_PRE_LINEAR: "W_in",
+    ModelLayerLocation.ATTENTION_Q: "W_Q",
+    ModelLayerLocation.ATTENTION_K: "W_K",
+    ModelLayerLocation.ATTENTION_V: "W_V",
+}
+
+WRITE_WEIGHT: dict[ModelLayerLocation, str] = {
+    ModelLayerLocation.MLP_PRE: "W_out",
+    ModelLayerLocation.MLP_PRE_LINEAR: "W_out",
+    ModelLayerLocation.MLP_POST: "W_out",
+    ModelLayerLocation.ATTENTION_V: "W_O",
+    ModelLayerLocation.ATTENTION_Z: "W_O",
+}
+
+
+def read_weight(model: Model, layer: int, activation: ModelLayerLocation) -> Float[torch.Tensor, "... d_model"]:
+    """The weight ``READ_WEIGHT`` names for ``activation``: what computes it off the residual stream.
+
+    One ``d_model`` vector per unit of the activation, ``[neuron, d_model]`` for an MLP activation and
+    ``[head, d_head, d_model]`` for an attention one, as ``write_weight`` returns its own. A gated MLP computes
+    ``mlp.pre`` with its gate and ``mlp.pre_linear`` with ``W_in``; any other MLP computes ``mlp.pre`` with
+    ``W_in`` and has no ``mlp.pre_linear``.
+    """
+    name = READ_WEIGHT[activation]
+    if not model.cfg.gated_mlp:
+        if activation is ModelLayerLocation.MLP_PRE_LINEAR:
+            raise ValueError(
+                "'mlp.pre_linear' is the linear branch of a gated MLP, which this model does not have; "
+                "read its input weights through 'mlp.pre'"
+            )
+        if activation is ModelLayerLocation.MLP_PRE:
+            name = "W_in"
+    return _weight(model, layer, name).transpose(-1, -2)
+
+
+def write_weight(model: Model, layer: int, activation: ModelLayerLocation) -> Float[torch.Tensor, "... d_model"]:
+    """The weight ``WRITE_WEIGHT`` names for ``activation``: what carries it into the residual stream.
+
+    One ``d_model`` vector per unit of the activation, as ``read_weight`` returns its own.
+    """
+    return _weight(model, layer, WRITE_WEIGHT[activation])
+
+
+def _weight(model: Model, layer: int, name: str) -> torch.Tensor:
+    if name in _MLP_SUBMODULE:
+        return mlp_weight(model, layer, name)
+    if name == "W_O":
+        return attention_out_weight(model, layer)
+    return getattr(model.blocks[layer].attn, name)
 
 
 def mlp_weight(model: Model, layer: int, attribute: str) -> torch.Tensor | None:

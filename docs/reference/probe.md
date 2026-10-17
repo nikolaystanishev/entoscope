@@ -2,8 +2,8 @@
 
 Probing.
 
-The operator, its input, configs, enums, collector and methods are importable from `entoscope.probe`;
-the operator, its input, configs and enums from `entoscope` too.
+The operator, its input, configs, enums, collector, method base and factory are importable from
+`entoscope.probe`; the operator, its input, configs and enums from `entoscope` too.
 
 ```{eval-rst}
 .. automodule:: entoscope.probe.config

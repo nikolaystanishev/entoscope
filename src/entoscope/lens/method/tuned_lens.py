@@ -1,19 +1,20 @@
+import logging
 from dataclasses import dataclass
-from functools import cached_property, lru_cache
+from functools import cached_property
 
 import torch
 from jaxtyping import Float
 from tuned_lens.nn import TunedLens as PretrainedTunedLens
 
 from entoscope.lens.config import LensConfig, LensMethodConfig
-from entoscope.lens.method.logit_lens import _QUERY_KEY_ACTIVATIONS, LogitLens, _layer
+from entoscope.lens.method.logit_lens import LogitLens, projection_layer
 from entoscope.model import Model
 from entoscope.model.config import ModelLayerLocation, ModelLocatorConfig
 from entoscope.model.index import IndexElement
 from entoscope.model.unembed import build_unembed
 
-# Residual states the translator maps as a whole; every other activation is a component written
-# into one of them, and a component's share of the translated state carries none of the bias.
+logger = logging.getLogger(__name__)
+
 _RESIDUAL_STATES = (
     ModelLayerLocation.RESIDUAL_PRE,
     ModelLayerLocation.RESIDUAL_MID,
@@ -31,12 +32,11 @@ def resource_id(model: Model) -> str:
     return resource
 
 
-@lru_cache(maxsize=2)
 def load_translators(model: Model, resource: str) -> torch.nn.ModuleList:
     """Pretrained translators for ``resource`` - a directory, or a resource id on the hub space.
 
-    Cached so that repeated runs over the same model read the checkpoint once; the model is part of
-    the key only to build the unembedding the checkpoint is checked against.
+    Checked against the model they translate for and placed on its device and dtype, which is why a lens
+    loads its own rather than sharing them across models.
     """
     lens = PretrainedTunedLens.from_unembed_and_pretrained(build_unembed(model), resource)
     if lens.config.d_model != model.cfg.d_model or lens.config.num_hidden_layers != model.cfg.n_layers:
@@ -60,26 +60,23 @@ class TunedLens(LogitLens[TunedLensConfig]):
 
     def __init__(self, model: Model, config: LensConfig):
         super().__init__(model, config)
-        # Resolved now, so a model with no name to look its translators up by fails as the lens is built; loaded
-        # on first use, so building a lens - which a plan does - reads no checkpoint.
         self.resource = self.method_config.translators or resource_id(model)
+        self._untranslated: set[tuple[ModelLayerLocation, int | None]] = set()
 
     @cached_property
     def translators(self) -> torch.nn.ModuleList:
         return load_translators(self.model, self.resource)
 
-    def project(
+    def _query_key_logits(
         self,
         activation: Float[torch.Tensor, "..."],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_vocab"]:
-        if index.activation() in _QUERY_KEY_ACTIVATIONS:
-            raise ValueError(
-                f"{type(self).__name__} cannot project {index.activation().value}: its translator maps the residual "
-                "stream onto the final residual, while queries and keys are read back through the other side of the "
-                "head - use the logit lens for them"
-            )
-        return super().project(activation, index)
+        raise ValueError(
+            f"{type(self).__name__} cannot project {index.activation().value}: its translator maps the residual "
+            "stream onto the final residual, while queries and keys are read back through the other side of the "
+            "head - use the logit lens for them"
+        )
 
     def _to_final_residual(
         self,
@@ -88,6 +85,7 @@ class TunedLens(LogitLens[TunedLensConfig]):
     ) -> Float[torch.Tensor, "... d_model"]:
         translator_index = self._translator_index(index)
         if translator_index is None:
+            self._warn_untranslated(index)
             return residual
 
         translator = self.translators[translator_index]
@@ -106,6 +104,18 @@ class TunedLens(LogitLens[TunedLensConfig]):
         if index.activation() is ModelLayerLocation.EMBEDDING:
             return 0
 
-        layer = _layer(index)
+        layer = projection_layer(self.model, index)
         translator_index = layer if index.activation() is ModelLayerLocation.RESIDUAL_PRE else layer + 1
         return translator_index if translator_index < self.model.cfg.n_layers else None
+
+    def _warn_untranslated(self, index: IndexElement[ModelLocatorConfig]) -> None:
+        key = (index.activation(), index.layer())
+        if key in self._untranslated:
+            return
+        self._untranslated.add(key)
+        logger.warning(
+            "'%s' of layer %s writes into the final residual state, which the model unembeds as it is: no "
+            "translator maps it, so the tuned lens reads it as the logit lens does",
+            index.activation().value,
+            index.layer(),
+        )

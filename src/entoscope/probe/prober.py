@@ -31,16 +31,14 @@ class Prober(Operator):
         return_collector: bool = False,
         verbose: bool = True,
     ) -> ProbeCollector | None:
-        # Built as every location builds its own, so a probe that cannot be built fails before the forward passes.
-        ProbeMethodFactory.create(probe_input.config, self.model)
+        ProbeMethodFactory.create(self.model, probe_input.config)
         probe_input.prepare(self.model)
         collector = self.collector_class(probe_input, self.model, save_dir)
-        collector.prepare()
         labels = probe_input.labels.detach().cpu().numpy()
 
         for single_index in tqdm(probe_input.index, total=len(probe_input.index), disable=not verbose):
             features = probe_input.features[single_index.output]
-            probe = ProbeMethodFactory.create(probe_input.config, self.model)
+            probe = ProbeMethodFactory.create(self.model, probe_input.config)
             probe.fit(features, probe_input.labels)
             predictions = probe.predict(features)
             probabilities = probe.predict_proba(features)
@@ -57,8 +55,7 @@ class Prober(Operator):
         return None
 
     def plan(self, probe_input: ProbeInput, save_dir: str | None = None, verbose: bool = True) -> OperationPlan:
-        # Built as the run builds them, so a plan fails wherever its run would.
-        ProbeMethodFactory.create(probe_input.config, self.model)
+        ProbeMethodFactory.create(self.model, probe_input.config)
         probe_input.prepare_index(self.model)
 
         prompts = [("positive", prompt) for prompt in probe_input.positive_prompts]
@@ -70,7 +67,6 @@ class Prober(Operator):
             config=probe_input.config,
             steps=len(probe_input.index),
             steps_label="probe",
-            # One cached pass per example: features are collected a prompt at a time.
             forward_passes=len(prompts),
             index=[probe_input.index.to_df()],
             prompts=[

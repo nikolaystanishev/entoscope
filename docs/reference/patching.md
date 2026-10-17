@@ -2,7 +2,7 @@
 
 Activation patching.
 
-The operator, its input, configs, enums, collectors and methods are importable from
+The operator, its input, configs, enums, collectors, method base and factory are importable from
 `entoscope.patching`; the operator, its input, configs and enums from `entoscope` too.
 
 ```{eval-rst}

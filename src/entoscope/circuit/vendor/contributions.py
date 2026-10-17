@@ -10,7 +10,7 @@
 # This file is a near-verbatim copy of the upstream module. It is vendored rather than
 # pip-installed because the upstream package is not published on PyPI and its setup.py
 # excludes this subpackage from the built distribution. Because this file is licensed
-# CC BY-NC 4.0, it — and the entoscope code that imports it — may be used for NON-COMMERCIAL
+# CC BY-NC 4.0, it - and the entoscope code that imports it - may be used for NON-COMMERCIAL
 # purposes only.
 #
 # MODIFICATIONS by entoscope (indicated as required by CC BY-NC 4.0):

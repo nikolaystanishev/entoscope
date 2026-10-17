@@ -28,20 +28,15 @@ from transformer_lens import ActivationCache
 
 from entoscope.util.data import create_if_not_exists
 
-if TYPE_CHECKING:  # ``entoscope.model.base`` imports this module, so the alias is type-only.
+if TYPE_CHECKING:
     from entoscope.model.base import Model
 
 FORMAT_VERSION = 1
 
-# ``run_with_cache`` kwargs that must NOT be folded into the cache key here: ``names_filter`` and
-# ``remove_batch_dim`` are keyed explicitly, ``incl_bwd`` diverts uncacheable requests upstream, and
-# ``device`` only moves the result. Every other kwarg (return_type, prepend_bos, attention_mask,
-# tokens, ...) changes the returned logits/cache and so is folded into the key verbatim.
 _NON_DIGEST_KWARGS = frozenset({"names_filter", "remove_batch_dim", "incl_bwd", "device"})
 
 _ALL_ACTIVATIONS = "*ALL*"
 
-# Elements read from the head of every parameter when fingerprinting the weights; see ``_weight_digest``.
 _WEIGHT_SAMPLE = 64
 
 # torch dtypes ``Tensor.numpy()`` cannot materialize; their raw bytes are reinterpreted instead.
@@ -70,9 +65,6 @@ def _encode_input(model_input: Any) -> bytes:
     if isinstance(model_input, torch.Tensor):
         tensor = model_input.detach().cpu().contiguous()
         header = f"{tensor.dtype}|{tuple(tensor.shape)}|".encode()
-        # ``Tensor.numpy()`` rejects dtypes NumPy has no equivalent for (bfloat16, float8, ...).
-        # Reinterpret their raw bytes through a same-width integer view; the original dtype is
-        # already recorded in ``header`` so distinct dtypes can never collide on the same bytes.
         if tensor.dtype in _NUMPY_UNSUPPORTED_DTYPES:
             tensor = tensor.view(torch.int16 if tensor.element_size() == 2 else torch.uint8)
         return b"T|" + header + tensor.numpy().tobytes()
@@ -130,8 +122,6 @@ class ActivationDiskCache:
         names = names_filter if isinstance(names_filter, str) else "|".join(names_filter)
         digest.update(names.encode("utf-8"))
         digest.update(b"\x00extra\x00")
-        # Values may be tensors (e.g. ``attention_mask``), so reuse the deterministic input encoder
-        # rather than ``repr`` - ``repr`` truncates large tensors and would let distinct inputs collide.
         for extra_name, extra_value in sorted(extra.items()):
             digest.update(extra_name.encode("utf-8"))
             digest.update(b"\x00")
@@ -166,15 +156,9 @@ class CachedModel:
     def __init__(self, model: Model, cache_dir: str | None = None):
         self._model = model
         self._cache = ActivationDiskCache(cache_dir) if cache_dir else None
-        # Taken once, from the model as it is wrapped: the weights are read for it, and a wrapper
-        # that re-read them on every call would pay for that on every cache hit. Editing weights in
-        # place afterwards therefore keeps the entries they were stored under - wrap again for a
-        # fresh namespace.
         self._model_fingerprint = self._fingerprint() if self._cache else ""
 
     def __getattr__(self, name: str) -> Any:
-        # Only reached for attributes not found on the wrapper itself. Guard the private fields so a
-        # partially-initialized or copied instance raises AttributeError instead of recursing.
         if name in {"_model", "_cache", "_model_fingerprint"}:
             raise AttributeError(name)
         return getattr(self._model, name)
@@ -182,8 +166,6 @@ class CachedModel:
     def _fingerprint(self) -> str:
         cfg = self._model.cfg
         parts = (
-            # A bridge and a HookedTransformer of the same name read the same cfg but not
-            # necessarily the same weights, so they must not share cache entries.
             type(self._model).__name__,
             cfg.model_name,
             cfg.n_layers,
@@ -202,8 +184,6 @@ class CachedModel:
     def run_with_cache(self, *model_args: Any, **kwargs: Any) -> tuple[Any, ActivationCache]:
         names_filter = kwargs.get("names_filter")
 
-        # Uncacheable requests fall straight through: a callable filter cannot be keyed, and a
-        # backward cache would need a backward pass we do not persist. entoscope uses neither.
         if self._cache is None or isinstance(names_filter, Callable) or kwargs.get("incl_bwd"):
             return self._model.run_with_cache(*model_args, **kwargs)
 

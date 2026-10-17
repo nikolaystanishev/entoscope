@@ -1,26 +1,30 @@
+from __future__ import annotations
+
 import abc
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import torch
 
 from entoscope.model.index import IndexElement, SingleIndex
 from entoscope.patching.config import PatchingElementConfig, PatchingType
-from entoscope.patching.input import PatchingInput
 
-# A patched run holds one copy of the target prompt per row, so a row's batch index addresses that
-# run alone. The caches are made as wide as the patched runs but kept at their first row, so every
-# cache holds a single prompt and is read at batch 0.
+if TYPE_CHECKING:
+    from entoscope.patching.input import PatchingInput
+
 _CACHE_BATCH = 0
 
 
 class SourceStrategy(abc.ABC):
+    needs_source_run: bool = False
+
     @staticmethod
     @abc.abstractmethod
     def extract(index: IndexElement[PatchingElementConfig], patching_input: PatchingInput) -> torch.Tensor:
         raise NotImplementedError
 
     @staticmethod
-    def get(patching_type: PatchingType) -> type["SourceStrategy"]:
+    def get(patching_type: PatchingType) -> type[SourceStrategy]:
         match patching_type:
             case PatchingType.REPLACE:
                 return ReplaceSourceStrategy
@@ -46,7 +50,7 @@ class TargetStrategy(abc.ABC):
         raise NotImplementedError
 
     @staticmethod
-    def get(patching_type: PatchingType) -> type["TargetStrategy"]:
+    def get(patching_type: PatchingType) -> type[TargetStrategy]:
         match patching_type:
             case PatchingType.REPLACE:
                 return ReplaceTargetStrategy
@@ -55,6 +59,8 @@ class TargetStrategy(abc.ABC):
 
 
 class ReplaceSourceStrategy(SourceStrategy):
+    needs_source_run = True
+
     @staticmethod
     def extract(source_index: IndexElement[PatchingElementConfig], patching_input: PatchingInput) -> torch.Tensor:
         return patching_input.source_cache[source_index.transformer_activation()][source_index.slices(_CACHE_BATCH)]
@@ -67,6 +73,8 @@ class ValueReplaceSourceStrategy(SourceStrategy):
 
 
 class ValueScaleSourceStrategy(SourceStrategy):
+    needs_source_run = True
+
     @staticmethod
     def extract(source_index: IndexElement[PatchingElementConfig], patching_input: PatchingInput) -> torch.Tensor:
         return (
@@ -88,7 +96,6 @@ class GaussianNoiseSourceStrategy(SourceStrategy):
     def extract(source_index: IndexElement[PatchingElementConfig], patching_input: PatchingInput) -> torch.Tensor:
         name = source_index.transformer_activation()
         clean = patching_input.target_cache[name][source_index.slices(_CACHE_BATCH)]
-        # Drawn on the CPU, so a seed gives the same noise whatever device the model runs on.
         generator = torch.Generator().manual_seed(GaussianNoiseSourceStrategy.SEED)
         noise = torch.randn(clean.shape, generator=generator).to(clean)
 

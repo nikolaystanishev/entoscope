@@ -8,8 +8,6 @@ import pandas as pd
 
 from entoscope.operation.config import AbstractConfig
 
-# Prompts and output files are enumerated per prompt, so a run over many of them would bury the
-# rest of the summary; the index keeps its own (much larger) budget through ``describe``.
 MAX_LISTED = 10
 
 

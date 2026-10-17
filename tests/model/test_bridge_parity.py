@@ -3,7 +3,7 @@
 The rest of the suite runs every test against a bridge and a ``HookedTransformer`` separately, which
 says each one works but not that they agree. A bridge in compatibility mode is processed the way
 ``HookedTransformer.from_pretrained`` processes its weights, so on the same model the two are the
-same numbers — and that is what makes a result portable between them.
+same numbers - and that is what makes a result portable between them.
 """
 
 import pytest
@@ -25,8 +25,8 @@ pytestmark = pytest.mark.skipif(
 PROMPT = "The capital of France is"
 
 # What "the same numbers" can mean for a forward pass. The two backends run the same arithmetic on
-# the same weights, but not through the same kernels — the matmuls are issued differently, and a
-# folded ``ln_final`` is HuggingFace's LayerNorm on one side and ``LayerNormPre`` on the other — so
+# the same weights, but not through the same kernels - the matmuls are issued differently, and a
+# folded ``ln_final`` is HuggingFace's LayerNorm on one side and ``LayerNormPre`` on the other - so
 # the last places of a float32 value are the build's to decide, and CI has seen two runners disagree
 # with three on a single logit. A parity break worth catching is orders of magnitude wider.
 TO_FLOAT32 = {"rtol": 1e-4, "atol": 1e-3}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from entoscope.model.config import ModelLocatorConfig
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from entoscope.patching.method.factory import PatchingMethodFactory
 
 
-class PatchingType(str, Enum):
+class PatchingType(StrEnum):
     """What a patch writes, named on its source element; a target element is always ``replace``.
 
     ``replace`` writes the source run's activation and ``value_scale`` the same times ``value``.
@@ -27,7 +27,7 @@ class PatchingType(str, Enum):
     GAUSSIAN_NOISE = "gaussian_noise"
 
 
-class PatchingMetric(str, Enum):
+class PatchingMetric(StrEnum):
     """The scalar read off one run's output distribution.
 
     ``r`` is the correct token and ``r'`` the distractor, both named by the input.
@@ -41,7 +41,7 @@ class PatchingMetric(str, Enum):
     KL_DIVERGENCE = "kl_divergence"  # D_KL(P_source || P_run)
 
 
-class MetricComparison(str, Enum):
+class MetricComparison(StrEnum):
     """How a patched run's metric is reported against the two runs it sits between.
 
     Chosen per metric: a divergence is normally read as an ``indirect_effect`` and a logit
@@ -98,7 +98,6 @@ class PatchingMethodConfig(MethodConfig):
 
     @classmethod
     def factory(cls) -> type[PatchingMethodFactory]:
-        # Imported here: the factory imports the methods, which import this module.
         from entoscope.patching.method.factory import PatchingMethodFactory
 
         return PatchingMethodFactory

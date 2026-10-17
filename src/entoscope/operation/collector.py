@@ -13,7 +13,6 @@ from entoscope.operation.config import CONFIG_FILE
 from entoscope.operation.input import OperationInput
 from entoscope.util.data import create_if_not_exists
 
-# Only needed to bound ``figure_class``: importing a figure here would put plotly behind every collector.
 if TYPE_CHECKING:
     from entoscope.operation.visualization import Figure
 
@@ -26,10 +25,10 @@ logger = logging.getLogger(__name__)
 class AbstractCollector(abc.ABC, Generic[InputT]):
     """Accumulates one operation run's per-location results and writes them to ``save_dir``.
 
-    A subclass owns the shape of a result — a DataFrame, a tensor, ... — through ``prepare``
-    (allocate it), ``collect`` (fill in a single location's cell) and ``result`` (expose it).
-    ``save`` creates ``save_dir``, hands it to ``_save_result`` — which owns everything the run
-    leaves behind: its result, the index files beside it and the config it ran under — and reports
+    A subclass owns the shape of a result - a DataFrame, a tensor, ... - which it allocates as it is
+    constructed, fills in a single location's cell at a time through ``collect`` and exposes as ``result``.
+    ``save`` creates ``save_dir``, hands it to ``_save_result`` - which owns everything the run
+    leaves behind: its result, the index files beside it and the config it ran under - and reports
     where that landed.
 
     Every collector takes the model whether or not it reads one, so an operator constructs whichever
@@ -48,10 +47,6 @@ class AbstractCollector(abc.ABC, Generic[InputT]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def prepare(self) -> None:
-        raise NotImplementedError
-
-    @abc.abstractmethod
     def collect(self, *args: Any, **kwargs: Any) -> None:
         raise NotImplementedError
 
@@ -61,12 +56,12 @@ class AbstractCollector(abc.ABC, Generic[InputT]):
         raise NotImplementedError
 
     def output_files(self) -> list[str]:
-        """The file names ``save`` writes into ``save_dir`` — what a plan reports as the run's output.
+        """The file names ``save`` writes into ``save_dir`` - what a plan reports as the run's output.
 
         Subclasses extend this to mirror their own ``_save_result``. Deliberately not abstract:
         ``collector_class`` is an extension point, so a collector that declares no files keeps
-        working and is reported as writing none. A plan asks an unprepared collector, so an override
-        may read the input but never the collected result.
+        working and is reported as writing none. A plan asks a collector nothing was collected into, so an
+        override may read the input but never the collected result.
         """
         return []
 
@@ -87,16 +82,14 @@ class FrameCollector(AbstractCollector[InputT]):
     index's own columns, so a subclass says only which indices the run has and what a cell holds.
     """
 
-    _cells: dict[int, dict[str, Any]] | None = None
+    def __init__(self, operation_input: InputT, model: Model, save_dir: str | None = None):
+        super().__init__(operation_input, model, save_dir)
+        self._cells: dict[int, dict[str, Any]] = {}
 
     @property
     def result(self) -> pd.DataFrame:
-        assert self._cells is not None
         rows = pd.DataFrame([self._cells[position] for position in range(len(self._index))])
         return pd.concat([self._index.to_df().reset_index(drop=True), rows], axis=1)
-
-    def prepare(self) -> None:
-        self._cells = {}
 
     @abc.abstractmethod
     def _indices(self) -> dict[str, Index]:
@@ -108,11 +101,9 @@ class FrameCollector(AbstractCollector[InputT]):
 
     @property
     def _index(self) -> Index:
-        # The first index lays the result out; any others only record what else each run touched.
         return next(iter(self._indices().values()))
 
     def _collect_cell(self, index: int, cell: dict[str, Any]) -> None:
-        assert self._cells is not None
         self._cells[index] = cell
 
     def _save_result(self, save_dir: str) -> None:

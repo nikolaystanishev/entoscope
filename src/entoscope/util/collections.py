@@ -1,6 +1,6 @@
-from collections.abc import Iterable, Iterator
-from itertools import combinations, repeat
-from typing import Any, TypeVar
+from collections.abc import Iterator, Sequence
+from itertools import combinations
+from typing import TypeVar
 
 import pandas as pd
 
@@ -17,17 +17,26 @@ def dataframe_to_list(df: pd.DataFrame) -> list[list]:
     return list(map(lambda el: el[1].to_list(), df.iterrows()))
 
 
-def zip_fill(*args: Any) -> Iterable:
-    max_len = max(map(len, args))
-    assert all(map(lambda el: len(el) == max_len or len(el) == 0 or len(el) == 1, args))
-
-    return zip(
-        *[arg if len(arg) == max_len else repeat(list(arg)[0] if len(arg) != 0 else None, max_len) for arg in args],
-        strict=True,
-    )
-
-
 T = TypeVar("T")
+
+
+def broadcast_length(*lengths: int) -> int:
+    """The length sequences of ``lengths`` pair up to, one of a single element repeated along the others.
+
+    Raises ``ValueError`` when two of them are longer than one and differ.
+    """
+    longer = set(lengths) - {1}
+    if len(longer) > 1:
+        raise ValueError(f"Cannot pair sequences of {' and '.join(map(str, sorted(longer)))} elements")
+    return longer.pop() if longer else 1
+
+
+def zip_broadcast(*sequences: Sequence[T]) -> list[tuple[T, ...]]:
+    """Zip ``sequences`` element by element, one of a single element repeated along the others."""
+    length = broadcast_length(*map(len, sequences))
+    return list(
+        zip(*(list(sequence) * length if len(sequence) == 1 else sequence for sequence in sequences), strict=True)
+    )
 
 
 def batch_generator(data: list[T], batch_size: int) -> Iterator[list[T]]:

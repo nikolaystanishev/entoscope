@@ -11,6 +11,7 @@ from entoscope.circuit.input import CircuitInput
 from entoscope.circuit.method.circuit import PromptCircuit
 from entoscope.circuit.method.information_flow_routes import InformationFlowRoutesConfig
 from entoscope.model import Model
+from entoscope.model.index import get_act_name
 from entoscope.operation.config import ConfigFactory
 
 from ..conftest import forbid_model_runs, rendered_figures
@@ -88,14 +89,10 @@ def test_artifacts_saved_to_disk(model: Model, tmp_path: Path):
     }
 
 
-def test_a_prepared_input_moves_to_a_device(model: Model):
+def test_an_input_holds_nothing_to_move_to_a_device(model: Model):
     circuit_input = CircuitInput(_config(), PROMPTS).prepare(model)
 
-    moved = circuit_input.to("cpu")
-
-    assert moved is circuit_input
-    assert [tokens.device.type for tokens in moved.tokens] == ["cpu"] * len(PROMPTS)
-    assert [tokens.shape for tokens in moved.tokens] == [model.to_tokens(prompt).shape for prompt in PROMPTS]
+    assert circuit_input.to("cpu") is circuit_input
 
 
 def test_a_run_without_a_collector_still_writes_its_artifacts(model: Model, tmp_path: Path):
@@ -121,11 +118,32 @@ def test_a_plan_counts_one_graph_per_prompt_without_building_them(model: Model, 
 
     assert not save_dir.exists()
     assert plan.steps == len(PROMPTS)
-    # The method rebuilds the whole cache per prompt, so nothing narrows what it reads.
     assert plan.forward_passes == len(PROMPTS)
-    assert plan.reads_full_cache
+    assert not plan.reads_full_cache
+    assert len(plan.activations) == 6 * model.cfg.n_layers
     assert [prompt for _, prompt, _ in plan.prompts] == PROMPTS
-    assert "reads: full activation cache" in str(plan)
+    assert [n_tokens for _, _, n_tokens in plan.prompts] == [model.to_tokens(prompt).shape[1] for prompt in PROMPTS]
+
+
+def test_a_circuit_caches_only_the_activations_the_plan_reports(model: Model, monkeypatch):
+    cached: list[set[str]] = []
+    run_with_cache = model.run_with_cache
+
+    def recording(*args, **kwargs):
+        logits, cache = run_with_cache(*args, **kwargs)
+        cached.append(set(cache.keys()))
+        return logits, cache
+
+    plan = CircuitDiscoverer(model).plan(CircuitInput(_config(), PROMPTS[:1]), verbose=False)
+    monkeypatch.setattr(model, "run_with_cache", recording)
+    CircuitDiscoverer(model, collector_class=CircuitCollector).apply(
+        CircuitInput(_config(), PROMPTS[:1]), verbose=False
+    )
+
+    (names,) = cached
+    assert set(plan.activations) <= names
+    unread = {get_act_name(name, layer=layer) for name in ("q", "k", "z", "pre", "post") for layer in range(2)}
+    assert unread.isdisjoint(names)
 
 
 def test_a_plan_describes_the_run_that_follows_it(model: Model, tmp_path: Path):

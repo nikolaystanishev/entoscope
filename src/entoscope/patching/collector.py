@@ -24,8 +24,11 @@ class PatchingCollector(FrameCollector[PatchingInput]):
         self._collect_cell(row.output, cell)
 
     def _indices(self) -> dict[str, Index]:
-        # Numbered even for a single element, so a file name means the same thing in every run.
         return {f"index-{i}.csv": index for i, index in enumerate(self.operation_input.index)}
+
+    @property
+    def _index(self) -> Index:
+        return self.operation_input.layout_index
 
 
 class PatchingVisualizationCollector(VisualizationCollector[PatchingInput, PatchingFigure], PatchingCollector):

@@ -111,8 +111,6 @@ def build_parser(config_cls: type, description: str | None = None) -> argparse.A
             kwargs["required"] = True
         kwargs.update(field.metadata)
         action = parser.add_argument(f"--{field.name.replace('_', '-')}", **kwargs)
-        # Adjust action.help after the fact: BooleanOptionalAction appends its own default note on
-        # some Python versions, and checking the action (not the kwargs) keeps the suffix single.
         if "default" in kwargs and "%(default)" not in (action.help or ""):
             action.help = f"{action.help} (default: %(default)s)" if action.help else "(default: %(default)s)"
     return parser

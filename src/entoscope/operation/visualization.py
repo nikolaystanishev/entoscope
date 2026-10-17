@@ -30,11 +30,8 @@ from entoscope.operation.config import AbstractConfig
 from entoscope.operation.input import OperationInput
 
 InputT = TypeVar("InputT", bound=OperationInput)
-# Whatever names one plot to the operation that draws it - a metric and its comparison, a top-k rank.
 PanelT = TypeVar("PanelT")
 
-# x takes the last of these a run varies over and y the rest, so an activation-patching grid comes
-# out position-across / layer-down and a layer x head or layer x neuron grid keeps layer down too.
 AXIS_ORDER: tuple[ModelLocation, ...] = (
     ModelLocation.LAYER,
     ModelLocation.HEAD,
@@ -43,11 +40,8 @@ AXIS_ORDER: tuple[ModelLocation, ...] = (
 )
 
 DIVERGING = [(0.0, "#2166ac"), (0.5, "#f7f7f7"), (1.0, "#b2182b")]
-# Stops well short of navy: a heatmap's cell text takes a single colour for the whole trace, so the
-# top of the scale has to stay light enough to read the lens's top-1 token against.
 SEQUENTIAL = [(0.0, "#f7fbff"), (1.0, "#4292c6")]
 
-# Past this a per-cell label is unreadable anyway, and printing it only bloats the page.
 MAX_ANNOTATED_CELLS = 600
 
 
@@ -126,7 +120,6 @@ def diverging_range(values: Sequence[float], midpoint: float) -> tuple[float, fl
 
 
 def write_html(path: str, title: str, *figures: go.Figure) -> None:
-    # plotly.js is embedded by the first figure and shared by the rest of the page.
     body = "<hr/>".join(figure.to_html(full_html=False, include_plotlyjs=(i == 0)) for i, figure in enumerate(figures))
     with open(path, "w", encoding="utf-8") as f:
         f.write(
@@ -183,7 +176,7 @@ class IndexGrid:
 
     @classmethod
     def of(cls, layout: pd.DataFrame) -> IndexGrid:
-        axes = [_axis_name(column) for column in layout.columns]
+        axes = [str(column) for column in layout.columns]
         codes = {
             axis: [int(code) for code in layout[column]] for axis, column in zip(axes, layout.columns, strict=True)
         }
@@ -325,15 +318,11 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
         return {}
 
     def figures(self) -> list[go.Figure]:
-        # An empty index carries no value column at all, so every panel would draw the same empty
-        # plot; one says it once for the whole run.
         panels = self.panels()
         if self.result.empty:
             return [self.figure(panels[0])] if panels else []
         return super().figures()
 
-    # Both axes are drawn against dense positions with the real values as tick text, so a duplicate
-    # or non-printable label cannot merge two cells the way a categorical axis would.
     @property
     def _x_positions(self) -> list[int]:
         return list(range(len(self.grid.x_codes)))
@@ -349,7 +338,6 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
             margin=dict(l=90, r=40, t=100, b=80),
         )
 
-        # An empty index drops the value column entirely rather than leaving it empty.
         if self.result.empty or self.value_column(panel) not in self.result.columns:
             figure = go.Figure()
             figure.add_annotation(text="No rows in the index", showarrow=False, font=dict(size=16))
@@ -452,12 +440,6 @@ def _location(name: str) -> ModelLocation | None:
         return ModelLocation(name)
     except ValueError:
         return None
-
-
-def _axis_name(column: Any) -> str:
-    # A layout frame is keyed by ``ModelLocation`` members, whose ``str`` is the member name, not the
-    # location - everything downstream matches on the location, so take the value.
-    return column.value if isinstance(column, Enum) else str(column)
 
 
 def _axis_rank(location: ModelLocation | None) -> int:

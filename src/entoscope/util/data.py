@@ -8,6 +8,7 @@ from enum import Enum
 from pathlib import PurePath
 from typing import Any
 
+import networkx as nx
 import yaml
 
 
@@ -16,31 +17,43 @@ def write_json(file_path: str, data: dict | list):
         json.dump(data, f, indent=4)
 
 
+def write_graph(graph: nx.Graph, save_dir: str, name: str) -> None:
+    """Persist a graph as both GraphML (portable) and node-link JSON (readable / round-trippable)."""
+    nx.write_graphml(graph, os.path.join(save_dir, f"{name}.graphml"))
+    write_json(os.path.join(save_dir, f"{name}.json"), nx.node_link_data(graph, edges="links"))
+
+
+_ENV_TAG = "!ENV"
+_ENV_VARIABLE = re.compile(r".*?\${(\w+)}.*?")
+
+
+class _EnvLoader(yaml.FullLoader):
+    """``FullLoader`` that also replaces ``${NAME}`` with the environment variable's value.
+
+    A subclass, so registering the resolver leaves ``yaml.FullLoader`` itself as every other reader expects it.
+    """
+
+
+def _construct_env_variables(loader: _EnvLoader, node: yaml.Node) -> str | int:
+    value = loader.construct_scalar(node)
+    full_value: str | int = value
+    for name in _ENV_VARIABLE.findall(value):
+        key = f"${{{name}}}"
+        env_value = os.environ.get(name, name)
+        if key == full_value and env_value.isdigit():
+            full_value = int(env_value)
+        else:
+            full_value = str(full_value).replace(key, env_value)
+    return full_value
+
+
+_EnvLoader.add_implicit_resolver(_ENV_TAG, _ENV_VARIABLE, None)
+_EnvLoader.add_constructor(_ENV_TAG, _construct_env_variables)
+
+
 def read_yaml(file_path: str) -> list | dict:
-    loader = yaml.FullLoader
-    tag = "!ENV"
-    pattern = re.compile(r".*?\${(\w+)}.*?")
-    loader.add_implicit_resolver(tag, pattern, None)
-
-    def constructor_env_variables(yaml_loader: yaml.FullLoader, node):
-        value = yaml_loader.construct_scalar(node)
-        match = pattern.findall(value)  # to find all env variables in line
-        if match:
-            full_value = value
-            for g in match:
-                key = f"${{{g}}}"
-                env_value = os.environ.get(g, g)
-                if key == full_value and env_value.isdigit():
-                    full_value = int(env_value)
-                else:
-                    full_value = full_value.replace(key, env_value)
-            return full_value
-        return value
-
-    loader.add_constructor(tag, constructor_env_variables)
-
     with open(file_path, encoding="utf-8") as f:
-        return yaml.load(f, Loader=loader)
+        return yaml.load(f, Loader=_EnvLoader)
 
 
 def create_if_not_exists(directory: str):
@@ -87,7 +100,6 @@ def from_dict(cls: type, value: Any) -> Any:
             raise ValueError(f"Expected a mapping for {cls.__name__}, got {value!r}")
         key_type, value_type = typing.get_args(cls) or (Any, Any)
         return {_key_from_dict(key_type, key): from_dict(value_type, element) for key, element in value.items()}
-    # Any other generic alias (``type[X]``, ``Callable[...]``) has no raw shape of its own to read.
     if origin is not None or not isinstance(cls, type) or isinstance(value, cls):
         return value
     if hasattr(cls, "from_config"):
@@ -123,12 +135,10 @@ def _raw(value: Any) -> Any:
     if isinstance(value, Enum):
         return value.value
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        # What its constructor takes, which is what ``from_dict`` reads back: a derived field is derived again.
         return {field.name: getattr(value, field.name) for field in dataclasses.fields(value) if field.init}
     if isinstance(value, PurePath):
         return str(value)
     if isinstance(value, set | frozenset):
-        # Sorted, so the same set is always written the same way whatever the hash seed of the run.
         return sorted(value, key=repr)
     raise TypeError(
         f"A {type(value).__name__} has no config form: a config holds only numbers, strings, enums and paths, "
@@ -148,7 +158,6 @@ def _tuple_from_dict(cls: Any, value: Any) -> tuple:
 
 
 def _key_from_dict(key_type: Any, key: Any) -> Any:
-    # A JSON object's keys are strings, so a number key comes back from ``config.json`` as its text.
     if key_type in (int, float) and isinstance(key, str):
         return key_type(key)
     return from_dict(key_type, key)

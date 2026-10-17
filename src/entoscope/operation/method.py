@@ -29,15 +29,16 @@ class MethodConfig:
         if isinstance(value, str):
             value = {"type": value}
         if not isinstance(value, dict):
-            raise ValueError(f"Expected a method type or a mapping for {cls.__name__}, got {value!r}")
+            raise ValueError(f"Expected a {cls.factory().kind} or a mapping for {cls.__name__}, got {value!r}")
         if "type" not in value:
             raise ValueError(f"Missing required keys for {cls.__name__}: ['type']")
         return dataclass_from_dict(method_config_class(cls.factory().get(value["type"])), value)
 
 
 def method_config_class(method: type) -> type[MethodConfig]:
-    """The method config ``method`` names as its first type argument - a TypeVar's bound when it leaves it
-    open - or, naming none, that of the method it extends.
+    """The config class ``method``, a method or a dataset, names as its first type argument.
+
+    A TypeVar left open gives its bound, and a class naming none takes that of the class it extends.
 
     Type arguments are erased at runtime: the subscripted base in a class statement is their only record.
     """

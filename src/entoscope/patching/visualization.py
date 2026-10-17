@@ -23,8 +23,6 @@ from entoscope.patching.input import PatchingInput
 
 
 class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
-    # The patched run is the target run, so the target's own coordinates label the axes; the source's
-    # are the fallback for an index the target does not span.
     prefixes = ("target_", "source_")
     colorscale = DIVERGING
 
@@ -58,9 +56,6 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
         return metric_column(*panel)
 
     def value_range(self, panel: MetricPair, values: Sequence[float]) -> tuple[float, float]:
-        # An ineffective patch reproduces the target run, so that is where the diverging scale is
-        # centred: at the target's own metric when it is reported absolutely, and at zero once the
-        # comparison has already subtracted it.
         metric, comparison = panel
         midpoint = (
             float(self.operation_input.target_baseline(metric)) if comparison is MetricComparison.ABSOLUTE else 0.0
@@ -78,7 +73,6 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
         target = describe_row(row, "target_")
         column = self.value_column(panel)
         lines = [f"<b>{column} = {format_value(row[column])}</b>"]
-        # Only a method that runs the patched model has a generation to report.
         if "str_generation" in row.index:
             lines.append(f'generation: "{format_value(row["str_generation"])}"')
         if coordinate and coordinate != target:
@@ -101,7 +95,10 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
         rows = len(self.result)
         constant = []
         varying = []
-        for index in self.operation_input.index[1:]:
+        layout = self.operation_input.layout_index
+        for index in self.operation_input.index:
+            if index is layout:
+                continue
             frame = index.to_df()
             if len(frame) == 1:
                 constant.append(describe_row(frame.iloc[0], "target_"))

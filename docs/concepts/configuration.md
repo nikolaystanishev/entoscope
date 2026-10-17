@@ -134,7 +134,8 @@ from pathlib import Path
 
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope import Lens, LensInput, from_dict
+from entoscope import Lens, LensInput
+from entoscope.util.data import from_dict
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()

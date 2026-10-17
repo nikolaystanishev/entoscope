@@ -17,7 +17,6 @@ class CircuitMethodConfig(MethodConfig):
 
     @classmethod
     def factory(cls) -> type[CircuitMethodFactory]:
-        # Imported here: the factory imports the methods, which import this module.
         from entoscope.circuit.method.factory import CircuitMethodFactory
 
         return CircuitMethodFactory

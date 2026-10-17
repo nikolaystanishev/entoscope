@@ -142,7 +142,8 @@ effect, a logit difference as a fraction of the gap between the two runs. A metr
 `patch` lists the elements to patch. An element is a `SinglePatchingConfig` with a `source` and a
 `target`, each a `PatchingElementConfig`, which is a [locator](../concepts/locating.md) plus `type`
 and `value`. Row `i` of the source index is read and written at row `i` of the target index. A side
-with a single row pairs with every row of the other, and the two sides may name different locations,
+with a single row pairs with every row of the other; otherwise the two need as many rows, and a pair
+that does not line up is rejected before anything runs. The two sides may name different locations,
 such as reading layer 10 and writing layer 11, as long as the slices fit.
 
 The source's `type` says what gets written:
@@ -157,15 +158,16 @@ The source's `type` says what gets written:
 The noise's standard deviation is three times the target run's own standard deviation over the whole
 activation, as in causal tracing (Meng et al., 2022). It is drawn from a fixed seed, so every row is
 corrupted by the same draw and a rerun repeats the sweep exactly. The target's `type` is always
-`replace`.
+`replace`. A type that cannot run, such as another target type or a source that reads a source run
+the input has no prompt for, is rejected as the `PatchingInput` is built.
 
 ### Several elements at once
 
 With more than one element, patched run `i` applies row `i` of every element together, so their
 indices must have the same number of rows, or one. An element with one row is applied on every run.
-The result is laid out along the first element's index, so put the element that varies first. A
-one-row element listed first collapses every run into a single result row. On the result page, a
-one-row element is named in the subtitle and a varying one in every cell's hover.
+The result is laid out along the element with the most rows, the first of them when several tie, so
+every patched run has a row of its own. On the result page, a one-row element is named in the subtitle
+and a varying one in every cell's hover.
 
 ```yaml
 patch:
@@ -226,7 +228,7 @@ Zero ablation writes a value, so it reads no source run. The source names only i
 that pairs with every target row:
 
 ```python
-from entoscope import from_dict
+from entoscope.util.data import from_dict
 
 zero_mlp = from_dict(
     PatchingConfig,
@@ -252,7 +254,8 @@ is no `normalized` and no `kl_divergence`, and the correct token has to be named
 
 `result.csv` has one row per patched run:
 
-- the first element's index, as `source_*` and `target_*` columns;
+- the index of the element the result is laid out along, as `source_*` and `target_*` columns, a
+  one-row source or target repeated on every row it pairs with;
 - a column per metric and comparison pair, in the order the config names them: the metric's name for
   `absolute`, otherwise the comparison then the metric, as in `normalized_logit_diff`;
 - `generation` and `str_generation`, the token the patched run predicts next, for `exact`.

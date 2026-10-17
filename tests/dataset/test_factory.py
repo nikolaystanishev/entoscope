@@ -4,7 +4,7 @@ from entoscope.dataset.config import DatasetConfig
 from entoscope.dataset.dataset import AbstractDataset, Row
 from entoscope.dataset.factory import DatasetFactory
 
-from .conftest import ROWS, JsonlDataset, dataset_config
+from .conftest import ROWS, JsonlDataset, JsonlDatasetConfig, dataset_config
 
 
 def test_a_registered_type_resolves_to_its_implementation(jsonl_dataset_class, prompts_file):
@@ -86,6 +86,6 @@ def test_one_class_can_answer_to_several_names(jsonl_dataset_class, prompts_file
     DatasetFactory.register("lines")(JsonlDataset)
 
     assert DatasetFactory.registered() == ["jsonl", "lines"]
-    dataset = DatasetFactory.create(DatasetConfig(type="lines", path=prompts_file()))
+    dataset = DatasetFactory.create(JsonlDatasetConfig(type="lines", path=prompts_file()))
     assert isinstance(dataset, JsonlDataset)
     assert dataset.prepare().rows == ROWS

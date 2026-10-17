@@ -41,7 +41,6 @@ class RegistryFactory(Generic[T]):
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        # Type arguments are erased at runtime: the subscripted base in the class statement is their only record.
         arguments = {get_origin(alias): get_args(alias) for alias in cls.__dict__.get("__orig_bases__", ())}
         base = arguments.get(RegistryFactory, (None,))[0]
         if not isinstance(base, type):

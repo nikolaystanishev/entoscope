@@ -56,7 +56,7 @@ def _result_columns(result: pd.DataFrame) -> list[str]:
 
 
 # --------------------------------------------------------------------------------------------------
-# The residual stream — the lens is the model's own read-out applied to an earlier state
+# The residual stream - the lens is the model's own read-out applied to an earlier state
 # --------------------------------------------------------------------------------------------------
 def test_the_grid_covers_every_layer_and_position(model):
     result = lens_rows(model, declarative_config(**LAYER_POSITION_GRID))
@@ -114,12 +114,10 @@ def test_a_coordinate_run_reads_each_coordinates_own_activation(model, activatio
     assert_row_reads(model, result.iloc[1], unembed(model, cache[f"blocks.{last}.hook_mlp_out"][:, -1]))
 
 
-def test_the_prepared_input_carries_the_models_own_logits(model, activations):
-    logits, _ = activations
+def test_the_prepared_input_tokenizes_the_prompt_as_the_model_does(model):
     lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT).prepare(model)
 
-    assert torch.equal(lens_input.logits, logits)
-    assert lens_input.tokens.shape == logits.shape[:2]
+    assert torch.equal(lens_input.tokens, model.to_tokens(PROMPT))
 
 
 def test_preparing_an_input_twice_keeps_what_it_already_built(model):
@@ -137,19 +135,18 @@ def test_a_prepared_input_moves_to_a_device(model):
 
     assert moved is lens_input
     assert moved.tokens.device.type == "cpu"
-    assert moved.logits.device.type == "cpu"
     assert all(activation.device.type == "cpu" for activation in moved.cache.values())
 
 
 def test_the_run_only_caches_the_activations_its_index_names(model):
     # Not visible in the result: the restriction is about what the forward pass keeps, so the prepared
-    # input is read directly. Nothing is stubbed — this is the real model and the real index.
+    # input is read directly. Nothing is stubbed - this is the real model and the real index.
     lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT).prepare(model)
 
     expected = {f"blocks.{layer}.hook_resid_post" for layer in range(model.cfg.n_layers)}
     assert lens_input.index.source_activation_names() == expected
     # A bridge fires the block's own output hook under a second name for the same activation, so the
-    # cache holds those aliases as well — and nothing beyond them.
+    # cache holds those aliases as well - and nothing beyond them.
     aliases = {f"blocks.{layer}.hook_out" for layer in range(model.cfg.n_layers)}
     assert expected <= set(lens_input.cache.keys()) <= expected | aliases
 
@@ -158,7 +155,7 @@ def test_the_run_only_caches_the_activations_its_index_names(model):
 
 
 # --------------------------------------------------------------------------------------------------
-# MLP-hidden activations — projected through the layer's W_out, so a row reads what its neurons write
+# MLP-hidden activations - projected through the layer's W_out, so a row reads what its neurons write
 # --------------------------------------------------------------------------------------------------
 def test_a_single_neuron_is_lifted_by_its_row_of_w_out(model, activations):
     _, cache = activations
@@ -224,7 +221,7 @@ def test_a_neuron_grid_projects_every_row_through_its_own_layer(model, activatio
 
 
 # --------------------------------------------------------------------------------------------------
-# Attention — head outputs are lifted by W_O, queries and keys are read against the embedding
+# Attention - head outputs are lifted by W_O, queries and keys are read against the embedding
 # --------------------------------------------------------------------------------------------------
 def test_a_single_head_is_lifted_by_its_row_of_w_o(model, activations):
     _, cache = activations
@@ -397,7 +394,7 @@ def test_a_config_id_the_file_does_not_have_raises(tmp_path):
 
 
 # --------------------------------------------------------------------------------------------------
-# Driven from an experiment script — the way README and example_lens_script.py run a lens
+# Driven from an experiment script - the way README and example_lens_script.py run a lens
 # --------------------------------------------------------------------------------------------------
 LENS_SCRIPT = """\
 from dataclasses import dataclass
@@ -512,6 +509,22 @@ def test_key_and_value_projections_are_allowed_without_grouping(small_model):
 
     assert len(result) == 1
     assert 0 <= result.iloc[0]["token_0"] < small_model.cfg.d_vocab
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"activation": "resid.post", "location": ["layer"]},
+        {"activation": "resid.post", "location": ["layer"], "filter": [{"position": -1}]},
+        {"activation": "resid.post", "location": ["layer", "position"], "group": {"position": [1, 2]}},
+        {"activation": "resid.post", "location": ["layer", "position"], "incremental": {"position": [1]}},
+        {"coordinates": [{"activation": "resid.post", "layer": 0}]},
+        {"coordinates": [{"activation": "resid.post", "layer": 0, "position": [1, 2]}]},
+    ],
+)
+def test_an_activation_lens_reads_one_position_per_row(source):
+    with pytest.raises(ValueError, match="one position per row"):
+        LensConfig(method=LensMethodConfig(type="logit_lens"), source=ModelLocatorConfig(**source))
 
 
 def test_a_lens_config_without_a_prompt_raises():

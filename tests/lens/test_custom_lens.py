@@ -243,7 +243,7 @@ def test_a_lens_extending_another_takes_its_method_config(model, config_from_yam
         "source": {"activation": "mlp.post", "location": ["layer"]},
     }
 
-    lens = LensMethodFactory.create(config_from_yaml(LensConfig, "projected", raw), model)
+    lens = LensMethodFactory.create(model, config_from_yaml(LensConfig, "projected", raw))
 
     assert lens.method_config == ParameterLensConfig(
         type="negated_parameter_lens", projection=ProjectionSpace.EMBEDDING, scale=2.0
@@ -328,8 +328,8 @@ def test_a_lens_whose_fields_have_no_defaults_needs_them(config_from_yaml, regis
     ("method", "message"),
     [
         ({"temperature": TEMPERATURE}, r"Missing required keys for LensMethodConfig: \['type'\]"),
-        (None, "Expected a method type or a mapping for LensMethodConfig, got None"),
-        ([TEMPERATURE], r"Expected a method type or a mapping for LensMethodConfig, got \[2.0\]"),
+        (None, "Expected a lens method or a mapping for LensMethodConfig, got None"),
+        ([TEMPERATURE], r"Expected a lens method or a mapping for LensMethodConfig, got \[2.0\]"),
     ],
 )
 def test_a_method_entry_naming_no_type_is_rejected_as_the_config_is_read(config_from_yaml, method, message):

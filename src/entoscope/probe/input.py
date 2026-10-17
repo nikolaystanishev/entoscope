@@ -60,7 +60,6 @@ class ProbeInput(OperationInput):
     def prepare(self, model: Model) -> "ProbeInput":
         self.prepare_index(model)
 
-        # Guarded on the features, not the index: a ``plan`` may have resolved the index already.
         if self._features is None:
             self._features = self._collect_features(model, self.token_tensors, self.index)
             self._labels = torch.cat(
@@ -78,9 +77,6 @@ class ProbeInput(OperationInput):
         token_tensors: list[Int[torch.Tensor, "batch pos"]],
         index: Index[ModelLocatorConfig],
     ) -> dict[int, Float[torch.Tensor, "examples features"]]:
-        # One prompt at a time keeps a single activation cache alive; features go to CPU
-        # immediately, so memory stays bounded regardless of the number of examples.
-        # Keyed by the index row's position, which is the same for a location on every prompt.
         vectors: dict[int, list[torch.Tensor]] = defaultdict(list)
         for tokens in token_tensors:
             with torch.no_grad():

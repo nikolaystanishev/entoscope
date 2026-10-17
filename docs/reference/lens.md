@@ -2,8 +2,8 @@
 
 Logit, tuned and parameter lens.
 
-The operator, its input, configs, enums, collectors and methods are importable from `entoscope.lens`;
-the operator, its input, configs and enums from `entoscope` too.
+The operator, its input, configs, enums, collectors, method base and factory are importable from
+`entoscope.lens`; the operator, its input, configs and enums from `entoscope` too.
 
 ```{eval-rst}
 .. automodule:: entoscope.lens.config

@@ -31,7 +31,7 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
         self._check_available(patching_input)
         gradients = self._gradients(patching_input, verbose)
 
-        for group in tqdm(patching_input.rows(), disable=not verbose):
+        for output, group in enumerate(tqdm(patching_input.rows(), disable=not verbose)):
             deltas: dict[PatchingMetric, torch.Tensor] = {}
             for index in group:
                 name = index.target.transformer_activation()
@@ -40,12 +40,10 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
                 replacement = SourceStrategy.get(index.source.config.type).extract(index.source, patching_input)
                 change = replacement.to(clean) - clean
                 for metric in self.config.metric:
-                    # A row patching several elements at once applies them on one run, and to first
-                    # order that run's effect is the sum of theirs.
                     contribution = (gradients[metric][name][slices] * change).sum()
                     deltas[metric] = deltas[metric] + contribution if metric in deltas else contribution
 
-            yield RowResult(group[0].output, self._report(patching_input, deltas))
+            yield RowResult(output, self._report(patching_input, deltas))
 
     def passes(self, runs: int, batches: int) -> tuple[int, int]:
         steps = len(self._alphas())
@@ -61,8 +59,12 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
         """
         return [1.0]
 
+    @torch.enable_grad()
     def _gradients(self, patching_input: PatchingInput, verbose: bool) -> Gradients:
-        """``d m / d a`` for every hooked activation, averaged over the interpolation path."""
+        """``d m / d a`` for every hooked activation, averaged over the interpolation path.
+
+        Taken with autograd on whatever the caller has set, so a run under ``torch.no_grad()`` scores the same.
+        """
         names = patching_input.target_activation_names()
         alphas = self._alphas()
         totals: Gradients = {metric: {} for metric in self.config.metric}
@@ -74,9 +76,6 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
 
             for i, metric in enumerate(self.config.metric):
                 value = AbstractMetric.get(metric).compute(patching_input, logits)
-                # allow_unused: an index may name an activation that does not reach the logits at
-                # all (a head's pattern the run never attends through), which is a zero gradient
-                # rather than an error.
                 gradients = torch.autograd.grad(
                     value,
                     list(captured.values()),
@@ -99,7 +98,8 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
         """A hook that moves the activation onto the interpolation point and keeps it differentiable.
 
         The tensor is left in the graph - detaching it would cut the path back through the layers
-        below and zero their gradients - and is handed to ``autograd.grad`` as a non-leaf input.
+        below and zero their gradients - and is handed to ``autograd.grad`` as a non-leaf input. One
+        that no parameter reaches, as on a frozen model, has no graph to cut and becomes a leaf instead.
         """
 
         def interpolate(activation: torch.Tensor, hook) -> torch.Tensor:
@@ -108,6 +108,8 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
                 if alpha == 1.0
                 else alpha * activation + (1 - alpha) * patching_input.source_cache[name].to(activation)
             )
+            if not value.requires_grad:
+                value = value.detach().requires_grad_()
             captured[name] = value
             return value
 

@@ -9,7 +9,8 @@ from entoscope.model.index import Index
 from entoscope.operation.input import OperationInput
 from entoscope.patching.config import PatchingConfig, PatchingElementConfig, PatchingMetric
 from entoscope.patching.metric import AbstractComparison, AbstractMetric
-from entoscope.util.collections import zip_fill
+from entoscope.patching.processor import SourceStrategy, TargetStrategy
+from entoscope.util.collections import broadcast_length, zip_broadcast
 
 
 @dataclass
@@ -48,8 +49,10 @@ class PatchingInput(OperationInput):
 
     _baselines: dict[tuple[str, PatchingMetric], torch.Tensor] = field(init=False, default_factory=dict)
     _source_probabilities: torch.Tensor | None = field(init=False, default=None)
-    _target_probabilities: torch.Tensor | None = field(init=False, default=None)
     _noise_scales: dict[str, torch.Tensor] = field(init=False, default_factory=dict)
+
+    def __post_init__(self):
+        self._check_available()
 
     def prepare_index(self, model: Model) -> "PatchingInput":
         if self._index is not None:
@@ -70,8 +73,14 @@ class PatchingInput(OperationInput):
             )
             for patching_config in self.config.patch
         ]
-        index_lengths = [len(idx) for idx in index]
-        assert len(index_lengths) == 0 or all(length == max(index_lengths) or length == 1 for length in index_lengths)
+        try:
+            broadcast_length(*map(len, index))
+        except ValueError:
+            lengths = " and ".join(str(length) for length in sorted({len(idx) for idx in index} - {1}))
+            raise ValueError(
+                f"Patch elements of {lengths} rows cannot be applied together: patched run i applies row i of every "
+                "element, so they need as many rows, or one"
+            ) from None
         self._index = index
 
         return self
@@ -86,10 +95,7 @@ class PatchingInput(OperationInput):
         ``batch_width`` copies abreast and kept at its first row.
         """
         self.prepare_index(model)
-        self._check_metrics_are_available()
 
-        # Guarded on the target cache, not the index: a ``plan`` may have resolved the index
-        # already, and a run without a source prompt never fills the source one.
         batch_width = max(1, min(batch_size, len(self.rows())))
         if self._target_cache is None or batch_width != self._batch_width:
             names = self.activation_names()
@@ -103,10 +109,8 @@ class PatchingInput(OperationInput):
                 )
             self._batch_width = batch_width
 
-            # Everything read off the previous runs, which a run at another width replaces.
             self._baselines = {}
             self._source_probabilities = None
-            self._target_probabilities = None
             self._noise_scales = {}
 
             if self._source_logits is not None:
@@ -130,8 +134,8 @@ class PatchingInput(OperationInput):
         return logits, cache
 
     def rows(self) -> list[tuple]:
-        """The index's rows as a run patches them: one group of elements per patched run."""
-        return list(zip_fill(*self.index)) if self.index else []
+        """The index's rows as a run patches them: one group of elements per patched run, in result row order."""
+        return zip_broadcast(*self.index)
 
     def activation_names(self) -> list[str]:
         """Every activation the run touches, on either side of the patch.
@@ -148,13 +152,18 @@ class PatchingInput(OperationInput):
     def target_activation_names(self) -> list[str]:
         return sorted(set().union(*(idx.target_activation_names() for idx in self.index))) if self.index else []
 
-    def _check_metrics_are_available(self) -> None:
-        """Name every metric and comparison, then reject those that need a source run there is not.
+    def _check_available(self) -> None:
+        """Name every element's strategies, metric and comparison, then reject those needing a missing source run.
 
-        Resolved up front rather than at the first cell, so a config naming something no metric
-        implements fails before the model is run. Both are collected into dicts, so a comparison
-        named under several metrics is reported once.
+        Resolved as the input is built, so a config naming something no strategy or metric implements fails
+        before a model is involved. Each is collected into a dict, so a type or comparison named several times
+        is reported once.
         """
+        if not self.config.patch:
+            raise ValueError("A patching run needs at least one patch element")
+        sources = {element.source.type: SourceStrategy.get(element.source.type) for element in self.config.patch}
+        for element in self.config.patch:
+            TargetStrategy.get(element.target.type)
         metrics = {metric: AbstractMetric.get(metric) for metric in self.config.metric}
         comparisons = {
             comparison: AbstractComparison.get(comparison)
@@ -164,14 +173,17 @@ class PatchingInput(OperationInput):
         if self.source_prompt is not None:
             return
 
-        unavailable = [
+        reading = [named.value for named, strategy in sources.items() if strategy.needs_source_run]
+        if reading:
+            raise ValueError(f"{', '.join(reading)} reads the source run, which needs a source prompt")
+        scoring = [
             named.value
             for named, implementation in (*metrics.items(), *comparisons.items())
             if implementation.needs_source_run
         ]
-        if unavailable:
+        if scoring:
             raise ValueError(
-                f"{', '.join(unavailable)} scores the patched run against the source run, which needs a source prompt"
+                f"{', '.join(scoring)} scores the patched run against the source run, which needs a source prompt"
             )
 
     def _resolve_answer_tokens(self, model: Model) -> None:
@@ -195,7 +207,7 @@ class PatchingInput(OperationInput):
             return int(token)
         if fallback is None:
             raise ValueError(
-                "Without a source prompt there is no run to read the correct token off — pass 'correct_token'"
+                "Without a source prompt there is no run to read the correct token off - pass 'correct_token'"
             )
         return fallback
 
@@ -255,6 +267,11 @@ class PatchingInput(OperationInput):
         return self._index
 
     @property
+    def layout_index(self) -> Index[PatchingElementConfig]:
+        """The element index the result is laid out along: the first with the most rows, so every run has a row."""
+        return max(self.index, key=len)
+
+    @property
     def batch_width(self) -> int:
         """How many rows every patched run holds - the width the cached runs were made at."""
         assert self._batch_width is not None
@@ -278,12 +295,6 @@ class PatchingInput(OperationInput):
         if self._source_probabilities is None:
             self._source_probabilities = self.source_logits[0, -1].softmax(dim=-1)
         return self._source_probabilities
-
-    @property
-    def target_probabilities(self) -> torch.Tensor:
-        if self._target_probabilities is None:
-            self._target_probabilities = self.target_logits[0, -1].softmax(dim=-1)
-        return self._target_probabilities
 
     def noise_scale(self, name: str) -> torch.Tensor:
         """The standard deviation ``gaussian_noise`` draws at for activation ``name``.
@@ -310,8 +321,6 @@ class PatchingInput(OperationInput):
             self._target_logits = self._target_logits.to(device)
         if self._source_probabilities is not None:
             self._source_probabilities = self._source_probabilities.to(device)
-        if self._target_probabilities is not None:
-            self._target_probabilities = self._target_probabilities.to(device)
         self._baselines = {key: baseline.to(device) for key, baseline in self._baselines.items()}
         self._noise_scales = {name: scale.to(device) for name, scale in self._noise_scales.items()}
 

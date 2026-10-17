@@ -20,9 +20,8 @@ from entoscope.model.config import (
     make_df_from_ranges,
 )
 from entoscope.model.slicer import ActivationSlicer
-from entoscope.util.collections import dataframe_to_list, zip_fill
+from entoscope.util.collections import broadcast_length, dataframe_to_list, zip_broadcast
 
-# Maps entoscope's dotted ``ModelLayerLocation`` values onto the names ``get_act_name`` expects.
 TRANSFORMER_ACT_NAME: dict[ModelLayerLocation, str] = {
     ModelLayerLocation.EMBEDDING: "embed",
     ModelLayerLocation.RESIDUAL_PRE: "resid_pre",
@@ -68,7 +67,7 @@ class IndexElement(Generic[T]):
     def slices(self, batch: int | slice = slice(None)) -> tuple[slice | int | list[int], ...]:
         """The element's slices into an activation, at ``batch`` along its batch axis.
 
-        The batch row is an argument rather than state on the element: ``zip_fill`` hands the same
+        The batch row is an argument rather than state on the element: ``zip_broadcast`` hands the same
         element to every row a one-row index is paired with, so a row stored on it would be shared.
         """
         return ActivationSlicer.get(self.activation()).extract(self._index_by_name(batch))
@@ -89,7 +88,9 @@ class IndexElement(Generic[T]):
         ]
 
     def activation(self) -> ModelLayerLocation:
-        return self[ModelLocation.ACTIVATION]
+        """The row's activation, as a member whichever way the frame stores it (pandas 3 keeps a string)."""
+        activation = self[ModelLocation.ACTIVATION]
+        return activation if activation is None else ModelLayerLocation(activation)
 
     def transformer_activation(self) -> str:
         return get_act_name(TRANSFORMER_ACT_NAME[self.activation()], layer=self.layer())
@@ -134,9 +135,9 @@ class Index(Generic[T]):
     """The rows an operation iterates, one ``SingleIndex`` each.
 
     ``source`` is a parsed locator; patching adds the ``target`` it writes into, paired with the source
-    row by row - an index of one row pairs with every row of the other. ``to_df`` is the frame
-    ``index.csv`` holds, its columns prefixed ``source_`` and ``target_``, and ``layout_df`` codes the
-    axes a result page lays the rows out on.
+    row by row - so the two have as many rows, or one of them a single row, which pairs with every row of
+    the other. ``to_df`` is the frame ``index.csv`` holds, its columns prefixed ``source_`` and ``target_``,
+    and ``layout_df`` codes the axes a result page lays the rows out on.
     """
 
     def __init__(
@@ -151,9 +152,18 @@ class Index(Generic[T]):
         self.target_config = target_config
         self.target = target
 
-        laid_out = (
-            self.target.df if self.target is not None and len(self.target.df) >= len(self.source.df) else self.source.df
-        )
+        if self.target is None:
+            self._length = len(self.source.df)
+        else:
+            try:
+                self._length = broadcast_length(len(self.source.df), len(self.target.df))
+            except ValueError:
+                raise ValueError(
+                    f"A source of {len(self.source.df)} rows cannot be paired with a target of {len(self.target.df)}: "
+                    "they pair row by row, so they need as many rows, or one of them a single row"
+                ) from None
+
+        laid_out = self.target.df if self.target is not None and len(self.target.df) == len(self) else self.source.df
         if self.source_config.coordinates is not None and (
             self.target_config is None or self.target_config.coordinates is not None
         ):
@@ -161,7 +171,7 @@ class Index(Generic[T]):
         else:
             axes = laid_out.drop(columns=ModelLocation.ACTIVATION, errors="ignore")
             self.layout_df = pd.DataFrame(
-                {column: pd.factorize(axes[column].astype(str))[0] for column in axes.columns}, index=axes.index
+                {column: pd.factorize(axes[column].astype(str))[0] for column in axes.columns}
             )
 
     def source_activation_names(self) -> set[str]:
@@ -179,11 +189,16 @@ class Index(Generic[T]):
         return {element.transformer_activation() for element in elements if element.activation() is not None}
 
     def to_df(self) -> pd.DataFrame:
-        dfs = [self.source.df.add_prefix("source_")]
+        frames = [self._paired(self.source.df).add_prefix("source_")]
         if self.target is not None:
-            dfs.append(self.target.df.add_prefix("target_"))
+            frames.append(self._paired(self.target.df).add_prefix("target_"))
 
-        return pd.concat(dfs, axis=1)
+        return pd.concat(frames, axis=1)
+
+    def _paired(self, frame: pd.DataFrame) -> pd.DataFrame:
+        """``frame``'s rows in the order they pair, a single row repeated along every row of the other side."""
+        rows = [0] * len(self) if len(frame) == 1 else list(range(len(frame)))
+        return frame.iloc[rows].reset_index(drop=True)
 
     def to_csv(self, path: str):
         self.to_df().to_csv(path, index=False)
@@ -205,9 +220,9 @@ class Index(Generic[T]):
                 IndexElement[T](self.target_config, target_columns, target_row),
             )
             for position, (source_row, target_row) in enumerate(
-                zip_fill(dataframe_to_list(self.source.df), dataframe_to_list(self.target.df))
+                zip_broadcast(dataframe_to_list(self.source.df), dataframe_to_list(self.target.df))
             )
         )
 
     def __len__(self) -> int:
-        return len(self.layout_df)
+        return self._length

@@ -12,22 +12,14 @@ from entoscope.patching.config import (
     SinglePatchingConfig,
 )
 from entoscope.patching.input import PatchingInput
-from entoscope.patching.method.attribution import (
-    AttributionPatchingMethod,
-    IntegratedGradientsConfig,
-    IntegratedGradientsMethod,
-)
-from entoscope.patching.method.exact import ExactPatchingMethod
+from entoscope.patching.method.attribution import IntegratedGradientsConfig
 from entoscope.patching.method.factory import PatchingMethodFactory
 from entoscope.patching.method.patching import AbstractPatchingMethod
 from entoscope.patching.patcher import Patcher
 
 __all__ = [
     "AbstractPatchingMethod",
-    "AttributionPatchingMethod",
-    "ExactPatchingMethod",
     "IntegratedGradientsConfig",
-    "IntegratedGradientsMethod",
     "MetricComparison",
     "Patcher",
     "PatchingCollector",

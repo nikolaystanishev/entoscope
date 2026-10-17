@@ -1,9 +1,11 @@
+import dataclasses
 import itertools
 import sys
+import typing
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Protocol
 
 import numpy as np
@@ -12,9 +14,10 @@ from pandas._typing import Axes
 
 from entoscope.model.base import Model
 from entoscope.util.collections import range_combinations
+from entoscope.util.data import from_dict
 
 
-class ModelLocation(str, Enum):
+class ModelLocation(StrEnum):
     """The keys an index row is made of.
 
     ``layer``, ``head``, ``neuron`` and ``position`` are axes a locator can enumerate. ``activation`` is
@@ -28,7 +31,7 @@ class ModelLocation(str, Enum):
     POSITION = "position"
 
 
-class ModelLayerLocation(str, Enum):
+class ModelLayerLocation(StrEnum):
     """The activations a locator can name, spelled as a config spells them.
 
     Each maps onto a ``transformer_lens`` hook through ``TRANSFORMER_ACT_NAME``; the comment beside a
@@ -85,6 +88,15 @@ MODEL_LOCATION_MAPPER: dict[ModelLocation, Callable] = {
 }
 
 
+def count_from_end(value: int, max_value: int | None) -> int:
+    """``value`` on an axis of ``max_value`` entries, a negative one counting from its end.
+
+    ``max_value is None`` is a prompt length that varies, so the value stays symbolic and torch resolves
+    a negative one against each prompt's own cache at slice time.
+    """
+    return value if value >= 0 or max_value is None else max_value + value
+
+
 def make_df_from_ranges(column_names: Axes, column_ranges: Sequence[int | Sequence[int]]) -> pd.DataFrame:
     return pd.DataFrame(
         data=itertools.product(
@@ -95,12 +107,12 @@ def make_df_from_ranges(column_names: Axes, column_ranges: Sequence[int | Sequen
 
 
 class IndexTransform(Protocol):
-    """A config section that rewrites the index DataFrame in place in the parse pipeline.
+    """A config section that rewrites the index DataFrame in the parse pipeline.
 
-    ``location`` is the mixin's (mutable) list of locations; only ``Combination`` extends it.
+    ``location_to_max_value`` sizes every axis the transform names, so a negative value counts from its end.
     """
 
-    def apply(self, index_df: pd.DataFrame) -> pd.DataFrame: ...
+    def apply(self, index_df: pd.DataFrame, location_to_max_value: dict) -> pd.DataFrame: ...
 
 
 @dataclass
@@ -192,24 +204,18 @@ class Filter:
 
     @classmethod
     def _resolve(cls, constraint: int | dict | list, location: ModelLocation, max_value: int | None) -> set[int]:
-        # ``max_value is None`` means the prompt length varies (positions only): keep the value
-        # symbolic so torch resolves a negative against each prompt's own cache at slice time.
         if isinstance(constraint, list):
             return set().union(*(cls._resolve(el, location, max_value) for el in constraint))
         if isinstance(constraint, int):
-            return {constraint if constraint >= 0 or max_value is None else max_value + constraint}
+            return {count_from_end(constraint, max_value)}
         if isinstance(constraint, dict) and set(constraint.keys()) == {"range"}:
             start, end = constraint["range"]
-            if max_value is None:
-                if (start < 0) != (end < 0):
-                    raise ValueError(
-                        f"Cannot resolve range {constraint['range']} for '{location.value}' when the prompt "
-                        "length varies; use positions on the same side (all from the start or all from the end)"
-                    )
-            else:
-                start = start if start >= 0 else max_value + start
-                end = end if end >= 0 else max_value + end
-            return set(range(start, end + 1))
+            if max_value is None and (start < 0) != (end < 0):
+                raise ValueError(
+                    f"Cannot resolve range {constraint['range']} for '{location.value}' when the prompt "
+                    "length varies; use positions on the same side (all from the start or all from the end)"
+                )
+            return set(range(count_from_end(start, max_value), count_from_end(end, max_value) + 1))
         raise ValueError(f"Invalid filter constraint for '{location}': {constraint!r}")
 
 
@@ -222,10 +228,12 @@ class Group(dict[ModelLocation, list[int] | str]):
     no activation a run can read.
     """
 
-    def apply(self, index_df: pd.DataFrame) -> pd.DataFrame:
+    def apply(self, index_df: pd.DataFrame, location_to_max_value: dict) -> pd.DataFrame:
         for name, values in self.items():
             if values == "all":
                 values = index_df[name].unique().tolist()
+            else:
+                values = [count_from_end(value, location_to_max_value[name]) for value in values]
             values_to_replace = {v: values for v in values}
             index_df[name] = index_df[name].apply((lambda mapping: lambda el: mapping.get(el, el))(values_to_replace))
         index_df = index_df.loc[index_df.astype(str).drop_duplicates().index]
@@ -240,8 +248,9 @@ class Incremental(dict[ModelLocation, list[int]]):
     ``[0, 6, 9]``. An axis the index does not have yet is added, and then only the grown rows exist.
     """
 
-    def apply(self, index_df: pd.DataFrame) -> pd.DataFrame:
+    def apply(self, index_df: pd.DataFrame, location_to_max_value: dict) -> pd.DataFrame:
         for name, values in self.items():
+            values = [count_from_end(value, location_to_max_value[name]) for value in values]
             new_rows = []
             for _, row in index_df.iterrows():
                 row = row.astype(object)
@@ -278,7 +287,7 @@ class Combination:
     location: list[ModelLocation] = field(default_factory=list)
     max_elements: int = sys.maxsize
 
-    def apply(self, index_df: pd.DataFrame) -> pd.DataFrame:
+    def apply(self, index_df: pd.DataFrame, location_to_max_value: dict) -> pd.DataFrame:
         for location in self.location:
             new_rows = []
             for _, row in index_df.iterrows():
@@ -355,12 +364,10 @@ class Coordinates(list[dict[ModelLocation, int | list[int] | ModelLayerLocation]
 
     @classmethod
     def _resolve_value(cls, value: int | list[int], location: ModelLocation, max_value: int | None) -> int | list[int]:
-        # ``max_value is None`` (prompt length varies, positions only): keep the value symbolic so a
-        # negative resolves against each prompt's own cache at slice time.
         if isinstance(value, list):
             return [cls._resolve_value(el, location, max_value) for el in value]
         if isinstance(value, int):
-            return value if value >= 0 or max_value is None else max_value + value
+            return count_from_end(value, max_value)
         raise ValueError(f"Invalid coordinate value for '{location}': {value!r}")
 
 
@@ -385,12 +392,14 @@ class ModelLocatorConfig:
     coordinates: Coordinates | None = None
 
     def __post_init__(self):
+        hints = typing.get_type_hints(type(self))
+        for declared in dataclasses.fields(self):
+            setattr(self, declared.name, from_dict(hints[declared.name], getattr(self, declared.name)))
+
         if ModelLocation.ACTIVATION in self.location:
             raise ValueError("'activation' is not a declarative location; set 'activation' on the config instead")
         if self.coordinates is None:
             return
-        if not isinstance(self.coordinates, Coordinates):
-            self.coordinates = Coordinates.from_config(self.coordinates)
         if (
             self.location
             or self.filter.inclusion_terms
@@ -431,7 +440,8 @@ class ModelLocatorConfig:
             index_df = self.coordinates.to_df(model, n_positions, self.activation)
         else:
             location_to_max_value = {
-                el: MODEL_LOCATION_MAPPER[el](model, self.activation, n_positions) for el in self.location
+                el: MODEL_LOCATION_MAPPER[el](model, self.activation, n_positions)
+                for el in {*self.location, *self.group, *self.incremental}
             }
             index_df = make_df_from_ranges(
                 self.location, [self.filter.location_range(el, location_to_max_value[el]) for el in self.location]
@@ -439,7 +449,7 @@ class ModelLocatorConfig:
             index_df = self.filter.apply(index_df, location_to_max_value)
 
             for transform in self._transforms:
-                index_df = transform.apply(index_df)
+                index_df = transform.apply(index_df, location_to_max_value)
 
         if ModelLocation.ACTIVATION not in index_df.columns:
             index_df[ModelLocation.ACTIVATION] = self.activation

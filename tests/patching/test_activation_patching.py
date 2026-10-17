@@ -29,7 +29,7 @@ from entoscope.patching.method.factory import PatchingMethodFactory
 from entoscope.patching.patcher import Patcher
 from entoscope.patching.processor import GaussianNoiseSourceStrategy
 
-from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
+from ..conftest import RenderedFigure, build_small_model, forbid_model_runs, rendered_figure, rendered_figures
 
 SOURCE_PROMPT = "The capital of France is"
 TARGET_PROMPT = "The capital of Spain is"
@@ -39,7 +39,7 @@ EXACT = PatchingMethodConfig(type="exact")
 def _metric(
     collector: PatchingCollector, metric: PatchingMetric | None = None, comparison: MetricComparison | None = None
 ) -> torch.Tensor:
-    """One of the result frame's metric columns, in index order — one value per patched run.
+    """One of the result frame's metric columns, in index order - one value per patched run.
 
     Names nothing: the first column when neither argument is given, and a metric's own first
     comparison when only the metric is.
@@ -54,7 +54,7 @@ def _metric(
 
 def _cell_columns(collector: PatchingCollector) -> list[str]:
     """The result's columns past the index's own: what each patched run reported, in order."""
-    return list(collector.result.columns[len(collector.operation_input.index[0].to_df().columns) :])
+    return list(collector.result.columns[len(collector.operation_input.layout_index.to_df().columns) :])
 
 
 # What the exact method records about the patched run besides its metrics.
@@ -74,7 +74,7 @@ def _collect(model: Model, config: PatchingConfig, source: str | None = SOURCE_P
 
 
 def _generations(model: Model) -> tuple[int, int]:
-    """The tokens the two prompts predict — the pair every logit-diff metric falls back to."""
+    """The tokens the two prompts predict - the pair every logit-diff metric falls back to."""
     with torch.no_grad():
         return int(model(SOURCE_PROMPT)[0, -1].argmax()), int(model(TARGET_PROMPT)[0, -1].argmax())
 
@@ -357,7 +357,7 @@ def test_multi_config_patching_mlp_mhsa_and_pattern(model: Model) -> None:
 
 
 # --------------------------------------------------------------------------------------------------
-# The metrics — every scalar the formulas name, read off the patched run's final position
+# The metrics - every scalar the formulas name, read off the patched run's final position
 # --------------------------------------------------------------------------------------------------
 def _no_op_element() -> PatchingElementConfig:
     """Position 0 is the prompts' shared prefix, so writing the source's activation there changes
@@ -375,7 +375,7 @@ def _metric_config(
     comparison: MetricComparison = MetricComparison.ABSOLUTE,
     element: PatchingElementConfig | None = None,
 ) -> PatchingConfig:
-    """Every named metric under the one comparison — the shape most of these tests want."""
+    """Every named metric under the one comparison - the shape most of these tests want."""
     element = element if element is not None else _no_op_element()
     return PatchingConfig(
         config_id="metrics",
@@ -460,7 +460,7 @@ def test_several_metrics_come_off_one_run(model: Model) -> None:
 
 
 # --------------------------------------------------------------------------------------------------
-# The comparisons — the patched run against the two it sits between
+# The comparisons - the patched run against the two it sits between
 # --------------------------------------------------------------------------------------------------
 @pytest.mark.parametrize("metric", list(PatchingMetric))
 def test_the_three_comparisons_agree_on_one_patch(model: Model, metric: PatchingMetric) -> None:
@@ -552,7 +552,7 @@ def test_one_metric_may_be_reported_under_several_comparisons(model: Model) -> N
 
 def test_a_second_comparison_costs_no_extra_backward_pass(model: Model) -> None:
     # The gradient methods differentiate once per metric, and a comparison only re-reads that
-    # gradient's delta — so naming three of them is free where naming a second metric is not.
+    # gradient's delta - so naming three of them is free where naming a second metric is not.
     element = _last_layer_resid_element()
 
     def backward_passes(metric: dict) -> int:
@@ -562,7 +562,7 @@ def test_a_second_comparison_costs_no_extra_backward_pass(model: Model) -> None:
             method=PatchingMethodConfig(type="attribution"),
             patch=[SinglePatchingConfig(source=element, target=element)],
         )
-        return PatchingMethodFactory.create(config, model).passes(runs=1, batches=1)[1]
+        return PatchingMethodFactory.create(model, config).passes(runs=1, batches=1)[1]
 
     assert backward_passes({PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]}) == 1
     assert backward_passes({PatchingMetric.LOGIT_DIFF: list(MetricComparison)}) == 1
@@ -701,7 +701,7 @@ def test_a_gradient_method_reports_no_generation(model: Model, method: str) -> N
 
 
 # --------------------------------------------------------------------------------------------------
-# A run with no source prompt at all — the single-input indirect effect
+# A run with no source prompt at all - the single-input indirect effect
 # --------------------------------------------------------------------------------------------------
 def test_zero_ablation_scores_its_effect_without_a_second_prompt(model: Model) -> None:
     torch.manual_seed(42)
@@ -751,7 +751,7 @@ def test_a_metric_that_needs_the_source_run_says_so(
 
 
 # --------------------------------------------------------------------------------------------------
-# The gradient methods — the same score, estimated rather than run
+# The gradient methods - the same score, estimated rather than run
 # --------------------------------------------------------------------------------------------------
 _GRADIENT_LAYER = 6
 
@@ -1070,7 +1070,7 @@ def test_explicit_pairing_and_artifacts(model: Model, tmp_path: Path) -> None:
     assert index_df["source_layer"].to_list() == [5, 6]
     assert index_df["target_layer"].to_list() == [7, 7]
     assert index_df["target_position"].nunique() == 2
-    # The locations the pairs name and nothing else — how they are laid out on a plot is not the
+    # The locations the pairs name and nothing else - how they are laid out on a plot is not the
     # index file's business.
     assert all(col.startswith(("source_", "target_")) for col in index_df.columns)
 
@@ -1117,7 +1117,7 @@ def test_two_sources_differing_only_in_activation_keep_their_own_metric(model: M
             for activation in (ModelLayerLocation.MLP_POST, ModelLayerLocation.MLP_PRE)
         ],
     )
-    # One target row, so ``zip_fill`` holds it steady while the two source coordinates vary.
+    # One target row, so it is held steady while the two source coordinates vary.
     target = PatchingElementConfig(
         type=PatchingType.REPLACE,
         activation=ModelLayerLocation.MLP_POST,
@@ -1427,6 +1427,153 @@ def _batched(model: Model, config: PatchingConfig, batch_size: int) -> PatchingC
     return collector
 
 
+def _layer_sweep(layers: list[int], position: int = -1) -> PatchingElementConfig:
+    return PatchingElementConfig(
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layers, ModelLocation.POSITION: position}]),
+        type=PatchingType.REPLACE,
+    )
+
+
+def _pair_config(*pairs: tuple[PatchingElementConfig, PatchingElementConfig]) -> PatchingConfig:
+    return PatchingConfig(
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        method=EXACT,
+        patch=[SinglePatchingConfig(source=source, target=target) for source, target in pairs],
+    )
+
+
+def test_the_result_is_laid_out_along_the_element_with_the_most_rows(model: Model) -> None:
+    sweep = _layer_sweep(list(range(model.cfg.n_layers)))
+    companion = _layer_sweep([0], position=1)
+
+    companion_first = _collect(model, _pair_config((companion, companion), (sweep, sweep)))
+    sweep_first = _collect(model, _pair_config((sweep, sweep), (companion, companion)))
+
+    assert len(companion_first.result) == model.cfg.n_layers
+    assert companion_first.result["target_layer"].tolist() == list(range(model.cfg.n_layers))
+    assert torch.equal(_metric(companion_first), _metric(sweep_first))
+
+
+def test_a_source_and_a_target_pair_row_by_row_in_the_result(model: Model) -> None:
+    # Both filters leave gaps in the frame's row labels; the rows still pair in order.
+    source = PatchingElementConfig(
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        filter=Filter(
+            inclusion_terms=[
+                {ModelLocation.LAYER: 0, ModelLocation.POSITION: 1},
+                {ModelLocation.LAYER: [1, 2], ModelLocation.POSITION: 2},
+            ]
+        ),
+        type=PatchingType.REPLACE,
+    )
+    target = _layer_sweep([0, 1, 2], position=3)
+
+    result = _collect(model, _pair_config((source, target))).result
+
+    assert not result.isna().any().any()
+    assert result["source_layer"].tolist() == [0, 1, 2]
+    assert result["source_position"].tolist() == [1, 2, 2]
+    assert result["target_layer"].tolist() == [0, 1, 2]
+    assert result["target_position"].tolist() == [3, 3, 3]
+
+
+def test_a_one_row_source_is_written_into_every_row_of_the_target(model: Model, tmp_path: Path) -> None:
+    source, target = _layer_sweep([0], position=1), _layer_sweep([0, 1, 2], position=1)
+    save_dir = tmp_path / "broadcast"
+
+    Patcher(model).apply(
+        PatchingInput(_pair_config((source, target)), SOURCE_PROMPT, TARGET_PROMPT),
+        save_dir=str(save_dir),
+        verbose=False,
+    )
+
+    for frame in (pd.read_csv(save_dir / "result.csv"), pd.read_csv(save_dir / "index-0.csv")):
+        assert frame["source_layer"].tolist() == [0, 0, 0]
+        assert frame["target_layer"].tolist() == [0, 1, 2]
+
+
+@pytest.mark.parametrize(
+    ("pairs", "message"),
+    [
+        ([((0, 1, 2), (0, 1, 2, 3, 4))], "source of 3 rows cannot be paired with a target of 5"),
+        ([((0, 1, 2), (0, 1, 2)), ((0, 1, 2, 3, 4), (0, 1, 2, 3, 4))], "3 and 5 rows"),
+    ],
+)
+def test_indices_that_cannot_pair_row_by_row_are_rejected_before_a_run(
+    model: Model, monkeypatch, pairs: list, message: str
+) -> None:
+    config = _pair_config(*((_layer_sweep(list(source)), _layer_sweep(list(target))) for source, target in pairs))
+
+    forbid_model_runs(monkeypatch, model)
+    with pytest.raises(ValueError, match=message):
+        Patcher(model).plan(PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), verbose=False)
+
+
+@pytest.mark.parametrize("source_type", [PatchingType.REPLACE, PatchingType.VALUE_SCALE])
+def test_a_source_that_reads_the_source_run_needs_a_source_prompt(source_type: PatchingType) -> None:
+    source = replace(_last_layer_resid_element(), type=source_type)
+    config = _pair_config((source, _last_layer_resid_element()))
+
+    with pytest.raises(ValueError, match=f"{source_type.value} reads the source run, which needs a source prompt"):
+        PatchingInput(config, None, TARGET_PROMPT, correct_token=" Madrid", distractor_token=" Barcelona")
+
+
+@pytest.mark.parametrize("method", ["exact", "attribution"])
+def test_a_target_that_is_not_replaced_is_rejected_before_a_run(method: str) -> None:
+    target = replace(_last_layer_resid_element(), type=PatchingType.VALUE_REPLACE)
+    config = replace(_pair_config((_last_layer_resid_element(), target)), method=PatchingMethodConfig(type=method))
+
+    with pytest.raises(ValueError, match="Unknown target strategy: value_replace"):
+        PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT)
+
+
+def test_a_run_without_patch_elements_is_rejected() -> None:
+    with pytest.raises(ValueError, match="at least one patch element"):
+        PatchingInput(_pair_config(), SOURCE_PROMPT, TARGET_PROMPT)
+
+
+def test_exact_patching_builds_no_autograd_graph(model: Model, monkeypatch) -> None:
+    tracked: list[bool] = []
+    run_with_hooks = model.run_with_hooks
+
+    def recording(*args, **kwargs):
+        logits = run_with_hooks(*args, **kwargs)
+        tracked.append(logits.requires_grad)
+        return logits
+
+    monkeypatch.setattr(model, "run_with_hooks", recording)
+    _collect(model, _last_layer_resid_patch_config())
+
+    assert tracked == [False]
+
+
+@pytest.mark.parametrize("method", ["attribution", "integrated_gradients"])
+def test_a_gradient_method_runs_with_autograd_disabled(model: Model, method: str) -> None:
+    config = _gradient_config(method)
+    enabled = _run(model, config)
+
+    with torch.no_grad():
+        disabled = _run(model, config)
+
+    assert torch.allclose(disabled, enabled)
+
+
+@pytest.mark.parametrize("method", ["attribution", "integrated_gradients"])
+def test_a_gradient_method_runs_on_a_frozen_model(backend: str, method: str) -> None:
+    model = build_small_model(backend)
+    config = _gradient_config(method, layer=1)
+    answers = {"correct_token": " Paris", "distractor_token": " Madrid"}
+    trainable = _run(model, config, **answers)
+
+    model.requires_grad_(False)
+    frozen = _run(model, config, **answers)
+
+    assert torch.allclose(frozen, trainable)
+
+
 @pytest.mark.parametrize(
     ("element", "message"),
     [
@@ -1435,7 +1582,7 @@ def _batched(model: Model, config: PatchingConfig, batch_size: int) -> PatchingC
     ],
 )
 def test_a_patching_type_that_is_not_known_raises(model: Model, element: str, message: str) -> None:
-    # A config built in code can name a type no strategy implements — and 'value_replace' is one only
+    # A config built in code can name a type no strategy implements - and 'value_replace' is one only
     # a source may carry, so a target is rejected the same way.
     source, target = _last_layer_resid_element(), _last_layer_resid_element()
     (source if element == "source" else target).type = "bogus" if element == "source" else "value_replace"
@@ -1503,8 +1650,7 @@ def test_a_prepared_input_moves_to_a_device(model: Model) -> None:
         patching_input.target_baseline(PatchingMetric.LOGIT_DIFF),
     ):
         assert lazy is not None
-    for lazy in (patching_input.source_probabilities, patching_input.target_probabilities):
-        assert lazy is not None
+    assert patching_input.source_probabilities is not None
 
     moved = patching_input.to("cpu")
 
@@ -1517,7 +1663,6 @@ def test_a_prepared_input_moves_to_a_device(model: Model) -> None:
         moved.source_baseline(PatchingMetric.LOGIT_DIFF),
         moved.target_baseline(PatchingMetric.LOGIT_DIFF),
         moved.source_probabilities,
-        moved.target_probabilities,
     ]
     assert all(tensor.device.type == "cpu" for tensor in tensors)
     assert all(activation.device.type == "cpu" for activation in moved.source_cache.values())
@@ -1550,7 +1695,7 @@ def test_a_run_without_a_collector_still_writes_its_artifacts(model: Model, tmp_
 
 
 # --------------------------------------------------------------------------------------------------
-# Configuration — patching configs come from YAML, where a source and a target often alias one anchor
+# Configuration - patching configs come from YAML, where a source and a target often alias one anchor
 # --------------------------------------------------------------------------------------------------
 ELEMENT_YAML = {"activation": "resid.post", "location": ["layer"], "filter": [{"layer": -1}], "type": "replace"}
 
@@ -1653,7 +1798,7 @@ def test_a_source_and_a_target_may_alias_the_same_yaml_anchor(model: Model, tmp_
 
 
 def test_the_omitted_keys_of_an_element_fall_back_to_their_defaults(model: Model, config_from_yaml) -> None:
-    # A source that names nothing but its type produces zeros — the zero-ablation shape, from YAML.
+    # A source that names nothing but its type produces zeros - the zero-ablation shape, from YAML.
     raw = {
         "metric": {"logit_diff": ["absolute"]},
         "method": "exact",
@@ -1749,7 +1894,7 @@ def test_a_run_through_a_cached_model_patches_the_same_way(model: Model, tmp_pat
 # The plan a run would execute
 # --------------------------------------------------------------------------------------------------
 def _every_layer_patch_config() -> PatchingConfig:
-    """Replace the residual stream of every layer in turn — one patched run per layer."""
+    """Replace the residual stream of every layer in turn - one patched run per layer."""
     element = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
         location=[ModelLocation.LAYER],
@@ -1832,7 +1977,7 @@ def test_a_plan_describes_the_run_that_follows_it(model: Model, tmp_path: Path) 
 
 
 # --------------------------------------------------------------------------------------------------
-# Visualization — the run's own grid, drawn from result.csv's columns
+# Visualization - the run's own grid, drawn from result.csv's columns
 # --------------------------------------------------------------------------------------------------
 _FIRST_THREE_LAYERS = Filter(inclusion_terms=[{ModelLocation.LAYER: {"range": [0, 2]}}])
 
@@ -1922,7 +2067,7 @@ def test_each_plot_is_centred_on_its_own_comparisons_ineffective_value(model: Mo
     Patcher(model).apply(patching_input, save_dir=str(save_dir), verbose=False)
     absolute, effect = (figure.trace for figure in rendered_figures(save_dir))
 
-    # The same metric, so the same spread — but the absolute plot sits on the target's own value and
+    # The same metric, so the same spread - but the absolute plot sits on the target's own value and
     # the effect plot on zero, because its comparison has already subtracted that value out.
     baseline = float(patching_input.target_baseline(PatchingMetric.LOGIT_DIFF))
     assert absolute["zmin"] == pytest.approx(2 * baseline - absolute["zmax"])
@@ -1941,7 +2086,7 @@ def test_a_sweep_is_drawn_with_positions_across_and_layers_down(model: Model, tm
 
 
 def test_the_position_axis_is_labelled_with_the_target_prompts_tokens(model: Model, tmp_path: Path) -> None:
-    # The patched run is the target run, so it is the target's tokens that name the positions — the
+    # The patched run is the target run, so it is the target's tokens that name the positions - the
     # two prompts differ at position 4, which is what makes the choice observable.
     ticks = _draw(model, _layer_position_config(), tmp_path / "patch_run").ticks("xaxis")
 
@@ -2050,8 +2195,8 @@ def test_explicit_coordinates_are_drawn_as_a_bar_labelled_by_coordinate(model: M
 
 
 def test_the_axis_falls_back_to_the_target_when_the_source_does_not_span_it(model: Model, tmp_path: Path) -> None:
-    # One source coordinate read into two target coordinates: the source is repeated, so its columns
-    # are half empty in the result and cannot name the axis the target laid out.
+    # One source coordinate read into two target coordinates: the source is repeated on both rows, so it
+    # varies over nothing and cannot name the axis the target laid out.
     source = [{ModelLocation.LAYER: -1, ModelLocation.POSITION: -1}]
     target = [
         {ModelLocation.LAYER: -1, ModelLocation.POSITION: -2},
@@ -2061,7 +2206,7 @@ def test_the_axis_falls_back_to_the_target_when_the_source_does_not_span_it(mode
     save_dir = tmp_path / "uneven"
     figure = _draw(model, _explicit_patch_config(source, target), save_dir)
 
-    assert pd.read_csv(save_dir / "result.csv")["source_position"].isna().any()
+    assert pd.read_csv(save_dir / "result.csv")["source_position"].nunique() == 1
     positions = model.to_tokens(TARGET_PROMPT).shape[1]
     assert figure.ticks("xaxis")[0].endswith(f"position {positions - 2}")
 

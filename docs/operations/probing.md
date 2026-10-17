@@ -17,13 +17,13 @@ from entoscope import (
     LinearProbeConfig,
     ModelLayerLocation,
     ModelLocation,
-    ModelLocatorConfig,
     PoolingType,
     ProbeConfig,
     ProbeInput,
     ProbeMetric,
     Prober,
 )
+from entoscope.model.config import ModelLocatorConfig
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()

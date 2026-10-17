@@ -53,7 +53,7 @@ def _tokenizer():
 def build_tiny_model(**overrides) -> HookedTransformer:
     """A real transformer with random weights, small enough to enumerate a whole location axis.
 
-    GPT-2 answers "what does this compute", these answer "what does the config index" — and they
+    GPT-2 answers "what does this compute", these answer "what does the config index" - and they
     reach architectures GPT-2 does not have (grouped-query attention, a gated MLP, parallel
     attention/MLP). The tokenizer is GPT-2's, so prompts tokenize the same way.
     """
@@ -174,7 +174,7 @@ parallel_model = _backend_fixture(
 
 
 def forbid_model_runs(monkeypatch, model) -> None:
-    """Make every forward pass through ``model`` fail — what an operation's plan must never need.
+    """Make every forward pass through ``model`` fail - what an operation's plan must never need.
 
     Patched on the instance, so the session-scoped model is restored when the test's monkeypatch
     unwinds. Tokenization and ``cfg`` stay untouched: resolving an index is allowed to read those.
@@ -243,7 +243,7 @@ def rendered_figures(save_dir, name: str = "result.html") -> list[RenderedFigure
 
 
 def rendered_figure(save_dir, name: str = "result.html") -> RenderedFigure:
-    """The first plot on the page — what a run drawing a single one wrote."""
+    """The first plot on the page - what a run drawing a single one wrote."""
     return rendered_figures(save_dir, name)[0]
 
 

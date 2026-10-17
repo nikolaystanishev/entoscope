@@ -16,9 +16,6 @@ except ModuleNotFoundError as error:  # transformer-lens 2.x (Intel macOS fallba
         raise
     TransformerBridge = None
 
-# Anything operations accept in place of a raw model: a transformer, or the transparent
-# disk-caching wrapper around one. CachedModel forwards every attribute to the wrapped model via
-# __getattr__, so it is a runtime drop-in; this alias makes it a static drop-in too.
 if TransformerBridge is None:
     Model: TypeAlias = HookedTransformer | CachedModel
 elif HookedTransformer is None:

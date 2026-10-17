@@ -24,8 +24,8 @@ from entoscope import (
     LensMethodConfig,
     ModelLayerLocation,
     ModelLocation,
-    ModelLocatorConfig,
 )
+from entoscope.model.config import ModelLocatorConfig
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()

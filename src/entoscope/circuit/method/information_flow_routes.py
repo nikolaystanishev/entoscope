@@ -19,6 +19,7 @@ non-commercial purposes only.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -33,12 +34,21 @@ from entoscope.circuit.method.circuit import AbstractCircuitMethod, PromptCircui
 from entoscope.circuit.vendor import contributions
 from entoscope.model import Model
 from entoscope.model.config import ModelLayerLocation
-from entoscope.model.index import TRANSFORMER_ACT_NAME
+from entoscope.model.index import TRANSFORMER_ACT_NAME, get_act_name
 from entoscope.model.token import str_token_labels
 from entoscope.model.weight import attention_out_weight
 
 # Sentinel head id for edges that are not attention (residual skips and the MLP block).
 NON_ATTENTION_HEAD = -1
+
+READ_ACTIVATIONS = (
+    ModelLayerLocation.RESIDUAL_PRE,
+    ModelLayerLocation.RESIDUAL_MID,
+    ModelLayerLocation.RESIDUAL_POST,
+    ModelLayerLocation.MLP_OUT,
+    ModelLayerLocation.ATTENTION_V,
+    ModelLayerLocation.ATTENTION_PATTERN,
+)
 
 
 class NodeType(Enum):
@@ -191,16 +201,16 @@ def build_information_flow_graph(
         )
         c_attn, c_resid_attn = contributions.apply_threshold_and_renormalize(threshold, c_attn, c_resid_attn)
 
-        n_heads = c_attn.shape[-1]
+        kept = c_attn[0] > 0
+        attention_edges = defaultdict(list)
+        for (token_to, token_from, head), w in zip(kept.nonzero().tolist(), c_attn[0][kept].tolist(), strict=True):
+            attention_edges[token_to].append((token_from, head, w))
+        resid_weights = c_resid_attn[0].tolist()
         for token_to in range(n_tokens):
-            for token_from in range(n_tokens):
-                for head in range(n_heads):
-                    w = c_attn[0, token_to, token_from, head].item()
-                    if w > 0:
-                        builder.add_attention_edge(layer, token_from, token_to, head, w)
-            resid_w = c_resid_attn[0, token_to].item()
-            if resid_w > 0:
-                builder.add_residual_to_attn(layer, token_to, resid_w)
+            for token_from, head, w in attention_edges[token_to]:
+                builder.add_attention_edge(layer, token_from, token_to, head, w)
+            if resid_weights[token_to] > 0:
+                builder.add_residual_to_attn(layer, token_to, resid_weights[token_to])
 
         c_ffn, c_resid_ffn = contributions.get_mlp_contributions(
             resid_mid=cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.RESIDUAL_MID], layer],
@@ -217,11 +227,9 @@ def build_information_flow_graph(
         c_ffn, c_resid_ffn = contributions.apply_threshold_and_renormalize(threshold, c_ffn.unsqueeze(-1), c_resid_ffn)
         c_ffn = c_ffn.squeeze(-1)
 
-        for token in range(n_tokens):
-            ffn_w = c_ffn[0, token].item()
+        for token, (ffn_w, resid_w) in enumerate(zip(c_ffn[0].tolist(), c_resid_ffn[0].tolist(), strict=True)):
             if ffn_w > 0:
                 builder.add_ffn_edge(layer, token, ffn_w)
-            resid_w = c_resid_ffn[0, token].item()
             if resid_w > 0:
                 builder.add_residual_to_ffn(layer, token, resid_w)
 
@@ -297,7 +305,7 @@ class InformationFlowRoutesConfig(CircuitMethodConfig):
 class InformationFlowRoutes(AbstractCircuitMethod[InformationFlowRoutesConfig]):
     @torch.no_grad()
     def build(self, prompt: str, tokens: Int[torch.Tensor, "batch pos"]) -> PromptCircuit:
-        _, cache = self.model.run_with_cache(tokens)
+        _, cache = self.model.run_with_cache(tokens, names_filter=self.activation_names())
 
         n_tokens = tokens.shape[1]
         str_tokens = str_token_labels(self.model, tokens)
@@ -311,3 +319,10 @@ class InformationFlowRoutes(AbstractCircuitMethod[InformationFlowRoutesConfig]):
         )
 
         return PromptCircuit(prompt=prompt, str_tokens=str_tokens, graph=graph, routes=routes)
+
+    def activation_names(self) -> list[str]:
+        return [
+            get_act_name(TRANSFORMER_ACT_NAME[activation], layer=layer)
+            for layer in range(self.model.cfg.n_layers)
+            for activation in READ_ACTIVATIONS
+        ]

@@ -7,7 +7,7 @@ from entoscope.circuit.discoverer import CircuitDiscoverer
 from entoscope.circuit.input import CircuitInput
 from entoscope.circuit.method.circuit import AbstractCircuitMethod, PromptCircuit
 from entoscope.circuit.method.factory import CircuitMethodFactory
-from entoscope.circuit.method.information_flow_routes import InformationFlowRoutes, InformationFlowRoutesConfig
+from entoscope.circuit.method.information_flow_routes import InformationFlowRoutesConfig
 
 __all__ = [
     "AbstractCircuitMethod",
@@ -18,7 +18,6 @@ __all__ = [
     "CircuitMethodConfig",
     "CircuitMethodFactory",
     "CircuitVisualizationCollector",
-    "InformationFlowRoutes",
     "InformationFlowRoutesConfig",
     "PromptCircuit",
 ]

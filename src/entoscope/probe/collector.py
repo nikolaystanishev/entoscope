@@ -2,6 +2,7 @@ import os
 import pickle
 from typing import Any
 
+from entoscope.model import Model
 from entoscope.model.index import Index
 from entoscope.operation.collector import FrameCollector
 from entoscope.probe.config import ProbeMetric
@@ -16,19 +17,15 @@ class ProbeCollector(FrameCollector[ProbeInput]):
     as a dict from result row to estimator.
     """
 
-    _probes: dict[int, Any] | None = None
+    def __init__(self, operation_input: ProbeInput, model: Model, save_dir: str | None = None):
+        super().__init__(operation_input, model, save_dir)
+        self._probes: dict[int, Any] = {}
 
     @property
     def probes(self) -> dict[int, Any]:
-        assert self._probes is not None
         return self._probes
 
-    def prepare(self):
-        super().prepare()
-        self._probes = {}
-
     def collect(self, method: AbstractProbeMethod, metric_values: dict[ProbeMetric, float], index: int):
-        assert self._probes is not None
         self._collect_cell(index, {metric.value: value for metric, value in metric_values.items()})
         self._probes[index] = method.probe
 

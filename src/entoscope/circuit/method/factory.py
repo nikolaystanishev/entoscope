@@ -6,12 +6,16 @@ from entoscope.operation.registry import RegistryFactory
 
 
 class CircuitMethodFactory(RegistryFactory[AbstractCircuitMethod]):
-    """The methods a config's ``method`` names, built in or registered with ``register``."""
+    """Resolves the circuit-discovery method a config's ``method.type`` names and builds it for a run.
+
+    It holds ``information_flow_routes`` and every method registered with ``register``. ``create`` builds the
+    method once per run, from the model and the config; the method then builds one prompt's circuit at a time.
+    """
 
     kind = "circuit method"
 
     @classmethod
-    def create(cls, config: CircuitConfig, model: Model) -> AbstractCircuitMethod:
+    def create(cls, model: Model, config: CircuitConfig) -> AbstractCircuitMethod:
         return cls.get(config.method.type)(model, config)
 
 

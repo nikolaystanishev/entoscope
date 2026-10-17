@@ -10,7 +10,7 @@ from entoscope.model import Model
 from entoscope.model.config import ModelLocatorConfig
 from entoscope.model.index import IndexElement
 
-if TYPE_CHECKING:  # ``entoscope.lens.input`` looks the lens up through the factory, which imports this module.
+if TYPE_CHECKING:
     from entoscope.lens.input import LensInput
 
 LensMethodConfigT = TypeVar("LensMethodConfigT", bound=LensMethodConfig, default=LensMethodConfig)

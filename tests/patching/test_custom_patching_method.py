@@ -11,7 +11,6 @@ from entoscope.patching.input import PatchingInput
 from entoscope.patching.method.factory import PatchingMethodFactory
 from entoscope.patching.method.patching import AbstractPatchingMethod, RowResult
 from entoscope.patching.patcher import Patcher
-from entoscope.util.collections import zip_fill
 
 from ..conftest import forbid_model_runs, rendered_figures
 
@@ -38,8 +37,8 @@ class ConstantMethod(AbstractPatchingMethod[ConstantConfig]):
 
     def scores(self, patching_input, verbose=True):
         delta = torch.tensor(self.method_config.delta)
-        for group in zip_fill(*patching_input.index):
-            yield RowResult(group[0].output, self._report(patching_input, dict.fromkeys(self.config.metric, delta)))
+        for output, _ in enumerate(patching_input.rows()):
+            yield RowResult(output, self._report(patching_input, dict.fromkeys(self.config.metric, delta)))
 
     def passes(self, runs, batches):
         return 0, 0

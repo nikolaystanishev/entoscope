@@ -58,7 +58,7 @@ def test_attention_edges_are_kept_apart_per_head(model, circuit):
     assert min(d["head"] for _, _, d in attention) >= 0
     assert max(d["head"] for _, _, d in attention) < model.cfg.n_heads
     # One (source, target) pair carrying more than one head proves the parallel per-head edges a
-    # plain DiGraph — which would sum over heads — could not represent.
+    # plain DiGraph - which would sum over heads - could not represent.
     assert max(Counter((u, v) for u, v, _ in attention).values()) > 1
 
 
@@ -200,7 +200,7 @@ def test_parallel_attention_and_mlp_is_rejected(parallel_model):
 # --------------------------------------------------------------------------------------------------
 def test_a_yaml_config_runs_with_its_defaults(model, config_from_yaml):
     config = config_from_yaml(CircuitConfig, "my_circuit", {"method": "information_flow_routes"})
-    method_config = CircuitMethodFactory.create(config, model).method_config
+    method_config = CircuitMethodFactory.create(model, config).method_config
 
     assert method_config == InformationFlowRoutesConfig(
         type="information_flow_routes", threshold=0.04, path_threshold=None, prediction_positions=[-1]
@@ -218,7 +218,7 @@ def test_a_yaml_config_carries_its_explicit_values_into_the_run(model, config_fr
     }
     config = config_from_yaml(CircuitConfig, "my_circuit", {"method": method})
 
-    assert CircuitMethodFactory.create(config, model).method_config.resolved_path_threshold() == 0.2
+    assert CircuitMethodFactory.create(model, config).method_config.resolved_path_threshold() == 0.2
     loaded = discover(model, config=config)[0]
     without_path_pruning = discover(model, config=circuit_config(threshold=0.1, prediction_positions=[-1, 0]))[0]
 
@@ -231,7 +231,7 @@ def test_a_whole_number_threshold_is_taken_as_it_is_written(model, config_from_y
     raw = {"method": {"type": "information_flow_routes", "threshold": 1}}
     config = config_from_yaml(CircuitConfig, "my_circuit", raw)
 
-    assert CircuitMethodFactory.create(config, model).method_config.threshold == 1
+    assert CircuitMethodFactory.create(model, config).method_config.threshold == 1
     assert discover(model, config=config)[0].graph.number_of_edges() == 0
 
 

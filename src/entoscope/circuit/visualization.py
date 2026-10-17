@@ -31,15 +31,16 @@ _MLP_LINE = "rgba(245,158,11,0.45)"
 
 
 def _node_position(attrs: dict) -> tuple[float, float]:
-    kind, layer, position = attrs["kind"], attrs["layer"], attrs["position"]
-    if kind == "input":
-        return position, 0.0
-    if kind == "after_attn":
-        return position, 2 * layer + 1
-    if kind == "mlp":
-        return position + 0.30, 2 * layer + 1.5
-    # after_ffn
-    return position, 2 * layer + 2
+    layer, position = attrs["layer"], attrs["position"]
+    match attrs["kind"]:
+        case "input":
+            return position, 0.0
+        case "after_attn":
+            return position, 2 * layer + 1
+        case "mlp":
+            return position + 0.30, 2 * layer + 1.5
+        case _:
+            return position, 2 * layer + 2
 
 
 def _marker_size(weight: float) -> float:
@@ -74,7 +75,6 @@ class CircuitFigure(Figure[tuple[nx.MultiDiGraph, str]]):
         return titled(f"Circuit · {self.config.method.type} · {self.circuit.prompt}", self.config)
 
     def panels(self) -> list[tuple[nx.MultiDiGraph, str]]:
-        # Named after the run's method: a registered one draws through this page as well.
         method, prompt = escape(self.config.method.type), escape(self.circuit.prompt)
         return [
             (self.circuit.routes, titled(f'Routes to the prediction · {method} · "{prompt}"', self.config)),

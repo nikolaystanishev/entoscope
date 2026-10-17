@@ -2,7 +2,7 @@
 
 A trained ``LogisticRegression`` carries one coefficient per feature, so the shape of ``coef_`` is
 the feature size a pooling config produces, and refitting on features reduced by hand reproduces the
-run's coefficients exactly when — and only when — the run pooled the same way.
+run's coefficients exactly when - and only when - the run pooled the same way.
 """
 
 import pytest
@@ -133,7 +133,7 @@ def test_a_pooling_type_that_is_not_known_raises(small_model):
 
 
 def test_a_single_value_becomes_a_single_feature(small_model, small_caches):
-    # One neuron at one position leaves nothing to flatten — the activation is a scalar.
+    # One neuron at one position leaves nothing to flatten - the activation is a scalar.
     config = probe_config(
         activation=ModelLayerLocation.MLP_POST,
         location=[ModelLocation.LAYER, ModelLocation.NEURON, ModelLocation.POSITION],
@@ -173,7 +173,7 @@ def test_an_unpooled_pattern_needs_prompts_of_equal_length(small_model):
 
 
 # --------------------------------------------------------------------------------------------------
-# Positions — a filtered position is sliced against each prompt's own cache
+# Positions - a filtered position is sliced against each prompt's own cache
 # --------------------------------------------------------------------------------------------------
 def _position_config(*positions: int) -> ProbeConfig:
     return probe_config(
@@ -249,7 +249,7 @@ def test_a_run_is_reproducible(small_model):
 
 
 def test_the_prepared_input_carries_one_feature_matrix_per_location(small_model):
-    # The feature matrices themselves never reach the collector, so this reads the prepared input —
+    # The feature matrices themselves never reach the collector, so this reads the prepared input -
     # the real model, the real index, nothing stubbed.
     probe_input = ProbeInput(probe_config(), POSITIVE, NEGATIVE).prepare(small_model)
 

@@ -1,8 +1,8 @@
-"""``CachedModel.run_with_cache`` — what it returns, what it writes, and when it recomputes.
+"""``CachedModel.run_with_cache`` - what it returns, what it writes, and when it recomputes.
 
 A cache hit is proven without a spy: the model's weights are changed between two calls, and the call
 served from disk keeps returning the first call's tensors while the unwrapped model follows the new
-weights. Which requests share an entry is read off the cache directory — one file per distinct key.
+weights. Which requests share an entry is read off the cache directory - one file per distinct key.
 """
 
 import pathlib
@@ -153,7 +153,7 @@ def test_a_prompt_and_its_tokens_are_separate_entries(wrapped, tmp_path):
 
 def test_an_input_numpy_cannot_hold_is_keyed_by_its_raw_bytes(backend, tmp_path):
     # A bfloat16 tensor has no NumPy equivalent, so the key reads its bytes through an integer view of
-    # the same width. (Only the two-byte side is reachable — no transformer_lens model runs in float8.)
+    # the same width. (Only the two-byte side is reachable - no transformer_lens model runs in float8.)
     model = build_small_model(backend, dtype=torch.bfloat16)
     wrapped = CachedModel(model, str(tmp_path))
     residual = model.embed(tokens_of(model))
@@ -187,7 +187,7 @@ def test_different_tokens_are_different_entries(wrapped, tmp_path):
 
 
 def test_two_models_are_kept_apart_by_name(backend, tmp_path):
-    # Same shape, same prompt, same activations — only the model differs, and its name becomes the
+    # Same shape, same prompt, same activations - only the model differs, and its name becomes the
     # directory (with anything a path cannot carry replaced).
     for name in ("org/tiny-a", "org/tiny-b"):
         model = build_small_model(backend, name=name)

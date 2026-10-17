@@ -88,8 +88,8 @@ def test_the_metrics_score_the_probes_own_predictions(model, caches):
         assert row["recall"] == pytest.approx(recall_score(labels, predictions, zero_division=0))
         assert row["auroc"] == pytest.approx(roc_auc_score(labels, probabilities))
 
-    # A single neuron is no sentiment detector: the scores have to be imperfect, and auroc — scored on
-    # the probabilities rather than the predictions — has to part company with accuracy somewhere.
+    # A single neuron is no sentiment detector: the scores have to be imperfect, and auroc - scored on
+    # the probabilities rather than the predictions - has to part company with accuracy somewhere.
     assert result["accuracy"].min() < 1.0
     assert (result["auroc"] != result["accuracy"]).any()
 

@@ -20,9 +20,6 @@ class AbstractMetric(abc.ABC):
     ``compute`` stays differentiable so the gradient methods can back-propagate through it.
     """
 
-    # The metric's effect is normally the rise in m, but a KL divergence is a distance, so its
-    # effect is the drop - that keeps 'positive means the patch restored the source behaviour'
-    # true for every metric. It cancels in the normalized comparison, which divides by the same sign.
     effect_sign: int = 1
     needs_distractor: bool = False
     needs_source_run: bool = False

@@ -54,7 +54,6 @@ class LastPooling(AbstractPooling):
 
 
 def _matches(axis: ModelLocation | str, location: ModelLocation) -> bool:
-    # The pattern activation splits position into dest/src axes; both belong to POSITION.
     return axis == location or (location is ModelLocation.POSITION and axis in {"dest_pos", "src_pos"})
 
 
@@ -78,7 +77,7 @@ def pool(
     for axis in axes:
         location = next((location for location in config if _matches(axis, location)), None)
         if location is None:
-            dim += 1  # axis kept: the next axis sits one dim further right
+            dim += 1
         else:
             activation = AbstractPooling.get(config[location]).reduce(activation, dim)
 

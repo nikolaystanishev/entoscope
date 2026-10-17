@@ -4,7 +4,6 @@ on:
   push:
     branches: [ main ]
   pull_request:
-  # The release runs this whole workflow on the tag it publishes, and publishes what the package job built.
   workflow_call:
 
 jobs:
@@ -17,7 +16,7 @@ jobs:
         uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: true
-          python-version: "3.14"
+          python-version: "3.13"
 
       - name: Install dependencies
         run: uv sync --group dev
@@ -30,10 +29,15 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: [ "3.10", "3.11", "3.12", "3.13", "3.14" ]
+        python-version: [ "3.11", "3.12", "3.13", "3.14" ]
+        experimental: [ false ]
+        include:
+          - python-version: "3.15"
+            experimental: true
     steps:
       - uses: actions/checkout@v6
 
@@ -60,8 +64,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The tests again, on the lowest version of each dependency pyproject.toml allows rather than on uv.lock,
-  # so a lower bound published with the package is one the tests have passed on.
   lowest:
     runs-on: ubuntu-latest
     env:
@@ -74,7 +76,7 @@ jobs:
         with:
           enable-cache: true
           cache-suffix: lowest
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install the lowest dependencies
         run: uv sync --group dev
@@ -82,7 +84,6 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
-  # The sdist and wheel as they would be published, tested as installed rather than from src/.
   package:
     runs-on: ubuntu-latest
     steps:
@@ -92,13 +93,11 @@ jobs:
         uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: true
-          python-version: "3.14"
+          python-version: "3.13"
 
-      # The sdist first, then the wheel from it, so the wheel tested is one the sdist can build.
       - name: Build
         run: uv build --no-sources
 
-      # --strict also fails on warnings, such as a README PyPI would not render.
       - name: Check the metadata
         run: uvx twine check --strict dist/*
 
@@ -107,7 +106,6 @@ jobs:
           uv sync --locked --no-install-project --group dev
           uv pip install dist/*.whl
 
-      # The tests import entoscope from wherever Python finds it, so check that is the installed wheel.
       - name: Run tests against the wheel
         run: |
           uv run --no-sync python -c "import entoscope, pathlib; assert 'site-packages' in pathlib.Path(entoscope.__file__).parts"
@@ -130,7 +128,7 @@ jobs:
         uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: true
-          python-version: "3.14"
+          python-version: "3.13"
 
       - name: Install coverage
         run: uv sync --only-group dev
@@ -164,12 +162,11 @@ jobs:
         uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: true
-          python-version: "3.14"
+          python-version: "3.13"
 
       - name: Install dependencies
         run: uv sync --group docs
 
-      # -W fails the build on any warning: a broken link, a missing page, or a docstring that is not valid RST.
       - name: Build the docs
         run: uv run --no-sync sphinx-build -W --keep-going docs docs/_build/html
 

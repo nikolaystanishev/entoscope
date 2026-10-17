@@ -23,25 +23,25 @@ class ExactPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
         rows = patching_input.rows()
         batch_width = patching_input.batch_width
 
-        for batch in tqdm(
-            batch_generator(rows, batch_width),
-            total=(len(rows) + batch_width - 1) // batch_width,
-            disable=not verbose,
+        for number, batch in enumerate(
+            tqdm(
+                batch_generator(rows, batch_width),
+                total=(len(rows) + batch_width - 1) // batch_width,
+                disable=not verbose,
+            )
         ):
             fwd_hooks = [
                 HookedPatchProcessor.hook(idx, patching_input, row) for row, group in enumerate(batch) for idx in group
             ]
-            # Always the width the input's cached runs were made at, a ragged last batch padded with
-            # unpatched copies, so every run has the shape of the runs it is compared with.
-            patched_logits = self.model.run_with_hooks(
-                torch.cat([patching_input.target_tokens] * batch_width, dim=0), fwd_hooks=fwd_hooks
-            ).detach()[: len(batch), -1, :]
-            # One transfer for the whole batch rather than one per row.
+            with torch.no_grad():
+                patched_logits = self.model.run_with_hooks(
+                    torch.cat([patching_input.target_tokens] * batch_width, dim=0), fwd_hooks=fwd_hooks
+                )[: len(batch), -1, :]
             generations = patched_logits.argmax(dim=-1).tolist()
 
-            for group, logits, generation in zip(batch, patched_logits, generations, strict=True):
+            for row, (logits, generation) in enumerate(zip(patched_logits, generations, strict=True)):
                 yield RowResult(
-                    group[0].output,
+                    number * batch_width + row,
                     self._report(
                         patching_input,
                         {

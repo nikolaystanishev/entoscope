@@ -73,9 +73,10 @@ When you add an operation or a method, add or update its docs page, its referenc
 `.github/workflows/ci.yml` runs on every pull request and on pushes to `main`:
 
 - ruff's lint and format checks;
-- `pytest --cov` on Python 3.10 to 3.14, with a job that combines the coverage of all versions into
-  the job summary and a `coverage-html` artifact;
-- `lowest`, the tests on Python 3.10 with the lowest version of each dependency `pyproject.toml`
+- `pytest --cov` on Python 3.11 to 3.14, with a job that combines the coverage of all versions into
+  the job summary and a `coverage-html` artifact, and on Python 3.15, which may fail until torch
+  publishes wheels for it;
+- `lowest`, the tests on Python 3.11 with the lowest version of each dependency `pyproject.toml`
   allows, so the lower bounds published with the package are ones the tests pass on. `uv.lock` holds
   transformer-lens 4, which has no `HookedTransformer`, so this job's transformer-lens 3 is also where
   that backend and the bridge parity tests run;

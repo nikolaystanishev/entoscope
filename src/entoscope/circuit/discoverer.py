@@ -16,7 +16,7 @@ class CircuitDiscoverer(Operator):
     """Discovers the circuit behind each prompt with the method ``config.method`` names.
 
     There is no index: a circuit spans every layer, position and head, so the method builds one graph
-    per prompt from a full forward pass of that prompt. The default collector also draws a
+    per prompt from a forward pass of that prompt. The default collector also draws a
     ``circuit_{i}.html`` per prompt; ``CircuitCollector`` writes the graph files alone.
     """
 
@@ -35,15 +35,12 @@ class CircuitDiscoverer(Operator):
         return_collector: bool = False,
         verbose: bool = True,
     ) -> CircuitCollector | None:
-        # Built before the prompts are prepared, so a method that cannot be built fails before the run does any work.
-        method = CircuitMethodFactory.create(circuit_input.config, self.model)
+        method = CircuitMethodFactory.create(self.model, circuit_input.config)
         circuit_input.prepare(self.model)
         collector = self.collector_class(circuit_input, self.model, save_dir)
-        collector.prepare()
 
-        prompts = list(zip(circuit_input.prompts, circuit_input.tokens, strict=True))
-        for i, (prompt, tokens) in enumerate(tqdm(prompts, total=len(prompts), disable=not verbose)):
-            collector.collect(method.build(prompt, tokens), i)
+        for i, prompt in enumerate(tqdm(circuit_input.prompts, disable=not verbose)):
+            collector.collect(method.build(prompt, self.model.to_tokens(prompt)), i)
 
         collector.save()
 
@@ -52,9 +49,9 @@ class CircuitDiscoverer(Operator):
         return None
 
     def plan(self, circuit_input: CircuitInput, save_dir: str | None = None, verbose: bool = True) -> OperationPlan:
-        # Built as the run builds it, so a plan fails wherever its run would.
-        CircuitMethodFactory.create(circuit_input.config, self.model)
+        method = CircuitMethodFactory.create(self.model, circuit_input.config)
         circuit_input.prepare_index(self.model)
+        activations = method.activation_names()
 
         plan = OperationPlan(
             operation="CircuitDiscoverer",
@@ -62,14 +59,13 @@ class CircuitDiscoverer(Operator):
             config=circuit_input.config,
             steps=len(circuit_input.prompts),
             steps_label="prompt",
-            # The method rebuilds the whole cache for each prompt, so there is no index to narrow
-            # and no names to filter by - the graph is built over every activation.
             forward_passes=len(circuit_input.prompts),
             prompts=[
-                (f"prompt {i}", prompt, tokens.shape[1])
-                for i, (prompt, tokens) in enumerate(zip(circuit_input.prompts, circuit_input.tokens, strict=True))
+                (f"prompt {i}", prompt, self.model.to_tokens(prompt).shape[1])
+                for i, prompt in enumerate(circuit_input.prompts)
             ],
-            reads_full_cache=True,
+            activations=activations or [],
+            reads_full_cache=activations is None,
             save_dir=save_dir,
             outputs=self.collector_class(circuit_input, self.model, save_dir).output_files(),
         )

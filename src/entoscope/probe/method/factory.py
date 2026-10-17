@@ -11,7 +11,7 @@ class ProbeMethodFactory(RegistryFactory[AbstractProbeMethod]):
     kind = "probe method"
 
     @classmethod
-    def create(cls, config: ProbeConfig, model: Model) -> AbstractProbeMethod:
+    def create(cls, model: Model, config: ProbeConfig) -> AbstractProbeMethod:
         return cls.get(config.method.type)(model, config)
 
 

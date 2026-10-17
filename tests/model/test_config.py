@@ -1,9 +1,9 @@
-"""``ModelLocatorConfig`` — the shape a config file provides, and the index it resolves to.
+"""``ModelLocatorConfig`` - the shape a config file provides, and the index it resolves to.
 
 Two steps are under test and nothing else: ``from_dict``, which turns the raw mapping into the config,
 and ``parse(model, n_positions)``, which resolves it into an index DataFrame. The model is real because
-every axis is sized from its ``cfg`` — the layer count, the head count, ``d_model`` / ``d_mlp`` /
-``d_head`` — but no forward pass happens here.
+every axis is sized from its ``cfg`` - the layer count, the head count, ``d_model`` / ``d_mlp`` /
+``d_head`` - but no forward pass happens here.
 """
 
 import numpy as np
@@ -53,7 +53,7 @@ def values_of(index_df: pd.DataFrame, location: ModelLocation) -> list:
 
 
 # --------------------------------------------------------------------------------------------------
-# Location axes — every location enumerates the model dimension it names
+# Location axes - every location enumerates the model dimension it names
 # --------------------------------------------------------------------------------------------------
 @pytest.mark.parametrize(
     ("model_fixture", "activation", "location", "axis_size"),
@@ -115,7 +115,7 @@ def test_without_a_location_only_the_activation_is_left(small_model):
 
 
 # --------------------------------------------------------------------------------------------------
-# Filter — inclusion terms are OR-ed, keys within a term AND-ed, exclusions subtracted
+# Filter - inclusion terms are OR-ed, keys within a term AND-ed, exclusions subtracted
 # --------------------------------------------------------------------------------------------------
 @pytest.mark.parametrize(
     ("filter_config", "expected_layers"),
@@ -173,7 +173,7 @@ def test_filter_terms_are_or_ed_across_locations(small_model):
 
 
 # --------------------------------------------------------------------------------------------------
-# Transforms — group collapses values into one cell, incremental grows prefixes, combination expands
+# Transforms - group collapses values into one cell, incremental grows prefixes, combination expands
 # a grouped cell again. They run in that order, after the filter.
 # --------------------------------------------------------------------------------------------------
 def _layers(model, **source) -> list:
@@ -208,6 +208,21 @@ def test_group_drops_the_duplicate_rows_it_creates(small_model):
     ]
 
 
+def test_group_counts_a_negative_value_from_the_end_of_its_axis(small_model):
+    def heads(values: list[int]) -> list:
+        index_df = parse(
+            small_model,
+            activation=ModelLayerLocation.ATTENTION_Z,
+            location=[ModelLocation.HEAD],
+            group=Group({ModelLocation.HEAD: values}),
+        )
+        return values_of(index_df, ModelLocation.HEAD)
+
+    n_heads = small_model.cfg.n_heads
+
+    assert heads([-2, -1]) == heads([n_heads - 2, n_heads - 1]) == [*range(n_heads - 2), (n_heads - 2, n_heads - 1)]
+
+
 def test_incremental_appends_growing_prefixes_to_every_row(small_model):
     layers = _layers(
         small_model,
@@ -230,6 +245,22 @@ def test_incremental_can_add_a_location_the_index_does_not_have(small_model):
     )
 
     assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.NEURON) == [(0, (4,)), (0, (4, 5))]
+
+
+def test_incremental_counts_a_negative_value_from_the_end_of_its_axis(small_model):
+    def heads(values: list[int]) -> list:
+        index_df = parse(
+            small_model,
+            activation=ModelLayerLocation.ATTENTION_Z,
+            location=[ModelLocation.HEAD],
+            filter=Filter.from_config([{"head": 0}]),
+            incremental=Incremental({ModelLocation.HEAD: values}),
+        )
+        return values_of(index_df, ModelLocation.HEAD)
+
+    last = small_model.cfg.n_heads - 1
+
+    assert heads([-1]) == heads([last]) == [(0,), (0, last)]
 
 
 def test_incremental_keeps_the_other_locations(small_model):
@@ -287,7 +318,7 @@ def test_filter_group_and_combination_run_in_that_order(model):
 
 
 # --------------------------------------------------------------------------------------------------
-# Explicit coordinates — the exact points, in the order they are listed
+# Explicit coordinates - the exact points, in the order they are listed
 # --------------------------------------------------------------------------------------------------
 def test_coordinates_are_indexed_in_order(model):
     index_df = parse(
@@ -364,7 +395,7 @@ def test_an_empty_coordinate_list_yields_no_rows(model):
 
 
 # --------------------------------------------------------------------------------------------------
-# Deserialization — the config file's strings become ModelLocation / ModelLayerLocation members
+# Deserialization - the config file's strings become ModelLocation / ModelLayerLocation members
 # --------------------------------------------------------------------------------------------------
 def test_every_section_is_keyed_by_model_location(model):
     config = deserialize(
@@ -394,6 +425,34 @@ def test_coordinate_keys_are_model_location(model):
 
     assert isinstance(config.coordinates, Coordinates)
     assert all(isinstance(location, ModelLocation) for coordinate in config.coordinates for location in coordinate)
+
+
+def test_a_code_built_locator_reads_the_raw_shapes_a_config_file_holds(model):
+    raw = {
+        "activation": "attn.z",
+        "location": ["layer", "head"],
+        "filter": [{"layer": [0, 1]}, {"not": {"head": 0}}],
+        "group": {"head": "all"},
+        "incremental": {"neuron": [-1]},
+        "combination": {"location": ["head"], "max_elements": 2},
+    }
+
+    in_code = ModelLocatorConfig(**raw)
+
+    assert in_code == deserialize(raw)
+    assert in_code.activation is ModelLayerLocation.ATTENTION_Z
+    assert isinstance(in_code.filter, Filter)
+    assert isinstance(in_code.group, Group)
+    assert isinstance(in_code.incremental, Incremental)
+    assert isinstance(in_code.combination, Combination)
+    locations = [*in_code.location, *in_code.group, *in_code.incremental, *in_code.combination.location]
+    assert all(isinstance(location, ModelLocation) for location in locations)
+    assert in_code.parse(model, PROMPT_SIZE).df.equals(deserialize(raw).parse(model, PROMPT_SIZE).df)
+
+
+def test_a_code_built_locator_rejects_a_location_it_does_not_know():
+    with pytest.raises(ValueError, match="'layers' is not a valid ModelLocation"):
+        ModelLocatorConfig(activation="resid.post", location=["layers"])
 
 
 def test_a_raw_config_parses_like_its_code_built_twin(model):
@@ -426,7 +485,7 @@ def test_a_raw_config_parses_like_its_code_built_twin(model):
 
 
 # --------------------------------------------------------------------------------------------------
-# Symbolic positions — parse(model, None) keeps a position unresolved when the prompt length varies
+# Symbolic positions - parse(model, None) keeps a position unresolved when the prompt length varies
 # --------------------------------------------------------------------------------------------------
 @pytest.mark.parametrize(
     ("filter_config", "expected_positions"),

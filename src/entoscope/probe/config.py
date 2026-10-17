@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from entoscope.model.config import ModelLocation, ModelLocatorConfig
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from entoscope.probe.method.factory import ProbeMethodFactory
 
 
-class PoolingType(str, Enum):
+class PoolingType(StrEnum):
     """How ``ProbeConfig.pool`` reduces an axis; ``last`` keeps its final entry - the last token, for ``position``."""
 
     MEAN = "mean"
@@ -21,7 +21,7 @@ class PoolingType(str, Enum):
     LAST = "last"
 
 
-class ProbeMetric(str, Enum):
+class ProbeMetric(StrEnum):
     """A score of a probe's predictions on its examples: ``auroc`` ranks the positive-class probabilities,
     the others compare the 0/1 predictions with the labels."""
 
@@ -39,7 +39,6 @@ class ProbeMethodConfig(MethodConfig):
 
     @classmethod
     def factory(cls) -> type[ProbeMethodFactory]:
-        # Imported here: the factory imports the probes, which import this module.
         from entoscope.probe.method.factory import ProbeMethodFactory
 
         return ProbeMethodFactory

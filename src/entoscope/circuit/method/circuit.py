@@ -50,3 +50,7 @@ class AbstractCircuitMethod(abc.ABC, Generic[CircuitMethodConfigT]):
     def build(self, prompt: str, tokens: Int[torch.Tensor, "batch pos"]) -> PromptCircuit:
         """Discover the circuit for one tokenized prompt and return its graphs."""
         raise NotImplementedError
+
+    def activation_names(self) -> list[str] | None:
+        """The hooks ``build`` caches, which a plan reports; ``None`` when it caches every activation."""
+        return None

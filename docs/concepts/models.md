@@ -75,10 +75,11 @@ Only `run_with_cache` calls are cached, which are the runs an input makes before
 - the lens's prompt
 - every probing example
 - patching's source and target runs
-- every circuit-discovery prompt, with every activation
+- every circuit-discovery prompt, with the residual stream, MLP output, values and attention pattern
+  of every layer
 
 Patched runs and gradient passes go through `run_with_hooks` and are never cached. Circuit discovery
-caches the whole model's activations per prompt, which takes far more disk than an index-filtered
+caches those activations of every layer per prompt, which takes far more disk than an index-filtered
 run.
 
 ### What an entry is keyed by

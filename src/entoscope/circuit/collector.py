@@ -1,19 +1,12 @@
 import os
 
-import networkx as nx
-
 from entoscope.circuit.input import CircuitInput
 from entoscope.circuit.method.circuit import PromptCircuit
 from entoscope.circuit.visualization import CircuitFigure
+from entoscope.model import Model
 from entoscope.operation.collector import AbstractCollector, FigureMixin
 from entoscope.operation.config import CONFIG_FILE
-from entoscope.util.data import write_json
-
-
-def _write_graph(graph: nx.MultiDiGraph, save_dir: str, name: str) -> None:
-    """Persist a graph as both GraphML (portable) and node-link JSON (readable / round-trippable)."""
-    nx.write_graphml(graph, os.path.join(save_dir, f"{name}.graphml"))
-    write_json(os.path.join(save_dir, f"{name}.json"), nx.node_link_data(graph, edges="links"))
+from entoscope.util.data import write_graph, write_json
 
 
 class CircuitCollector(AbstractCollector[CircuitInput]):
@@ -23,26 +16,23 @@ class CircuitCollector(AbstractCollector[CircuitInput]):
     an interactive HTML per prompt.
     """
 
-    _circuits: list[PromptCircuit] | None = None
+    def __init__(self, operation_input: CircuitInput, model: Model, save_dir: str | None = None):
+        super().__init__(operation_input, model, save_dir)
+        self._circuits: list[PromptCircuit] = []
 
     @property
     def result(self) -> list[PromptCircuit]:
-        assert self._circuits is not None
         return self._circuits
 
-    def prepare(self) -> None:
-        self._circuits = []
-
     def collect(self, circuit: PromptCircuit, index: int) -> None:
-        assert self._circuits is not None
         assert index == len(self._circuits)
         self._circuits.append(circuit)
 
     def _save_result(self, save_dir: str) -> None:
         summary = []
         for i, circuit in enumerate(self.result):
-            _write_graph(circuit.graph, save_dir, f"graph_{i}")
-            _write_graph(circuit.routes, save_dir, f"routes_{i}")
+            write_graph(circuit.graph, save_dir, f"graph_{i}")
+            write_graph(circuit.routes, save_dir, f"routes_{i}")
             summary.append(
                 {
                     "index": i,

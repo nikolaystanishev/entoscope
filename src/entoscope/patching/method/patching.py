@@ -44,10 +44,9 @@ class AbstractPatchingMethod(abc.ABC, Generic[PatchingMethodConfigT]):
 
     batched: ClassVar[bool] = False
 
-    def __init__(self, model: Model, config: PatchingConfig, batch_size: int = 1):
+    def __init__(self, model: Model, config: PatchingConfig):
         self.model = model
         self.config = config
-        self.batch_size = batch_size
         self.method_config = cast(PatchingMethodConfigT, config.method)
 
     @abc.abstractmethod

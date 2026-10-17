@@ -31,11 +31,9 @@ class Lens(Operator):
         return_collector: bool = False,
         verbose: bool = True,
     ) -> LensCollector | None:
-        # Built before the forward pass, so a lens that cannot be built fails before the run does any work.
-        method = LensMethodFactory.create(lens_input.config, self.model)
+        method = LensMethodFactory.create(self.model, lens_input.config)
         lens_input.prepare(self.model)
         collector = self.collector_class(lens_input, self.model, save_dir)
-        collector.prepare()
 
         for single_index in tqdm(lens_input.index, total=len(lens_input.index), disable=not verbose):
             collector.collect(
@@ -50,12 +48,9 @@ class Lens(Operator):
         return None
 
     def plan(self, lens_input: LensInput, save_dir: str | None = None, verbose: bool = True) -> OperationPlan:
-        # Built as the run builds it, so a lens that cannot be built fails the plan as it would the run.
-        LensMethodFactory.create(lens_input.config, self.model)
+        method = LensMethodFactory.create(self.model, lens_input.config)
         lens_input.prepare_index(self.model)
-
-        # A lens reading only the weights takes no prompt, so it neither caches activations nor runs the model.
-        reads_activations = lens_input.prompt is not None
+        reads_activations = method.reads_activations
 
         plan = OperationPlan(
             operation="Lens",

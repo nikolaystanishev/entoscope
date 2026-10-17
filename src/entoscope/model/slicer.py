@@ -5,7 +5,6 @@ from entoscope.model.config import ModelLayerLocation, ModelLocation
 
 
 class ActivationSlicer(abc.ABC):
-    # Axis names of the activation tensor, in the order ``extract`` emits them.
     AXES: tuple[ModelLocation | str, ...]
 
     @staticmethod
