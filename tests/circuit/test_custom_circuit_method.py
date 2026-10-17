@@ -67,3 +67,14 @@ def test_a_registered_method_discovers_and_draws_a_circuit_per_prompt(
 
     saved = json.loads((save_dir / "config.json").read_text())
     assert saved["method"] == {"type": "residual_chain"}
+
+
+def test_a_method_that_names_no_activations_plans_to_read_them_all(small_model, config_from_yaml, residual_chain):
+    # ``activation_names`` left at its default says the method caches every activation, and a plan says so.
+    config = config_from_yaml(CircuitConfig, "chain", {"method": "residual_chain"})
+
+    plan = CircuitDiscoverer(small_model).plan(CircuitInput(config, PROMPTS), verbose=False)
+
+    assert plan.reads_full_cache
+    assert plan.activations == []
+    assert "  reads: full activation cache" in str(plan).splitlines()

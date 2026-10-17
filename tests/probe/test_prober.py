@@ -271,6 +271,23 @@ def test_a_plan_counts_one_probe_per_location_and_one_pass_per_example(model, mo
     assert plan.activations == sorted(f"blocks.{layer}.hook_resid_post" for layer in range(model.cfg.n_layers))
 
 
+def test_a_plan_lists_a_long_list_of_prompts_in_part(model):
+    # One line per prompt up to a limit, then a count of the rest: a dry run over a dataset stays readable.
+    positive = [f"Example {number} was wonderful" for number in range(8)]
+    negative = [f"Example {number} was dreadful" for number in range(8)]
+
+    lines = str(Prober(model).plan(ProbeInput(probe_config(), positive, negative), verbose=False)).splitlines()
+
+    def listing(label: str, prompt: str) -> str:
+        return f'  {label}: "{prompt}" ({model.to_tokens(prompt).shape[1]} tokens)'
+
+    listed = [line for line in lines if line.startswith(("  positive: ", "  negative: "))]
+    assert listed == [listing("positive", prompt) for prompt in positive] + [
+        listing("negative", p) for p in negative[:2]
+    ]
+    assert "  +6 more prompts" in lines
+
+
 def test_a_plan_describes_the_run_that_follows_it(model, tmp_path):
     save_dir = tmp_path / "probe_run"
     probe_input = ProbeInput(probe_config(), POSITIVE, NEGATIVE)

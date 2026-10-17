@@ -114,46 +114,6 @@ def test_a_coordinate_run_reads_each_coordinates_own_activation(model, activatio
     assert_row_reads(model, result.iloc[1], unembed(model, cache[f"blocks.{last}.hook_mlp_out"][:, -1]))
 
 
-def test_the_prepared_input_tokenizes_the_prompt_as_the_model_does(model):
-    lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT).prepare(model)
-
-    assert torch.equal(lens_input.tokens, model.to_tokens(PROMPT))
-
-
-def test_preparing_an_input_twice_keeps_what_it_already_built(model):
-    lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT).prepare(model)
-    index, cache = lens_input.index, lens_input.cache
-
-    assert lens_input.prepare(model).index is index
-    assert lens_input.cache is cache
-
-
-def test_a_prepared_input_moves_to_a_device(model):
-    lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT).prepare(model)
-
-    moved = lens_input.to("cpu")
-
-    assert moved is lens_input
-    assert moved.tokens.device.type == "cpu"
-    assert all(activation.device.type == "cpu" for activation in moved.cache.values())
-
-
-def test_the_run_only_caches_the_activations_its_index_names(model):
-    # Not visible in the result: the restriction is about what the forward pass keeps, so the prepared
-    # input is read directly. Nothing is stubbed - this is the real model and the real index.
-    lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT).prepare(model)
-
-    expected = {f"blocks.{layer}.hook_resid_post" for layer in range(model.cfg.n_layers)}
-    assert lens_input.index.source_activation_names() == expected
-    # A bridge fires the block's own output hook under a second name for the same activation, so the
-    # cache holds those aliases as well - and nothing beyond them.
-    aliases = {f"blocks.{layer}.hook_out" for layer in range(model.cfg.n_layers)}
-    assert expected <= set(lens_input.cache.keys()) <= expected | aliases
-
-    _, full_cache = model.run_with_cache(lens_input.tokens)
-    assert set(lens_input.cache.keys()) < set(full_cache.keys())
-
-
 # --------------------------------------------------------------------------------------------------
 # MLP-hidden activations - projected through the layer's W_out, so a row reads what its neurons write
 # --------------------------------------------------------------------------------------------------
@@ -693,23 +653,7 @@ def test_a_third_axis_folds_into_the_y_ticks(small_model, tmp_path):
     assert len(figure.trace["z"]) == small_model.cfg.n_layers * small_model.cfg.n_heads
 
 
-def test_the_base_collector_skips_the_html(model, tmp_path):
-    # The base collector persists the CSVs only; visualization is opt-in via the subclass.
-    save_dir = tmp_path / "no_viz"
-    collector = Lens(model, collector_class=LensCollector).apply(
-        LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT),
-        save_dir=str(save_dir),
-        return_collector=True,
-        verbose=False,
-    )
-
-    assert collector is not None
-    assert type(collector) is LensCollector
-    assert (save_dir / "result.csv").exists()
-    assert not (save_dir / "result.html").exists()
-
-
-def test_a_plan_for_the_base_collector_promises_no_html(model, tmp_path):
+def test_the_base_collector_writes_what_its_plan_promises_without_the_page(model, tmp_path):
     save_dir = tmp_path / "no_viz_plan"
     lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT)
     lens = Lens(model, collector_class=LensCollector)
@@ -717,5 +661,7 @@ def test_a_plan_for_the_base_collector_promises_no_html(model, tmp_path):
     plan = lens.plan(lens_input, save_dir=str(save_dir), verbose=False)
     lens.apply(lens_input, save_dir=str(save_dir), verbose=False)
 
+    # The base collector writes the data and leaves out the page; visualization is opt-in via the subclass.
+    assert "result.csv" in plan.outputs
     assert "result.html" not in plan.outputs
     assert sorted(path.name for path in save_dir.iterdir()) == sorted(plan.outputs)

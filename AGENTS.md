@@ -215,12 +215,16 @@ session's GPT-2.
 
 ## Tests
 
-Integration-style, against real (tiny, randomly initialized) transformers built in
-`tests/conftest.py`, plus real GPT-2 for the `model` fixture. Everything derives from the
-session-scoped `backend` fixture, so each test runs once per backend the installed transformer-lens has
-(`bridge`, `hooked`; 4.x has no `hooked`, so the `lowest` CI job's 3.x is where it runs) and a test
-taking several model fixtures gets them all on the same one - a test reaching a fixture through
-`request.getfixturevalue` must also name `backend`. Other shared helpers: `forbid_model_runs` (asserts
-a `plan()` never runs the model), `rendered_figure` (parses the plotly JSON back out of
-`result.html`), `config_from_yaml` (sources a config the way a run does, through `ConfigFactory`) and
-`registries` (undoes the registrations a test makes).
+Integration and e2e, against real (tiny, randomly initialized) transformers built in
+`tests/conftest.py`, plus real GPT-2 for the `model` fixture. A test drives an operation through its
+public API (a YAML config, `plan()`, `apply()`, the files a run writes) and checks the result against
+an expectation computed independently from the model, not against an input's internal state; the
+exceptions are `CachedModel` and the public-API contract. Everything derives from the session-scoped
+`backend` fixture, so each test runs once per backend the installed transformer-lens has (`bridge`,
+`compat` - a bridge after `enable_compatibility_mode()` - and `hooked`; 4.x has no `hooked`, so the
+`lowest` CI job's 3.x is where it runs) and a test taking several model fixtures gets them all on the
+same one - a test reaching a fixture through `request.getfixturevalue` must also name `backend`. Other
+shared helpers: `forbid_model_runs` (asserts a `plan()` never runs the model), `record_runs` (records
+every forward pass a run makes: its width and what it cached), `rendered_figure` (parses the plotly
+JSON back out of `result.html`), `config_from_yaml` (sources a config the way a run does, through
+`ConfigFactory`) and `registries` (undoes the registrations a test makes).

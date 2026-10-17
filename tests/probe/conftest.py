@@ -71,10 +71,10 @@ def assert_trained_alike(trained: LogisticRegression, expected: LogisticRegressi
     assert trained.intercept_ == pytest.approx(expected.intercept_, rel=1e-4, abs=1e-6)
 
 
-def activation_caches(model) -> list:
+def activation_caches(model, prompts: list[str] | None = None) -> list:
     """Every prompt's activations from a plain forward pass, in the order the labels are built."""
     caches = []
-    for prompt in POSITIVE + NEGATIVE:
+    for prompt in POSITIVE + NEGATIVE if prompts is None else prompts:
         with torch.no_grad():
             _, cache = model.run_with_cache(model.to_tokens(prompt))
         caches.append(cache)

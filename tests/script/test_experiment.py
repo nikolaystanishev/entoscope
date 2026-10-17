@@ -39,6 +39,7 @@ class Config:
     retries: int = field(default_factory=lambda: 3)
     documented: int = field(default=10, metadata={"help": "number of documented steps"})
     placeholder: int = field(default=7, metadata={"help": "placeholder steps [%(default)s]"})
+    run_id: str = field(init=False, default="local")  # not a parser option at all
 
 
 @experiment
@@ -51,7 +52,7 @@ def main(config: Config):
 DEFAULTS = (
     "Config(config_path='foo.yaml', steps=10, lr=0.1, verbose=False, seed=None, mode='fast', tags=[], counts=[], "
     "required_counts=[], params={}, raw_params={}, ratios={}, size=(2, 3), values=(), items=(), tag='X', retries=3, "
-    "documented=10, placeholder=7)"
+    "documented=10, placeholder=7, run_id='local')"
 )
 
 
@@ -84,7 +85,7 @@ def test_a_script_parses_every_field_type(tmp_path):
         "Config(config_path='foo.yaml', steps=5, lr=0.5, verbose=True, seed=7, mode='slow', tags=['a', 'b'], "
         "counts=[1, 2], required_counts=[3], params={'a': 1, 'b': 2}, raw_params={'url': 'http://x'}, "
         "ratios={1: 0.5}, size=(4, 5), values=(0.5, 1.5), items=('a', 'b'), tag='ABC', retries=9, documented=11, "
-        "placeholder=12)"
+        "placeholder=12, run_id='local')"
     )
 
 
@@ -111,6 +112,7 @@ def test_the_help_text_describes_every_field(tmp_path):
     assert "number of documented steps (default: 10)" in help_text
     assert "placeholder steps [7]" in help_text  # %(default)s in the help controls its placement
     assert "placeholder steps [7] (default" not in help_text
+    assert "--run-id" not in help_text  # a field the dataclass does not take in __init__ is no option
 
 
 def test_a_script_that_cannot_parse_its_arguments_exits_with_two(tmp_path):
@@ -144,30 +146,13 @@ def test_a_script_that_is_only_imported_does_not_run_itself(tmp_path, monkeypatc
 
 
 # --------------------------------------------------------------------------------------------------
-# Every field type, parsed by the decorated function itself
+# Each kind of option, parsed by the decorated function itself
 # --------------------------------------------------------------------------------------------------
 @dataclass
-class FullConfig:
-    """The in-process twin of the script's config: one field per supported type."""
-
-    config_path: str = field(metadata={"help": "data config file path"})
+class ScalarConfig:
     steps: int = 10
-    lr: float = 0.1
     verbose: bool = False
-    seed: int | None = None
     mode: str = field(default="fast", metadata={"choices": ["fast", "slow"]})
-    tags: list[str] = field(default_factory=list, metadata={"help": "run tags"})
-    counts: list[int] = field(default_factory=list)
-    required_counts: list[int] = field(default_factory=list, metadata={"nargs": "+"})
-    params: dict[str, int] = field(default_factory=dict, metadata={"help": "extra params"})
-    raw_params: dict = field(default_factory=dict)
-    ratios: dict[int, float] = field(default_factory=dict)
-    size: tuple[int, int] = (2, 3)
-    values: tuple[float, ...] = ()
-    items: tuple = ()
-    tag: str = field(default="x", metadata={"type": str.upper})
-    retries: int = field(default_factory=lambda: 3)
-    run_id: str = field(init=False, default="local")  # not a parser option at all
 
 
 def parse_argv(config_cls: type, argv: list[str]):
@@ -178,49 +163,6 @@ def parse_argv(config_cls: type, argv: list[str]):
         return config
 
     return main(argv=argv)
-
-
-def test_every_field_type_is_parsed_into_the_config():
-    config = parse_argv(
-        FullConfig,
-        [
-            *("--config-path", "foo.yaml", "--steps", "5", "--lr", "0.5", "--verbose", "--seed", "7"),
-            *("--mode", "slow", "--tags", "a", "b", "--counts", "1", "2", "--required-counts", "3"),
-            *("--params", "a:1", "b:2", "--raw-params", "url:http://x", "--ratios", "1:0.5"),
-            *("--size", "4", "5", "--values", "0.5", "1.5", "--items", "a", "b"),
-            *("--tag", "abc", "--retries", "9"),
-        ],
-    )
-
-    assert config == FullConfig(
-        config_path="foo.yaml",
-        steps=5,
-        lr=0.5,
-        verbose=True,
-        seed=7,
-        mode="slow",
-        tags=["a", "b"],
-        counts=[1, 2],
-        required_counts=[3],
-        params={"a": 1, "b": 2},
-        raw_params={"url": "http://x"},
-        ratios={1: 0.5},
-        size=(4, 5),
-        values=(0.5, 1.5),
-        items=("a", "b"),
-        tag="ABC",
-        retries=9,
-    )
-
-
-def test_the_defaults_of_every_field_type_are_applied():
-    config = parse_argv(FullConfig, ["--config-path", "foo.yaml"])
-
-    # tag is 'X': argparse runs a string default through the field's own type (str.upper here), and
-    # retries comes from its default_factory. run_id has no option, so it keeps its own default.
-    assert config == FullConfig(config_path="foo.yaml", tag="X")
-    assert (config.tag, config.retries, config.run_id) == ("X", 3, "local")
-    assert (config.tags, config.params, config.values, config.items) == ([], {}, (), ())
 
 
 # --------------------------------------------------------------------------------------------------
@@ -357,20 +299,20 @@ def test_metadata_nargs_overrides_the_derived_one(capsys):
 
 
 def test_a_boolean_field_takes_both_flags():
-    assert parse_argv(FullConfig, ["--config-path", "foo.yaml", "--verbose"]).verbose is True
-    assert parse_argv(FullConfig, ["--config-path", "foo.yaml", "--no-verbose"]).verbose is False
+    assert parse_argv(ScalarConfig, ["--verbose"]).verbose is True
+    assert parse_argv(ScalarConfig, ["--no-verbose"]).verbose is False
 
 
 def test_a_value_outside_the_metadata_choices_exits(capsys):
     with pytest.raises(SystemExit):
-        parse_argv(FullConfig, ["--config-path", "foo.yaml", "--mode", "wrong"])
+        parse_argv(ScalarConfig, ["--mode", "wrong"])
 
     assert "invalid choice" in capsys.readouterr().err
 
 
 def test_a_value_that_does_not_convert_exits(capsys):
     with pytest.raises(SystemExit):
-        parse_argv(FullConfig, ["--config-path", "foo.yaml", "--steps", "x"])
+        parse_argv(ScalarConfig, ["--steps", "x"])
 
     assert "invalid int value" in capsys.readouterr().err
 

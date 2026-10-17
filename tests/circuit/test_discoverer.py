@@ -8,10 +8,8 @@ from entoscope.circuit.collector import CircuitCollector, CircuitVisualizationCo
 from entoscope.circuit.config import CircuitConfig
 from entoscope.circuit.discoverer import CircuitDiscoverer
 from entoscope.circuit.input import CircuitInput
-from entoscope.circuit.method.circuit import PromptCircuit
 from entoscope.circuit.method.information_flow_routes import InformationFlowRoutesConfig
 from entoscope.model import Model
-from entoscope.model.index import get_act_name
 from entoscope.operation.config import ConfigFactory
 
 from ..conftest import forbid_model_runs, rendered_figures
@@ -21,15 +19,6 @@ PROMPTS = ["The capital of France is", "The Eiffel Tower is in"]
 
 def _config(**kwargs) -> CircuitConfig:
     return CircuitConfig(config_id="ifr", method=InformationFlowRoutesConfig(type="information_flow_routes", **kwargs))
-
-
-def test_one_circuit_per_prompt(model: Model):
-    collector = CircuitDiscoverer(model).apply(CircuitInput(_config(), PROMPTS), return_collector=True, verbose=False)
-    assert collector is not None
-    assert len(collector.result) == len(PROMPTS)
-    assert all(isinstance(c, PromptCircuit) for c in collector.result)
-    assert [c.prompt for c in collector.result] == PROMPTS
-    assert all(c.graph.number_of_edges() > 0 for c in collector.result)
 
 
 def test_artifacts_saved_to_disk(model: Model, tmp_path: Path):
@@ -89,12 +78,6 @@ def test_artifacts_saved_to_disk(model: Model, tmp_path: Path):
     }
 
 
-def test_an_input_holds_nothing_to_move_to_a_device(model: Model):
-    circuit_input = CircuitInput(_config(), PROMPTS).prepare(model)
-
-    assert circuit_input.to("cpu") is circuit_input
-
-
 def test_a_run_without_a_collector_still_writes_its_artifacts(model: Model, tmp_path: Path):
     # Not asking for the collector is the default, and how the example scripts run an operation.
     save_dir = tmp_path / "no_collector"
@@ -125,27 +108,6 @@ def test_a_plan_counts_one_graph_per_prompt_without_building_them(model: Model, 
     assert [n_tokens for _, _, n_tokens in plan.prompts] == [model.to_tokens(prompt).shape[1] for prompt in PROMPTS]
 
 
-def test_a_circuit_caches_only_the_activations_the_plan_reports(model: Model, monkeypatch):
-    cached: list[set[str]] = []
-    run_with_cache = model.run_with_cache
-
-    def recording(*args, **kwargs):
-        logits, cache = run_with_cache(*args, **kwargs)
-        cached.append(set(cache.keys()))
-        return logits, cache
-
-    plan = CircuitDiscoverer(model).plan(CircuitInput(_config(), PROMPTS[:1]), verbose=False)
-    monkeypatch.setattr(model, "run_with_cache", recording)
-    CircuitDiscoverer(model, collector_class=CircuitCollector).apply(
-        CircuitInput(_config(), PROMPTS[:1]), verbose=False
-    )
-
-    (names,) = cached
-    assert set(plan.activations) <= names
-    unread = {get_act_name(name, layer=layer) for name in ("q", "k", "z", "pre", "post") for layer in range(2)}
-    assert unread.isdisjoint(names)
-
-
 def test_a_plan_describes_the_run_that_follows_it(model: Model, tmp_path: Path):
     save_dir = tmp_path / "circuit_run"
     circuit_input = CircuitInput(_config(), PROMPTS[:1])
@@ -157,7 +119,7 @@ def test_a_plan_describes_the_run_that_follows_it(model: Model, tmp_path: Path):
     assert "circuit_0.html" in plan.outputs
 
 
-def test_a_plan_for_the_base_collector_promises_no_html(model: Model, tmp_path: Path):
+def test_the_base_collector_writes_what_its_plan_promises_without_the_page(model: Model, tmp_path: Path):
     save_dir = tmp_path / "no_viz_plan"
     circuit_input = CircuitInput(_config(), PROMPTS[:1])
     discoverer = CircuitDiscoverer(model, collector_class=CircuitCollector)
@@ -165,18 +127,7 @@ def test_a_plan_for_the_base_collector_promises_no_html(model: Model, tmp_path: 
     plan = discoverer.plan(circuit_input, save_dir=str(save_dir), verbose=False)
     discoverer.apply(circuit_input, save_dir=str(save_dir), verbose=False)
 
+    # The base collector writes the data and leaves out the page; visualization is opt-in via the subclass.
+    assert "graph_0.graphml" in plan.outputs
     assert "circuit_0.html" not in plan.outputs
     assert sorted(path.name for path in save_dir.iterdir()) == sorted(plan.outputs)
-
-
-def test_base_collector_skips_html(model: Model, tmp_path: Path):
-    # The base collector persists graph data only; visualization is opt-in via the subclass.
-    save_dir = tmp_path / "no_viz"
-    collector = CircuitDiscoverer(model, collector_class=CircuitCollector).apply(
-        CircuitInput(_config(), PROMPTS[:1]), save_dir=str(save_dir), return_collector=True, verbose=False
-    )
-    assert collector is not None
-    assert type(collector) is CircuitCollector
-    assert (save_dir / "graph_0.graphml").exists()
-    assert (save_dir / "prompts.json").exists()
-    assert not (save_dir / "circuit_0.html").exists()

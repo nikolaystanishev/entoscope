@@ -16,11 +16,13 @@ uv run pytest tests/lens/test_logit_lens.py::test_the_grid_covers_every_layer_an
 uv run pytest --cov --cov-report=html
 ```
 
-The tests are integration tests against real transformers. Most use tiny, randomly initialized models
-built in `tests/conftest.py`, and `model` is GPT-2, downloaded from the HuggingFace hub on first use.
-The tuned-lens tests also download GPT-2's pretrained translators. Every model fixture derives from
-the session-scoped `backend` fixture, so each test runs once per backend the installed transformer-lens
-has: with a `TransformerBridge`, and on transformer-lens 3 also with a `HookedTransformer`, which
+The tests are integration and end-to-end tests against real transformers: they run an operation the
+way a user does and check its results against values computed independently from the model. Most use
+tiny, randomly initialized models built in `tests/conftest.py`, and `model` is GPT-2, downloaded from
+the HuggingFace hub on first use. The tuned-lens tests also download GPT-2's pretrained translators.
+Every model fixture derives from the session-scoped `backend` fixture, so each test runs once per
+backend the installed transformer-lens has: with a `TransformerBridge`, with one in compatibility mode
+(`enable_compatibility_mode()`), and on transformer-lens 3 also with a `HookedTransformer`, which
 transformer-lens 4 removed.
 
 `tests/conftest.py` also provides:
@@ -28,6 +30,7 @@ transformer-lens 4 removed.
 | Fixture or helper | Use |
 |---|---|
 | `forbid_model_runs` | makes any forward pass fail, for asserting a `plan` never runs the model |
+| `record_runs` | records every forward pass a run makes, its batch width and what it cached |
 | `rendered_figure`, `rendered_figures` | parse the plotly figures back out of a written page |
 | `config_from_yaml` | load a config the way a run does, through a YAML file and `ConfigFactory` |
 | `registries` | undo the registrations a test makes |

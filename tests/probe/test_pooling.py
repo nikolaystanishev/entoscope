@@ -10,13 +10,11 @@ import torch
 
 from entoscope.model.config import Filter, Group, ModelLayerLocation, ModelLocation
 from entoscope.probe.config import PoolingType, ProbeConfig
-from entoscope.probe.input import ProbeInput
-from entoscope.probe.prober import Prober
 
 from .conftest import (
-    NEGATIVE,
     POSITIVE,
     SHORT_POSITIVE,
+    activation_caches,
     assert_trained_alike,
     probe_config,
     probe_of,
@@ -234,11 +232,14 @@ def test_a_full_position_grid_is_built_for_prompts_of_equal_length(small_model):
 
 
 def test_shorter_and_longer_prompts_share_one_grid(small_model):
-    # The label order is positive prompts first, then negative ones, whatever their length.
+    # The positive prompts are labelled 1 and the negative ones 0 whatever their length, so the probe is
+    # the one trained on the shorter prompts' last residuals against the longer prompts'.
     collector = run_probe(small_model, _position_config(-1), positive=SHORT_POSITIVE, negative=POSITIVE)
 
     assert len(collector.result) == small_model.cfg.n_layers
-    assert collector.operation_input.labels.tolist() == [1, 1, 0, 0]
+    caches = activation_caches(small_model, SHORT_POSITIVE + POSITIVE)
+    expected = _stacked(caches, "blocks.0.hook_resid_post", lambda residual: residual[-1])
+    assert_trained_alike(probe_of(collector), refit(expected, labels=[1] * len(SHORT_POSITIVE) + [0] * len(POSITIVE)))
 
 
 def test_a_run_is_reproducible(small_model):
@@ -246,48 +247,3 @@ def test_a_run_is_reproducible(small_model):
     second = run_probe(small_model, probe_config()).result
 
     assert first.equals(second)
-
-
-def test_the_prepared_input_carries_one_feature_matrix_per_location(small_model):
-    # The feature matrices themselves never reach the collector, so this reads the prepared input -
-    # the real model, the real index, nothing stubbed.
-    probe_input = ProbeInput(probe_config(), POSITIVE, NEGATIVE).prepare(small_model)
-
-    assert probe_input.labels.tolist() == [1, 1, 0, 0]
-    assert set(probe_input.features) == {single.output for single in probe_input.index}
-    for features in probe_input.features.values():
-        assert features.shape == (len(POSITIVE) + len(NEGATIVE), small_model.cfg.d_model)
-        assert features.dtype == torch.float32
-        assert features.device.type == "cpu"
-
-    # Preparing again keeps the same index instead of running the model a second time.
-    assert probe_input.prepare(small_model).index is probe_input.index
-
-
-def test_a_prepared_input_moves_to_a_device(small_model):
-    probe_input = ProbeInput(probe_config(), POSITIVE, NEGATIVE).prepare(small_model)
-
-    moved = probe_input.to("cpu")
-
-    assert moved is probe_input
-    assert moved.labels.device.type == "cpu"
-    assert all(features.device.type == "cpu" for features in moved.features.values())
-
-
-def test_an_unprepared_input_has_nothing_to_read(small_model):
-    probe_input = ProbeInput(probe_config(), POSITIVE, NEGATIVE)
-
-    for attribute in ("labels", "features", "index"):
-        with pytest.raises(AssertionError):
-            getattr(probe_input, attribute)
-
-    Prober(small_model).apply(probe_input, verbose=False)
-    assert probe_input.index is not None
-
-
-def test_the_run_only_caches_the_activations_its_index_names(small_model):
-    probe_input = ProbeInput(probe_config(), POSITIVE, NEGATIVE).prepare(small_model)
-
-    assert probe_input.index.source_activation_names() == {
-        f"blocks.{layer}.hook_resid_post" for layer in range(small_model.cfg.n_layers)
-    }

@@ -17,9 +17,7 @@ from entoscope.lens.lens import Lens
 from entoscope.lens.method.factory import LensMethodFactory
 from entoscope.lens.method.logit_lens import LogitLens
 from entoscope.lens.method.parameter_lens import ParameterLens, ParameterLensConfig, ProjectionSpace
-from entoscope.lens.method.tuned_lens import TunedLens, TunedLensConfig
 from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from entoscope.operation.method import method_config_class
 from entoscope.util.data import from_dict
 
 from ..conftest import TransformerBridge, forbid_model_runs, rendered_figure
@@ -68,6 +66,8 @@ class ShapedLensConfig(LensMethodConfig):
 
     reduction: Reduction = Reduction.SUM
     window: tuple[int, int] = (0, 1)
+    steps: tuple[int, ...] = ()
+    labels: set[str] = field(default_factory=set)
     weights: dict[int, float] = field(default_factory=dict)
     checkpoint: Path | None = None
     width: int = field(init=False)
@@ -84,11 +84,19 @@ SHAPED_YAML = {
     "type": "shaped_lens",
     "reduction": "mean",
     "window": [2, 5],
+    "steps": [1, 2, 3],
+    "labels": ["b", "a"],
     "weights": {0: 0.5},
     "checkpoint": "translators",
 }
 SHAPED = ShapedLensConfig(
-    type="shaped_lens", reduction=Reduction.MEAN, window=(2, 5), weights={0: 0.5}, checkpoint=Path("translators")
+    type="shaped_lens",
+    reduction=Reduction.MEAN,
+    window=(2, 5),
+    steps=(1, 2, 3),
+    labels={"a", "b"},
+    weights={0: 0.5},
+    checkpoint=Path("translators"),
 )
 
 
@@ -253,33 +261,12 @@ def test_a_lens_extending_another_takes_its_method_config(model, config_from_yam
 # --------------------------------------------------------------------------------------------------
 # A lens names its method config once, as its type argument
 # --------------------------------------------------------------------------------------------------
-def test_the_method_config_a_config_reads_is_the_lens_type_argument():
-    assert method_config_class(TemperatureLens) is TemperatureLensConfig
-    # A built-in with no fields of its own leaves its argument open, taking the TypeVar's bound, while one
-    # with fields names its method config...
-    assert (method_config_class(LogitLens), method_config_class(TunedLens)) == (LensMethodConfig, TunedLensConfig)
-    # ...and a lens extending another without an argument keeps that lens's method config.
-    assert method_config_class(NegatedParameterLens) is ParameterLensConfig
-
-
-def test_a_method_config_names_its_lens_itself():
-    # One method config class serves every lens taking it, so the class alone cannot say which lens that is.
-    with pytest.raises(TypeError, match="'type'"):
-        TunedLensConfig()
-
-
 # --------------------------------------------------------------------------------------------------
 # Method configs are data: kept as given, and written down in a form they are read back from
 # --------------------------------------------------------------------------------------------------
 @pytest.fixture
 def shaped_lens(registries):
     return LensMethodFactory.register("shaped_lens")(ShapedLens)
-
-
-def test_a_method_config_given_as_an_instance_is_kept_as_it_is(shaped_lens):
-    config = LensConfig(method=SHAPED, source=_last_position("resid.post"))
-
-    assert config.method is SHAPED
 
 
 def test_fields_of_every_shape_are_read_from_yaml_and_back_from_the_saved_config(
@@ -292,8 +279,9 @@ def test_fields_of_every_shape_are_read_from_yaml_and_back_from_the_saved_config
 
     assert config.method == SHAPED
     saved = json.loads((save_dir / "config.json").read_text())
-    # JSON has no enum, tuple, path or number key, so it holds their raw form, and leaves out what is derived...
-    assert saved["method"] == {**SHAPED_YAML, "weights": {"0": 0.5}}
+    # JSON has no enum, tuple, set, path or number key, so it holds their raw form - a set in sorted
+    # order, so two runs of one config write the same file - and leaves out what is derived...
+    assert saved["method"] == {**SHAPED_YAML, "labels": ["a", "b"], "weights": {"0": 0.5}}
     # ...which reads back as the types the method config declares.
     assert from_dict(LensConfig, saved) == config
 
@@ -335,6 +323,34 @@ def test_a_lens_whose_fields_have_no_defaults_needs_them(config_from_yaml, regis
 def test_a_method_entry_naming_no_type_is_rejected_as_the_config_is_read(config_from_yaml, method, message):
     with pytest.raises(ValueError, match=message):
         config_from_yaml(LensConfig, "untyped", {"method": method, "source": GRID})
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"window": [2]}, r"Expected 2 values for tuple\[int, int\], got \[2\]"),
+        ({"window": 2}, r"Expected a list for tuple\[int, int\], got 2"),
+        ({"labels": "a"}, r"Expected a list for set\[str\], got 'a'"),
+    ],
+)
+def test_a_field_of_the_wrong_shape_is_rejected_as_the_config_is_read(config_from_yaml, shaped_lens, fields, message):
+    with pytest.raises(ValueError, match=message):
+        config_from_yaml(LensConfig, "shaped", {"method": {"type": "shaped_lens", **fields}, "source": GRID})
+
+
+def test_a_lens_is_named_by_a_non_empty_string(config_from_yaml, registries):
+    with pytest.raises(ValueError, match="A lens method is named by a non-empty string, got ''"):
+        config_from_yaml(LensConfig, "unnamed", {"method": "", "source": GRID})
+    with pytest.raises(ValueError, match="A lens method is named by a non-empty string"):
+        LensMethodFactory.register("")(TemperatureLens)
+
+
+def test_only_a_lens_can_be_registered_as_one(registries):
+    # Checked as it is registered, rather than at the first run that names it.
+    with pytest.raises(TypeError, match="A lens method must subclass"):
+        LensMethodFactory.register("not_a_lens")(TemperatureLensConfig)
+
+    assert "not_a_lens" not in LensMethodFactory.registered()
 
 
 # --------------------------------------------------------------------------------------------------

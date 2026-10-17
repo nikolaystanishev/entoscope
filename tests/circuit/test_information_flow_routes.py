@@ -12,8 +12,9 @@ from entoscope.circuit.discoverer import CircuitDiscoverer
 from entoscope.circuit.input import CircuitInput
 from entoscope.circuit.method.circuit import PromptCircuit
 from entoscope.circuit.method.factory import CircuitMethodFactory
-from entoscope.circuit.method.information_flow_routes import InformationFlowRoutesConfig, decomposed_attn
+from entoscope.circuit.method.information_flow_routes import InformationFlowRoutesConfig
 from entoscope.model.cache import CachedModel
+from entoscope.model.weight import ModelWeight, model_weight
 
 PROMPT = "The capital of France is"
 
@@ -169,23 +170,84 @@ def test_a_circuit_without_edges_is_still_rendered(model, tmp_path):
     assert "No edges above threshold" in (save_dir / "circuit_0.html").read_text()
 
 
-def test_grouped_query_attention_gets_an_edge_per_query_head(gqa_model):
-    # Fewer value heads than query heads, and an architecture that carries no attention bias at all:
-    # the cached values are shared by a group of heads, and each of those heads is still its own edge.
+def _head_outputs_by_key(model, cache, layer: int) -> torch.Tensor:
+    """What each head writes to each query position from each key position, ``[query, key, head, d_model]``.
+
+    Grouped-query attention shares a value head across a group of query heads, so the value heads are
+    repeated to line up with the pattern's.
+    """
+    values = cache[f"blocks.{layer}.attn.hook_v"][0].double()
+    values = values.repeat_interleave(model.cfg.n_heads // values.shape[1], dim=1)
+    pattern = cache[f"blocks.{layer}.attn.hook_pattern"][0].double()
+    w_o = model_weight(model, ModelWeight.ATTENTION_OUT, layer).detach().double()
+    return torch.einsum("hqk,khd,hdm->qkhm", pattern, values, w_o)
+
+
+def _shares(parts: torch.Tensor, whole: torch.Tensor) -> torch.Tensor:
+    """Ferrando and Voita's proximity of each part to the whole, as a share of all the parts' proximity.
+
+    A part's proximity is how much nearer than nothing it puts the whole, in L1, floored at a small
+    epsilon so a part pointing away still counts for a little. The distance carries the 1e-6 that torch's
+    ``pairwise_distance`` adds to a difference, as the reference implementation measures it.
+    """
+    proximity = (whole.abs().sum() - (parts - whole + 1e-6).abs().sum(dim=-1)).clip(min=1e-5)
+    return proximity / proximity.sum()
+
+
+# A share is the small difference of two L1 norms that GPT-2's residual stream puts in the thousands,
+# so the run's float32 rounding moves it by up to ~7e-5; the expectation is computed in float64.
+SHARE = {"abs": 2e-4}
+
+
+@pytest.mark.parametrize("model_fixture", ["model", "gqa_model"])
+def test_every_edge_carries_its_parts_share_of_the_representation(request, backend, model_fixture):
+    # With no threshold nothing is pruned or renormalized, so every edge into a representation weighs
+    # its part's share of it - the head outputs from every key and the residual stream for the state
+    # after attention, the MLP output and the residual stream for the state after the block.
+    model = request.getfixturevalue(model_fixture)
+    circuit = discover(model, config=circuit_config(threshold=0.0))[0]
     with torch.no_grad():
-        _, cache = gqa_model.run_with_cache(gqa_model.to_tokens(PROMPT))
+        _, cache = model.run_with_cache(model.to_tokens(PROMPT))
+    n_tokens = model.to_tokens(PROMPT).shape[1]
 
-    for layer in range(gqa_model.cfg.n_layers):
-        b_O = gqa_model.blocks[layer].attn.b_O
-        written = cache[f"blocks.{layer}.hook_attn_out"][0]
-        expected = written if b_O is None else written - b_O
+    for layer in range(model.cfg.n_layers):
+        written = _head_outputs_by_key(model, cache, layer)
+        # The split adds back up to what attention wrote, bias aside: the parts are the model's own.
+        b_O = model.blocks[layer].attn.b_O
+        attn_out = cache[f"blocks.{layer}.hook_attn_out"][0]
+        assert torch.allclose(written.sum(dim=(1, 2)).float(), attn_out if b_O is None else attn_out - b_O, atol=1e-4)
 
-        assert torch.allclose(decomposed_attn(gqa_model, cache, layer).sum(dim=(1, 2)), expected, atol=1e-4)
+        for token in range(n_tokens):
+            resid_pre, resid_mid, resid_post, mlp_out = (
+                cache[f"blocks.{layer}.{hook}"][0, token].double()
+                for hook in ("hook_resid_pre", "hook_resid_mid", "hook_resid_post", "hook_mlp_out")
+            )
+            attention = _shares(torch.cat([written[token].flatten(0, 1), resid_pre[None]]), resid_mid)
+            attention_by_part, residual = attention[:-1].reshape(n_tokens, model.cfg.n_heads), attention[-1]
 
-    circuit = discover(gqa_model, config=circuit_config(threshold=0.0))[0]
+            edges = {
+                (circuit.graph.nodes[source]["position"], data["head"]): data["weight"]
+                for source, _, data in circuit.graph.in_edges(f"A{layer}_{token}", data=True)
+                if data["kind"] == "attention"
+            }
+            # One edge per key and per query head: the heads that share a value head stay apart.
+            assert set(edges) == {(key, head) for key in range(n_tokens) for head in range(model.cfg.n_heads)}
+            for (key, head), weight in edges.items():
+                assert weight == pytest.approx(float(attention_by_part[key, head]), **SHARE), (layer, token, key, head)
+            (residual_edge,) = [
+                data["weight"]
+                for _, _, data in circuit.graph.in_edges(f"A{layer}_{token}", data=True)
+                if data["kind"] == "residual"
+            ]
+            assert residual_edge == pytest.approx(float(residual), **SHARE)
 
-    heads = {d["head"] for _, _, d in circuit.graph.edges(data=True) if d["kind"] == "attention"}
-    assert heads == set(range(gqa_model.cfg.n_heads))
+            mlp, residual = _shares(torch.stack([mlp_out, resid_mid]), resid_post)
+            assert circuit.graph.edges[f"A{layer}_{token}", f"M{layer}_{token}", "mlp"]["weight"] == pytest.approx(
+                float(mlp), **SHARE
+            )
+            assert circuit.graph.edges[f"A{layer}_{token}", f"I{layer}_{token}", "residual"]["weight"] == pytest.approx(
+                float(residual), **SHARE
+            )
 
 
 def test_parallel_attention_and_mlp_is_rejected(parallel_model):

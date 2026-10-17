@@ -16,7 +16,7 @@ from entoscope.lens.method.logit_lens import _attention_scale
 from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
 from entoscope.model.weight import ModelWeight, model_weight
 
-from ..conftest import HookedTransformer, TransformerBridge, _gpt2_hooked
+from ..conftest import HookedTransformer, TransformerBridge, _gpt2_bridge, _gpt2_hooked
 
 pytestmark = pytest.mark.skipif(
     TransformerBridge is None or HookedTransformer is None, reason="transformer_lens has only one of the backends"
@@ -34,10 +34,7 @@ TO_FLOAT32 = {"rtol": 1e-4, "atol": 1e-3}
 
 @pytest.fixture(scope="module")
 def compatible_bridge():
-    model = TransformerBridge.boot_transformers("gpt2", device="cpu")
-    model.enable_compatibility_mode(disable_warnings=True)
-    model.eval()
-    return model
+    return _gpt2_bridge(compatible=True)
 
 
 @pytest.fixture(scope="module")
