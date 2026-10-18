@@ -101,5 +101,6 @@ either.
 
 The fingerprint is taken on every call, so a change made after wrapping, such as
 `enable_compatibility_mode()`, a change of dtype or a training step, is a new entry rather than a stale
-one. A call whose batch rows are all the same, as patching makes when it runs a prompt as wide as its
-patched runs, is stored as one row. Entries are never evicted; delete the directory to clear the cache.
+one. Patching runs each prompt as wide as its patched runs, and a tensor whose rows come out alike bit
+for bit is stored as one row. A backend that rounds the copies apart, as some x86 CPUs do, has every
+row kept, so an entry always reads back exactly what the model computed. Entries are never evicted; delete the directory to clear the cache.

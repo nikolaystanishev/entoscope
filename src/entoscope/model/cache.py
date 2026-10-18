@@ -122,8 +122,9 @@ def _compact(tensor: torch.Tensor) -> torch.Tensor:
 
     ``torch.save`` writes a view's storage rather than its shape, so the entry holds the row once and
     ``torch.load`` hands back the expanded view. Patching runs each prompt as wide as its patched runs,
-    which is where such rows come from. Rows are compared exactly, so nothing a backend computed
-    differently for one of them is lost.
+    which is where such rows come from. Rows are compared exactly, so on a backend that rounds the copies
+    of one prompt apart, as some x86 CPUs do, every row is kept, and an entry always reads back exactly
+    what the model computed.
 
     Args:
         tensor: A cached tensor, its batch rows along the first axis.

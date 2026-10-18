@@ -279,23 +279,64 @@ def test_an_entry_written_in_another_format_is_recomputed(wrapped, tmp_path, mon
     assert len(cache_files(tmp_path)) == 2
 
 
-def test_identical_batch_rows_are_stored_once(backend, tmp_path, monkeypatch):
-    # Patching runs each prompt as wide as its patched runs, so the rows of such a call are copies of
-    # one another: the entry holds one of them, and reading it back gives every row again.
-    model = build_small_model(backend)
-    tokens = tokens_of(model)
+def entry_sizes(model, tmp_path, rows: tuple[int, ...] = (1, 8), **kwargs) -> dict[int, int]:
+    """The size on disk of one call's entry, for a prompt repeated down each batch width."""
     sizes = {}
-    for rows in (1, 8):
-        CachedModel(model, str(tmp_path / str(rows))).run_with_cache(torch.cat([tokens] * rows), names_filter=NAMES)
-        (entry,) = cache_files(tmp_path / str(rows))
-        sizes[rows] = entry.stat().st_size
+    for width in rows:
+        cache_dir = tmp_path / str(width)
+        CachedModel(model, str(cache_dir)).run_with_cache(torch.cat([tokens_of(model)] * width), **kwargs)
+        (entry,) = cache_files(cache_dir)
+        sizes[width] = entry.stat().st_size
+    return sizes
 
+
+def nudge_every_row(model) -> None:
+    """Make a prompt repeated down the batch compute a different value on every row.
+
+    Whether a backend computes the copies of one prompt alike bit for bit is its own business: the Linux
+    x86 runners CI uses round a batch's rows apart, Apple silicon does not. This makes them differ
+    everywhere.
+    """
+
+    def shift(activation, hook):
+        activation = activation.clone()
+        activation[:, :, 0] += 1e-7 * torch.arange(activation.shape[0])[:, None]
+        return activation
+
+    model.hook_dict["hook_embed"].add_hook(shift, dir="fwd", is_permanent=True)
+
+
+def test_batch_rows_alike_bit_for_bit_are_stored_once(backend, tmp_path, monkeypatch):
+    # Patching runs each prompt as wide as its patched runs, so the rows of such a call are copies of one
+    # another. An embedding is a lookup, so its copies are alike on every backend: the entry holds one of
+    # them, and reading it back gives every row again.
+    model = build_small_model(backend)
+    request = {"names_filter": ["hook_embed"], "return_type": None}
+
+    sizes = entry_sizes(model, tmp_path, **request)
     runs = count_runs(monkeypatch, model)
-    logits, cache = CachedModel(model, str(tmp_path / "8")).run_with_cache(torch.cat([tokens] * 8), names_filter=NAMES)
+    _, cache = CachedModel(model, str(tmp_path / "8")).run_with_cache(torch.cat([tokens_of(model)] * 8), **request)
     assert runs == []
-    direct_logits, direct_cache = model.run_with_cache(torch.cat([tokens] * 8), names_filter=NAMES)
+    _, direct = model.run_with_cache(torch.cat([tokens_of(model)] * 8), **request)
 
     assert sizes[8] < 1.5 * sizes[1]
+    assert_same_cache(cache, direct, names=["hook_embed"])
+
+
+def test_batch_rows_that_differ_are_each_stored_and_read_back_exactly(backend, tmp_path, monkeypatch):
+    # An entry reads back exactly what the model computed, so rows a backend rounded apart are kept apart.
+    model = build_small_model(backend)
+    nudge_every_row(model)
+
+    sizes = entry_sizes(model, tmp_path, names_filter=NAMES)
+    runs = count_runs(monkeypatch, model)
+    logits, cache = CachedModel(model, str(tmp_path / "8")).run_with_cache(
+        torch.cat([tokens_of(model)] * 8), names_filter=NAMES
+    )
+    assert runs == []
+    direct_logits, direct_cache = model.run_with_cache(torch.cat([tokens_of(model)] * 8), names_filter=NAMES)
+
+    assert sizes[8] > 7 * sizes[1]
     assert torch.equal(logits, direct_logits)
     assert_same_cache(cache, direct_cache)
 
