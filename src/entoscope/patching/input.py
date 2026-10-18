@@ -7,7 +7,13 @@ from transformer_lens import ActivationCache
 from entoscope.model import Model
 from entoscope.model.index import Index
 from entoscope.operation.input import OperationInput
-from entoscope.patching.config import PatchingConfig, PatchingElementConfig, PatchingMetric
+from entoscope.patching.config import (
+    MetricComparison,
+    PatchingConfig,
+    PatchingElementConfig,
+    PatchingMetric,
+    metric_column,
+)
 from entoscope.patching.metric import AbstractComparison, AbstractMetric
 from entoscope.patching.processor import SourceStrategy, TargetStrategy
 from entoscope.util.collections import broadcast_length, zip_broadcast
@@ -18,8 +24,9 @@ class PatchingInput(OperationInput):
     """The two prompts a patching run sits between, and the tokens its metrics compare.
 
     The target run is the one patched, and the source run is what ``replace`` and ``value_scale`` read.
-    A left-unset answer token only means something while the two prompts disagree, so a pair that
-    predicts the same token is rejected by the difference metrics.
+    A source element that reads no source run, a value or noise on the target's own activation, counts
+    its positions in the target prompt. A left-unset answer token only means something while the two
+    prompts disagree, so a pair that predicts the same token is rejected by the difference metrics.
 
     Attributes:
         config: The patching config.
@@ -80,8 +87,9 @@ class PatchingInput(OperationInput):
             The input itself, prepared in place.
 
         Raises:
-            ValueError: If the elements' row counts cannot be paired, or the answer tokens cannot be
-                resolved, or resolve to the same token while a difference metric is asked for.
+            ValueError: If the elements' row counts cannot be paired, the answer tokens cannot be
+                resolved, or resolve to the same token while a difference metric is asked for, or a
+                ``normalized`` metric would divide by a source and target run that score the same.
         """
         if self._index is None:
             if self.source_prompt is not None:
@@ -91,9 +99,7 @@ class PatchingInput(OperationInput):
             index = [
                 Index[PatchingElementConfig](
                     patching_config.source,
-                    patching_config.source.parse(
-                        model, self.source_tokens.shape[1] if self._source_tokens is not None else None
-                    ),
+                    patching_config.source.parse(model, self._read_tokens(patching_config.source).shape[1]),
                     patching_config.target,
                     patching_config.target.parse(model, self.target_tokens.shape[1]),
                 )
@@ -133,8 +139,38 @@ class PatchingInput(OperationInput):
                 self._source_generation = int(self._source_logits[0, -1].argmax())
             self._target_generation = int(self._target_logits[0, -1].argmax())
             self._resolve_answer_tokens(model)
+            self._check_normalizable()
 
         return self
+
+    def _read_tokens(self, source: PatchingElementConfig) -> Int[torch.Tensor, "batch pos"]:
+        """Pick the prompt a source element's positions count in: the run its strategy reads.
+
+        Args:
+            source: A source element.
+
+        Returns:
+            The source prompt's tokens for an element that reads the source run, and otherwise the
+            target prompt's, whose run a noise source corrupts and a value source is written into.
+        """
+        return self.source_tokens if SourceStrategy.get(source.type).needs_source_run else self.target_tokens
+
+    def _check_normalizable(self) -> None:
+        """Reject a ``normalized`` metric whose two unpatched runs score the same, before any patched run.
+
+        Raises:
+            ValueError: If the source and target runs give a normalized metric the same value, which
+                every row would divide by.
+        """
+        for metric, comparisons in self.config.metric.items():
+            if MetricComparison.NORMALIZED in comparisons and bool(
+                self.source_baseline(metric) == self.target_baseline(metric)
+            ):
+                raise ValueError(
+                    f"{metric_column(metric, MetricComparison.NORMALIZED)} divides by the gap between the source "
+                    f"and target runs' {metric.value}, which is 0: the two runs score the same, so there is "
+                    "nothing to normalize against"
+                )
 
     @staticmethod
     def _run_with_cache(

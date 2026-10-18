@@ -54,5 +54,5 @@ class ExactPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
                     generation=generation,
                 )
 
-    def passes(self, runs: int, batches: int) -> tuple[int, int]:
+    def passes(self, patching_input: PatchingInput, batches: int) -> tuple[int, int]:
         return batches, 0

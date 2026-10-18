@@ -251,12 +251,11 @@ def test_queries_and_keys_have_no_tuned_projection(model, translators, activatio
 
 
 def test_an_activation_without_a_vocabulary_projection_raises(model, translators):
-    config = tuned_config(
-        {"activation": "attn.pattern", "layer": 0, "head": 0, "position": -1}, resource=translators["zero"]
-    )
-
-    with pytest.raises(ValueError, match="TunedLens cannot project.*map onto the vocabulary"):
-        Lens(model).apply(LensInput(config, PROMPT), verbose=False)
+    # The pattern has no position of its own to rank the tokens at, so its config is refused outright.
+    with pytest.raises(ValueError, match="'attn.pattern' has no 'position' axis"):
+        tuned_config(
+            {"activation": "attn.pattern", "layer": 0, "head": 0, "position": -1}, resource=translators["zero"]
+        )
 
 
 def test_translators_on_another_lens_are_an_unknown_field(config_from_yaml):

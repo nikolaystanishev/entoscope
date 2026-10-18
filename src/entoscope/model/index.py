@@ -193,6 +193,8 @@ class Index(Generic[T]):
 
     Attributes:
         layout_df: One integer code per row on every axis a result page lays the rows out on.
+        layout_prefixes: The result columns' prefixes, the side ``layout_df`` was built from first, so a
+            page labels its axes with the side that spans them.
 
     Raises:
         ValueError: If the source and the target cannot be paired row by row.
@@ -221,7 +223,12 @@ class Index(Generic[T]):
                     "they pair row by row, so they need as many rows, or one of them a single row"
                 ) from None
 
-        laid_out = self.target.df if self.target is not None and len(self.target.df) == len(self) else self.source.df
+        target_laid_out = self.target is not None and len(self.target.df) == len(self)
+        laid_out = self.target.df if target_laid_out else self.source.df
+        if self.target is None:
+            self.layout_prefixes: tuple[str, ...] = ("source_",)
+        else:
+            self.layout_prefixes = ("target_", "source_") if target_laid_out else ("source_", "target_")
         if self.source_config.coordinates is not None and (
             self.target_config is None or self.target_config.coordinates is not None
         ):
@@ -252,8 +259,11 @@ class Index(Generic[T]):
     def _activation_names(config: T | None, index: ModelLocationIndex | None) -> set[str]:
         if config is None or index is None:
             return set()
-        columns = index.df.columns.to_list()
-        elements = (IndexElement(config, columns, row) for row in dataframe_to_list(index.df))
+        # A hook is named by a row's activation and layer alone, so only their distinct pairs are walked.
+        columns = [column for column in (ModelAxis.ACTIVATION, ModelAxis.LAYER) if column in index.df.columns]
+        pairs = index.df[columns]
+        distinct = pairs[~pairs.astype(str).duplicated().to_numpy()]
+        elements = (IndexElement(config, columns, row) for row in dataframe_to_list(distinct))
         return {element.transformer_activation() for element in elements if element.activation() is not None}
 
     def to_df(self) -> pd.DataFrame:

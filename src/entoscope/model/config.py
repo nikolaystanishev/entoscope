@@ -1,7 +1,5 @@
-import dataclasses
 import itertools
 import sys
-import typing
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -14,7 +12,7 @@ from pandas._typing import Axes
 
 from entoscope.model.base import Model
 from entoscope.util.collections import range_combinations
-from entoscope.util.data import from_dict
+from entoscope.util.data import read_fields
 
 
 class ModelAxis(StrEnum):
@@ -95,18 +93,30 @@ MODEL_LOCATION_MAPPER: dict[ModelAxis, Callable] = {
 }
 
 
-def count_from_end(value: int, max_value: int | None) -> int:
+def count_from_end(value: int, max_value: int | None, axis: ModelAxis) -> int:
     """Resolve a value on an axis, a negative one counting from the axis's end.
 
     Args:
         value: A value on the axis.
         max_value: The axis's size. ``None`` is a prompt length that varies, so the value stays
             symbolic and torch resolves a negative one against each prompt's own cache at slice time.
+        axis: The axis, which a message names.
 
     Returns:
         The value, counted from the start when the axis's size is known.
+
+    Raises:
+        ValueError: If the axis's size is known and the value lies past either end of it, which would
+            name a row the model does not have.
     """
-    return value if value >= 0 or max_value is None else max_value + value
+    if max_value is None:
+        return value
+    if not -max_value <= value < max_value:
+        raise ValueError(
+            f"'{axis.value}' {value} is out of range for an axis of {max_value}: it takes 0 to {max_value - 1}, "
+            f"or -{max_value} to -1 counting from the end"
+        )
+    return value if value >= 0 else max_value + value
 
 
 def make_df_from_ranges(column_names: Axes, column_ranges: Sequence[int | Sequence[int]]) -> pd.DataFrame:
@@ -298,7 +308,7 @@ class Filter:
         if isinstance(constraint, list):
             return set().union(*(cls._resolve(el, location, max_value) for el in constraint))
         if isinstance(constraint, int):
-            return {count_from_end(constraint, max_value)}
+            return {count_from_end(constraint, max_value, location)}
         if isinstance(constraint, dict) and set(constraint.keys()) == {"range"}:
             start, end = constraint["range"]
             if max_value is None and (start < 0) != (end < 0):
@@ -306,7 +316,7 @@ class Filter:
                     f"Cannot resolve range {constraint['range']} for '{location.value}' when the prompt "
                     "length varies; use positions on the same side (all from the start or all from the end)"
                 )
-            return set(range(count_from_end(start, max_value), count_from_end(end, max_value) + 1))
+            return set(range(count_from_end(start, max_value, location), count_from_end(end, max_value, location) + 1))
         raise ValueError(f"Invalid filter constraint for '{location}': {constraint!r}")
 
 
@@ -333,7 +343,7 @@ class Group(dict[ModelAxis, list[int] | str]):
             if values == "all":
                 values = index_df[name].unique().tolist()
             else:
-                values = [count_from_end(value, location_to_max_value[name]) for value in values]
+                values = [count_from_end(value, location_to_max_value[name], name) for value in values]
             values_to_replace = {v: values for v in values}
             index_df[name] = index_df[name].apply((lambda mapping: lambda el: mapping.get(el, el))(values_to_replace))
         index_df = index_df.loc[index_df.astype(str).drop_duplicates().index]
@@ -360,7 +370,7 @@ class Incremental(dict[ModelAxis, list[int]]):
             The index with the grown rows after each row they grow from.
         """
         for name, values in self.items():
-            values = [count_from_end(value, location_to_max_value[name]) for value in values]
+            values = [count_from_end(value, location_to_max_value[name], name) for value in values]
             new_rows = []
             for _, row in index_df.iterrows():
                 row = row.astype(object)
@@ -512,8 +522,42 @@ class Coordinates(list[dict[ModelAxis, int | list[int] | ModelLayerLocation]]):
         if isinstance(value, list):
             return [cls._resolve_value(el, location, max_value) for el in value]
         if isinstance(value, int):
-            return count_from_end(value, max_value)
+            return count_from_end(value, max_value, location)
         raise ValueError(f"Invalid coordinate value for '{location}': {value!r}")
+
+
+_NO_ACTIVATION = (
+    "The locator names a location but no 'activation' to read it in; set 'activation' on the config, or on "
+    "every coordinate"
+)
+
+
+def _check_axes(activation: ModelLayerLocation | None, axes: set[ModelAxis]) -> None:
+    """Check that an activation can be located along every axis a locator names for it.
+
+    An axis the activation's tensor does not have would not narrow what a row reads at all: the slice
+    reads it whole, and every row along it would read the same thing.
+
+    Args:
+        activation: The activation the axes are named for.
+        axes: The axes.
+
+    Raises:
+        ValueError: If axes are named with no activation to read them in, or one of them is not an axis
+            of the activation.
+    """
+    if not axes:
+        return
+    if activation is None:
+        raise ValueError(_NO_ACTIVATION)
+    # Imported here because the slicers, which own each activation's axes, read this module's enums.
+    from entoscope.model.slicer import located_axes
+
+    allowed = located_axes(activation)
+    for axis in ModelAxis:
+        if axis in axes and axis not in allowed:
+            names = ", ".join(f"'{name.value}'" for name in ModelAxis if name in allowed)
+            raise ValueError(f"'{activation.value}' has no '{axis.value}' axis to locate: it is located by {names}")
 
 
 @dataclass(kw_only=True)
@@ -537,8 +581,10 @@ class ModelLocatorConfig:
 
     Raises:
         ValueError: If ``location`` names ``activation``, ``coordinates`` is combined with ``location``,
-            ``filter`` or a transform, the coordinates name different axes, or ``activation`` is set both
-            on the locator and in the coordinates.
+            ``filter`` or a transform, the coordinates name different axes, ``activation`` is set both
+            on the locator and in the coordinates, a location is named with no activation to read it
+            in, an axis is named that the activation's tensor does not have, or ``group`` or
+            ``combination`` reshapes an axis the index does not enumerate.
     """
 
     activation: ModelLayerLocation | None = None
@@ -550,22 +596,22 @@ class ModelLocatorConfig:
     coordinates: Coordinates | None = None
 
     def __post_init__(self):
-        hints = typing.get_type_hints(type(self))
-        for declared in dataclasses.fields(self):
-            setattr(self, declared.name, from_dict(hints[declared.name], getattr(self, declared.name)))
+        read_fields(self)
 
         if ModelAxis.ACTIVATION in self.location:
             raise ValueError("'activation' is not a declarative location; set 'activation' on the config instead")
-        if self.coordinates is None:
-            return
-        if (
+        declarative = (
             self.location
             or self.filter.inclusion_terms
             or self.filter.exclusion_terms
             or self.group
             or self.incremental
             or self.combination.location
-        ):
+        )
+        if self.coordinates is None:
+            self._check_declarative(bool(declarative))
+            return
+        if declarative:
             raise ValueError(
                 "'coordinates' cannot be combined with 'location'/'filter'/'group'/'incremental'/'combination'"
             )
@@ -580,6 +626,32 @@ class ModelLocatorConfig:
                 )
         if ModelAxis.ACTIVATION in keys and self.activation is not None:
             raise ValueError("'activation' cannot be set both on the config and inside the coordinates")
+        for coordinate in self.coordinates:
+            _check_axes(coordinate.get(ModelAxis.ACTIVATION, self.activation), set(coordinate) - {ModelAxis.ACTIVATION})
+
+    def _check_declarative(self, names_a_location: bool) -> None:
+        """Check that the declarative sections name rows an activation can be read at.
+
+        Args:
+            names_a_location: Whether any section names an axis.
+
+        Raises:
+            ValueError: If a location is named with no activation, ``group`` or ``combination`` reshapes an
+                axis the index does not enumerate, or an axis is named the activation's tensor lacks.
+        """
+        if not names_a_location:
+            return
+        if self.activation is None:
+            raise ValueError(_NO_ACTIVATION)
+        for axis in self.group:
+            if axis not in self.location:
+                raise ValueError(f"'group' merges '{axis.value}', which 'location' does not name; add it there")
+        for axis in self.combination.location:
+            if axis not in self.location and axis not in self.incremental:
+                raise ValueError(
+                    f"'combination' expands '{axis.value}', which neither 'location' nor 'incremental' names"
+                )
+        _check_axes(self.activation, {*self.location, *self.incremental})
 
     @property
     def _transforms(self) -> list[IndexTransform]:

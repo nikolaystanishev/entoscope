@@ -238,10 +238,10 @@ def test_pooling_defaults_to_nothing_pooled(config_from_yaml):
     assert config_from_yaml(ProbeConfig, "my_probe", raw).pool == {}
 
 
-def test_a_probe_metric_that_is_not_known_raises(model):
-    # A config built in code can hold a metric the dispatch has no implementation for.
-    with pytest.raises(ValueError, match="Unknown probe metric"):
-        Prober(model).apply(ProbeInput(replace(probe_config(), metric=["mse"]), POSITIVE, NEGATIVE), verbose=False)
+def test_a_probe_metric_that_is_not_known_raises():
+    # A config built in code is read as a file's is, so a metric nothing implements is refused as it is built.
+    with pytest.raises(ValueError, match="'mse' is not a valid ProbeMetric"):
+        replace(probe_config(), metric=["mse"])
 
 
 def test_both_classes_are_required(model):

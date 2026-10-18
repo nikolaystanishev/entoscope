@@ -208,7 +208,7 @@ class CircuitFigure(Figure[tuple[nx.MultiDiGraph, str]]):
                 title="token position",
                 tickmode="array",
                 tickvals=list(range(len(str_tokens))),
-                ticktext=[f"{i}: {tok}" for i, tok in enumerate(str_tokens)],
+                ticktext=[f"{i}: {escape(tok)}" for i, tok in enumerate(str_tokens)],
             ),
             yaxis=dict(title="layer", tickmode="array", tickvals=y_ticks, ticktext=y_text),
         )

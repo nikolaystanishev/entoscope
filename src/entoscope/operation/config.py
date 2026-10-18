@@ -2,7 +2,7 @@ import dataclasses
 import os
 from typing import Generic, TypeVar, get_args
 
-from entoscope.util.data import from_dict, read_yaml, to_dict, write_json
+from entoscope.util.data import from_dict, read_fields, read_yaml, to_dict, write_json
 
 CONFIG_FILE = "config.json"
 
@@ -11,12 +11,21 @@ CONFIG_FILE = "config.json"
 class AbstractConfig:
     """The base of every operation's config.
 
+    Every field is read as a config file's would be, however the config is built, so one built in code
+    may hold a field's raw config form and is refused a value the field cannot take.
+
     Attributes:
         config_id: The id of the YAML entry the config was read from, set by ``ConfigFactory``. It titles
             the run's plan and result pages, and a config built in code may leave it unset.
+
+    Raises:
+        ValueError: If a field holds a value its type cannot take.
     """
 
     config_id: str | None = None
+
+    def __post_init__(self):
+        read_fields(self)
 
     def save(self, save_dir: str) -> None:
         """Write the config as ``config.json`` beside a run's results.

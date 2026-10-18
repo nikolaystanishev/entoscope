@@ -40,7 +40,7 @@ class ConstantMethod(AbstractPatchingMethod[ConstantConfig]):
         for output, _ in enumerate(patching_input.rows()):
             yield RowResult(output, self._report(patching_input, dict.fromkeys(self.config.metric, delta)))
 
-    def passes(self, runs, batches):
+    def passes(self, patching_input, batches):
         return 0, 0
 
 

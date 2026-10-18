@@ -152,3 +152,85 @@ def _tensors(value) -> list[torch.Tensor]:
     if isinstance(value, ProbeInput | LensInput | PatchingInput):
         return [tensor for attribute in vars(value).values() for tensor in _tensors(attribute)]
     return []
+
+
+# --------------------------------------------------------------------------------------------------
+# Reading a config - from a file or built in code, every field is read the same way
+# --------------------------------------------------------------------------------------------------
+ELEMENT = {"activation": "resid.post", "location": ["layer"], "filter": [{"layer": 1}], "type": "replace"}
+RAW_CONFIGS = {
+    LensConfig: {"method": "logit_lens", "top_k": 2, "source": {"activation": "resid.post", "location": ["position"]}},
+    PatchingConfig: {
+        "metric": {"logit_diff": ["indirect_effect"]},
+        "method": "exact",
+        "patch": [{"source": ELEMENT, "target": ELEMENT}],
+    },
+    ProbeConfig: {
+        "method": {"type": "linear", "max_iter": 50},
+        "pool": {"position": "mean"},
+        "metric": ["accuracy"],
+        "source": {"activation": "resid.post", "location": ["layer"]},
+    },
+    # An int written for a float field is read as the float it means.
+    CircuitConfig: {"method": {"type": "information_flow_routes", "threshold": 0}},
+}
+
+
+@pytest.mark.parametrize("config_class", list(RAW_CONFIGS), ids=lambda config_class: config_class.__name__)
+def test_a_config_built_in_code_reads_its_raw_values_as_its_file_does(config_from_yaml, config_class):
+    raw = RAW_CONFIGS[config_class]
+
+    from_file = config_from_yaml(config_class, "raw", raw)
+
+    assert config_class(config_id="raw", **raw) == from_file
+
+
+def test_an_int_written_for_a_float_field_is_read_as_a_float(config_from_yaml):
+    config = config_from_yaml(CircuitConfig, "raw", RAW_CONFIGS[CircuitConfig])
+
+    assert type(config.method.threshold) is float
+
+
+@pytest.mark.parametrize(
+    ("config_class", "raw", "message"),
+    [
+        (
+            CircuitConfig,
+            {"method": {"type": "information_flow_routes", "threshold": "0.04"}},
+            "Expected a float, got '0.04'",
+        ),
+        (LensConfig, {**RAW_CONFIGS[LensConfig], "top_k": "2"}, "Expected an int, got '2'"),
+        # a bool is an int to Python, but not a count of tokens
+        (LensConfig, {**RAW_CONFIGS[LensConfig], "top_k": True}, "Expected an int, got True"),
+        (ProbeConfig, {**RAW_CONFIGS[ProbeConfig], "method": {"type": "linear", "max_iter": 1.5}}, "Expected an int"),
+        (
+            PatchingConfig,
+            {**RAW_CONFIGS[PatchingConfig], "patch": [{"source": {**ELEMENT, "value": "zero"}, "target": ELEMENT}]},
+            "Expected a float, got 'zero'",
+        ),
+    ],
+)
+def test_a_value_its_field_cannot_take_is_rejected_as_the_config_is_read(config_from_yaml, config_class, raw, message):
+    with pytest.raises(ValueError, match=message):
+        config_from_yaml(config_class, "broken", raw)
+    # Built in code, the same value is refused the same way.
+    with pytest.raises(ValueError, match=message):
+        config_class(**raw)
+
+
+def test_an_environment_variable_is_read_as_the_value_it_holds(config_from_yaml, monkeypatch):
+    # A value that is a single variable reads as if the variable's value were written in its place.
+    monkeypatch.setenv("ENTOSCOPE_TEST_THRESHOLD", "0.5")
+    monkeypatch.setenv("ENTOSCOPE_TEST_POSITION", "-2")
+    raw = {
+        "method": {
+            "type": "information_flow_routes",
+            "threshold": "${ENTOSCOPE_TEST_THRESHOLD}",
+            "prediction_positions": ["${ENTOSCOPE_TEST_POSITION}"],
+        }
+    }
+
+    config = config_from_yaml(CircuitConfig, "env", raw)
+
+    assert config.method.threshold == 0.5
+    assert config.method.prediction_positions == [-2]

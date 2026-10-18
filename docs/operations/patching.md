@@ -214,10 +214,14 @@ patching several elements sums their contributions.
 
 `integrated_gradients` averages that gradient over `interpolation_steps` points on the straight path
 from the source run's activation to the target run's (Marks et al., 2024, Eq. 4), which recovers
-effects a single gradient at the clean point hides. It costs one forward pass and one backward pass
-per metric for every step, still flat in the size of the index. The path runs between the two runs,
-so it needs a source prompt of the same token length as the target. It is meant for `replace`
-sources: a value or noise is written off that path, and `attribution` is the estimate to use there.
+effects a single gradient at the clean point hides. As there, each hook the index patches, such as
+each layer of a sweep, is interpolated on passes of its own, so a row's score does not depend on what
+else the index holds. That costs one forward pass and one backward pass per metric for every step and
+hook, except at the clean point, where one pass serves every hook. The cost grows with the hooks but
+not with the rows: every position, head and neuron of a hook comes from the same passes. The path
+runs between the two runs, so it needs a source prompt of the same token length as the target, which
+`plan()` checks too. It is meant for `replace` sources: a value or noise is written off that path,
+and `attribution` is the estimate to use there.
 
 The gradient methods make no patched run, so their results have no `generation`. A common workflow
 is to estimate a large sweep with `attribution`, then confirm its strongest rows with `exact`.
@@ -249,6 +253,13 @@ Patcher(model).apply(ablation, save_dir="runs/zero_mlp")
 
 Reported as an indirect effect, each row is $m(x \mid do(a = 0)) - m(x)$. Without a source run there
 is no `normalized` and no `kl_divergence`, and the correct token has to be named.
+
+A source that reads no source run counts its positions in the target prompt: a value is written into
+the target run, and `gaussian_noise` corrupts the target run's own activation, so `position: -1` on
+such a source is the target's last token, with or without a source prompt.
+
+A `normalized` metric divides by the gap between the source and target runs, so two runs that score
+the same, such as one prompt on both sides, are refused once they are cached and before any patched run.
 
 ## Output
 

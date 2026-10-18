@@ -127,8 +127,7 @@ def values_of(index_df: pd.DataFrame, location: ModelAxis) -> list:
         ("small_model", "resid.pre", "neuron", lambda model: model.cfg.d_model),
         ("small_model", "mlp.post", "neuron", lambda model: model.cfg.d_mlp),
         ("small_model", "attn.q", "neuron", lambda model: model.cfg.d_head),
-        # The pattern has no neuron axis at all, so the location contributes no rows.
-        ("small_model", "attn.pattern", "neuron", lambda model: 0),
+        ("small_model", "attn.pattern", "head", lambda model: model.cfg.n_heads),
         # The position axis is the only one sized by the prompt rather than the model.
         ("small_model", "resid.post", "position", n_positions),
     ],
@@ -550,6 +549,29 @@ def test_a_position_grid_that_depends_on_the_prompt_length_raises(small_model, p
         ),
         # only some coordinates carry an activation
         ({"coordinates": [{"activation": "resid.post", "layer": 0}, {"layer": 1}]}, "must share the same keys"),
+        # a location with nothing to read it in
+        ({"activation": None, "location": ["layer"]}, "names a location but no 'activation'"),
+        ({"activation": None, "filter": [{"layer": 0}]}, "names a location but no 'activation'"),
+        ({"coordinates": [{"layer": 0}]}, "names a location but no 'activation'"),
+        # an axis the activation's tensor does not have, which a run would silently read whole
+        ({"activation": "attn.pattern", "location": ["layer", "head", "position"]}, "'attn.pattern' has no 'position'"),
+        ({"activation": "attn.pattern", "location": ["layer", "neuron"]}, "'attn.pattern' has no 'neuron'"),
+        ({"location": ["layer", "head"]}, "'resid.post' has no 'head'"),
+        ({"location": ["layer"], "incremental": {"head": [0]}}, "'resid.post' has no 'head'"),
+        ({"activation": "embed", "location": ["layer", "position"]}, "'embed' has no 'layer'"),
+        (
+            {"coordinates": [{"activation": "attn.pattern", "layer": 0, "position": 0}]},
+            "'attn.pattern' has no 'position'",
+        ),
+        # a transform reshaping an axis the index does not enumerate
+        (
+            {"activation": "attn.z", "location": ["layer", "position"], "group": {"head": [0, 1]}},
+            "'group' merges 'head', which 'location' does not name",
+        ),
+        (
+            {"activation": "attn.z", "location": ["layer"], "combination": {"location": ["head"]}},
+            "'combination' expands 'head', which neither 'location' nor 'incremental' names",
+        ),
     ],
 )
 def test_a_malformed_locator_is_rejected_when_its_config_is_loaded(config_from_yaml, source, message):
@@ -568,6 +590,23 @@ def test_a_malformed_locator_is_rejected_when_its_config_is_loaded(config_from_y
         # the filter names a location the index does not have
         ({"location": ["layer"], "filter": [{"head": 0}]}, "Filter pattern references unknown locations"),
         ({"coordinates": [{"layer": "x"}]}, "Invalid coordinate value for 'layer': 'x'"),
+        # a value past either end of its axis names no row the model has
+        ({"location": ["layer"], "filter": [{"layer": 3}]}, "'layer' 3 is out of range for an axis of 3"),
+        ({"location": ["layer"], "filter": [{"layer": -4}]}, "'layer' -4 is out of range for an axis of 3"),
+        ({"location": ["layer"], "filter": [{"layer": {"range": [1, 3]}}]}, "'layer' 3 is out of range"),
+        ({"location": ["layer"], "filter": [{"not": {"layer": 3}}]}, "'layer' 3 is out of range"),
+        (
+            {"location": ["layer", "neuron"], "filter": [{"neuron": 16}]},
+            "'neuron' 16 is out of range for an axis of 16",
+        ),
+        ({"location": ["position"], "filter": [{"position": 6}]}, "'position' 6 is out of range for an axis of 6"),
+        ({"coordinates": [{"layer": 3}]}, "'layer' 3 is out of range"),
+        ({"coordinates": [{"layer": 0, "position": [0, -7]}]}, "'position' -7 is out of range"),
+        ({"activation": "attn.z", "location": ["head"], "group": {"head": [0, 4]}}, "'head' 4 is out of range"),
+        (
+            {"activation": "mlp.post", "location": ["layer"], "incremental": {"neuron": [6]}},
+            "'neuron' 6 is out of range",
+        ),
     ],
 )
 def test_a_locator_the_model_cannot_resolve_raises_when_it_is_planned(small_model, planned, source, message):

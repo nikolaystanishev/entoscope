@@ -28,7 +28,6 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
     """
 
     def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[RowResult]:
-        self._check_available(patching_input)
         gradients = self._gradients(patching_input, verbose)
 
         for output, group in enumerate(tqdm(patching_input.rows(), disable=not verbose)):
@@ -45,18 +44,9 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
 
             yield RowResult(output, self._report(patching_input, deltas))
 
-    def passes(self, runs: int, batches: int) -> tuple[int, int]:
-        steps = len(self._alphas())
-        return steps, steps * len(self.config.metric)
-
-    def _check_available(self, patching_input: PatchingInput) -> None:
-        """Reject an input the method cannot score, before any pass is made.
-
-        Nothing to check here: a single gradient at the target's own activation asks for no second run.
-
-        Args:
-            patching_input: The prepared input.
-        """
+    def passes(self, patching_input: PatchingInput, batches: int) -> tuple[int, int]:
+        forward = len(self._passes(patching_input.target_activation_names()))
+        return forward, forward * len(self.config.metric)
 
     def _alphas(self) -> list[float]:
         """Choose where along the path from the source activation to the target one the gradient is read.
@@ -67,6 +57,27 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
         """
         return [1.0]
 
+    def _passes(self, names: list[str]) -> list[tuple[float, list[str]]]:
+        """Pair every interpolation point with the hooks each pass at it interpolates.
+
+        At the clean point a hook leaves its activation as it is, so one pass reads the gradient at every
+        hook, each the total derivative through the layers above it. Anywhere else a hook is interpolated
+        on a pass of its own, as Marks et al. do: on a shared pass every later hook would scale the
+        gradient reaching an earlier one by alpha and move that one off its own path, so a row's score
+        would depend on what else the index holds.
+
+        Args:
+            names: The hooks a patch writes.
+
+        Returns:
+            One ``(alpha, hooks)`` per forward pass, every hook appearing once per alpha.
+        """
+        return [
+            (alpha, group)
+            for alpha in self._alphas()
+            for group in ([names] if alpha == 1.0 else [[name] for name in names])
+        ]
+
     @torch.enable_grad()
     def _gradients(self, patching_input: PatchingInput, verbose: bool) -> Gradients:
         """Take ``d m / d a`` for every patched activation, averaged over the interpolation path.
@@ -75,16 +86,15 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
 
         Args:
             patching_input: The prepared input.
-            verbose: Whether to show a progress bar over the interpolation points.
+            verbose: Whether to show a progress bar over the passes.
 
         Returns:
             Each metric's gradient with respect to every patched activation, keyed by metric and hook name.
         """
-        names = patching_input.target_activation_names()
-        alphas = self._alphas()
+        passes = self._passes(patching_input.target_activation_names())
         totals: Gradients = {metric: {} for metric in self.config.metric}
 
-        for alpha in tqdm(alphas, disable=not verbose or len(alphas) == 1):
+        for alpha, names in tqdm(passes, disable=not verbose or len(passes) == 1):
             captured: dict[str, torch.Tensor] = {}
             fwd_hooks = [(name, self._capture(name, alpha, patching_input, captured)) for name in names]
             logits = self.model.run_with_hooks(patching_input.target_tokens, fwd_hooks=fwd_hooks)[0, -1]
@@ -102,8 +112,9 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
                     total = totals[metric].get(name)
                     totals[metric][name] = resolved if total is None else total + resolved
 
+        steps = len(self._alphas())
         return {
-            metric: {name: total / len(alphas) for name, total in per_activation.items()}
+            metric: {name: total / steps for name, total in per_activation.items()}
             for metric, per_activation in totals.items()
         }
 
@@ -154,6 +165,7 @@ class IntegratedGradientsConfig(PatchingMethodConfig):
     interpolation_steps: int = 10
 
     def __post_init__(self):
+        super().__post_init__()
         if self.interpolation_steps < 1:
             raise ValueError(f"interpolation_steps must be at least 1, got {self.interpolation_steps}")
 
@@ -163,11 +175,13 @@ class IntegratedGradientsMethod(AttributionPatchingMethod[IntegratedGradientsCon
 
     Averages the gradient over ``interpolation_steps`` points on the straight path from the source
     activation to the target one instead of reading it once at the target. That recovers the
-    effects a flat gradient at the clean point hides, and costs one forward and one backward pass
-    per step, still flat in the size of the index.
+    effects a flat gradient at the clean point hides, at a forward and a backward pass per step for
+    each hook, still flat in the rows of the index.
 
-    Every hooked activation is interpolated on the same pass, which is what keeps the cost at
-    ``interpolation_steps`` passes rather than that many per row.
+    Each hooked activation is interpolated on passes of its own, one per step but the clean one, which
+    a single pass serves for every hook. The cost so grows with the number of hooks the index patches,
+    such as the layers it sweeps, and never with its rows: every position, head or neuron of a hook is
+    scored from the same passes.
 
     The path runs between the two runs' activations, so it is the path the intervention actually
     traverses only when the source resamples from the source run. A value-based source (zero
@@ -176,7 +190,7 @@ class IntegratedGradientsMethod(AttributionPatchingMethod[IntegratedGradientsCon
     point does not depend on a path at all, is the estimate to reach for there.
     """
 
-    def _check_available(self, patching_input: PatchingInput) -> None:
+    def check(self, patching_input: PatchingInput) -> None:
         if patching_input.source_prompt is None:
             raise ValueError(
                 "integrated_gradients interpolates towards the source run's activations, which needs a source prompt"

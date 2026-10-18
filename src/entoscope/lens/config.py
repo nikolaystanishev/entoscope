@@ -53,7 +53,8 @@ class LensConfig(AbstractConfig):
     source: ModelLocatorConfig
 
     def __post_init__(self):
-        if not isinstance(self.top_k, int) or self.top_k < 1:
+        super().__post_init__()
+        if self.top_k < 1:
             raise ValueError(f"top_k must be at least 1, got {self.top_k}")
 
         source = self.source

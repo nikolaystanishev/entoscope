@@ -1,5 +1,6 @@
 import dataclasses
 import json
+import numbers
 import os
 import re
 import types
@@ -41,17 +42,33 @@ class _EnvLoader(yaml.FullLoader):
     """
 
 
-def _construct_env_variables(loader: _EnvLoader, node: yaml.Node) -> str | int:
+def _construct_env_variables(loader: _EnvLoader, node: yaml.Node) -> Any:
     value = loader.construct_scalar(node)
-    full_value: str | int = value
-    for name in _ENV_VARIABLE.findall(value):
-        key = f"${{{name}}}"
-        env_value = os.environ.get(name, name)
-        if key == full_value and env_value.isdigit():
-            full_value = int(env_value)
-        else:
-            full_value = str(full_value).replace(key, env_value)
-    return full_value
+    names = _ENV_VARIABLE.findall(value)
+    if len(names) == 1 and value == f"${{{names[0]}}}" and names[0] in os.environ:
+        return _read_env_value(os.environ[names[0]])
+    for name in names:
+        value = value.replace(f"${{{name}}}", os.environ.get(name, name))
+    return value
+
+
+def _read_env_value(env_value: str) -> Any:
+    """Read a variable's value as if it were written into the file in place of the variable.
+
+    An environment holds only strings, so this is what gives a number, a boolean or ``null`` its type.
+    A value that reads as a list or a mapping, or does not parse, is kept as the string it is.
+
+    Args:
+        env_value: The variable's value.
+
+    Returns:
+        The value as a YAML scalar.
+    """
+    try:
+        scalar = yaml.safe_load(env_value)
+    except yaml.YAMLError:
+        return env_value
+    return scalar if isinstance(scalar, str | int | float | bool) or scalar is None else env_value
 
 
 _EnvLoader.add_implicit_resolver(_ENV_TAG, _ENV_VARIABLE, None)
@@ -61,8 +78,8 @@ _EnvLoader.add_constructor(_ENV_TAG, _construct_env_variables)
 def read_yaml(file_path: str) -> list | dict:
     """Read a YAML file, replacing every ``${NAME}`` with the environment variable's value.
 
-    An unset variable is replaced by its own name, and a value that is a single variable holding only
-    digits becomes an int.
+    An unset variable is replaced by its own name. A value that is a single variable reads as the
+    variable's value would written in its place, so a number, a boolean or ``null`` keeps its type.
 
     Args:
         file_path: The file to read.
@@ -88,9 +105,11 @@ def from_dict(cls: type, value: Any) -> Any:
     paths from their string, and dataclasses field by field from a mapping, strictly. ``list``,
     ``tuple``, ``set`` and ``dict`` annotations recurse into their elements (keys and values for
     dicts), ``dict`` subclasses construct through the key and value types of their generic base,
-    ``X | None`` unwraps to ``X``, and anything else is returned as-is. The input is never mutated,
-    since YAML anchors may alias sub-mappings. ``to_dict`` writes each of these shapes back, a
-    ``to_config`` method standing in for ``from_config``.
+    ``X | None`` unwraps to ``X``, and anything else is returned as-is. ``int``, ``float``, ``str`` and
+    ``bool`` take only a value of their own kind, an int reading into a float field as a float and a
+    bool counting as no number. The input is never mutated, since YAML anchors may alias
+    sub-mappings. ``to_dict`` writes each of these shapes back, a ``to_config`` method standing in for
+    ``from_config``.
 
     Args:
         cls: The type to read into.
@@ -105,6 +124,8 @@ def from_dict(cls: type, value: Any) -> Any:
     """
     if cls is Any:
         return value
+    if cls in _SCALARS:
+        return _scalar_from_dict(cls, value)
     origin = typing.get_origin(cls)
     if origin in {typing.Union, types.UnionType}:
         args = [arg for arg in typing.get_args(cls) if arg is not type(None)]
@@ -182,6 +203,21 @@ def _raw(value: Any) -> Any:
     )
 
 
+_SCALARS = {
+    bool: ("a bool", lambda value: isinstance(value, bool)),
+    int: ("an int", lambda value: isinstance(value, numbers.Integral) and not isinstance(value, bool)),
+    float: ("a float", lambda value: isinstance(value, numbers.Real) and not isinstance(value, bool)),
+    str: ("a string", lambda value: isinstance(value, str)),
+}
+
+
+def _scalar_from_dict(cls: type, value: Any) -> Any:
+    kind, fits = _SCALARS[cls]
+    if not fits(value):
+        raise ValueError(f"Expected {kind}, got {value!r}")
+    return value if type(value) is cls else cls(value)
+
+
 def _tuple_from_dict(cls: Any, value: Any) -> tuple:
     if not isinstance(value, list | tuple):
         raise ValueError(f"Expected a list for {cls}, got {value!r}")
@@ -197,6 +233,25 @@ def _key_from_dict(key_type: Any, key: Any) -> Any:
     if key_type in (int, float) and isinstance(key, str):
         return key_type(key)
     return from_dict(key_type, key)
+
+
+def read_fields(instance: Any) -> None:
+    """Read every init field of a dataclass instance through ``from_dict``, in place.
+
+    What a ``__post_init__`` calls so that an instance built in code holds what one read from a config
+    file would: a field given its raw config form is read into its type, and one given a value its
+    type cannot take is refused, as it would be from the file.
+
+    Args:
+        instance: The dataclass instance.
+
+    Raises:
+        ValueError: If a field holds a value its type cannot take.
+    """
+    hints = typing.get_type_hints(type(instance))
+    for declared in dataclasses.fields(instance):
+        if declared.init:
+            setattr(instance, declared.name, from_dict(hints[declared.name], getattr(instance, declared.name)))
 
 
 def dataclass_from_dict(cls: type, value: Any) -> Any:

@@ -14,6 +14,7 @@ operation says only what its panels are.
 from __future__ import annotations
 
 import abc
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -116,7 +117,7 @@ def tick_text(
             continue
         value = frame[source].iloc[position]
         if pd.api.types.is_integer(value) and 0 <= value < len(column_tokens):
-            labels[code] = f'{value}: "{column_tokens[value]}"'
+            labels[code] = f'{value}: "{format_value(column_tokens[value])}"'
         else:
             labels[code] = format_value(value)
 
@@ -157,13 +158,13 @@ def diverging_range(values: Sequence[float], midpoint: float) -> tuple[float, fl
     """Centre a colour range on ``midpoint`` wide enough for every value.
 
     Args:
-        values: The values to colour, NaN ignored.
+        values: The values to colour, NaN and infinities ignored, as no finite range holds them.
         midpoint: The value drawn in the middle colour.
 
     Returns:
         The range's low and high ends, one unit either side of ``midpoint`` when every value equals it.
     """
-    spread = max((abs(value - midpoint) for value in values if not pd.isna(value)), default=0.0) or 1.0
+    spread = max((abs(value - midpoint) for value in values if math.isfinite(value)), default=0.0) or 1.0
     return midpoint - spread, midpoint + spread
 
 
@@ -420,17 +421,18 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
         index: The index that laid the result out, whose layout codes build the grid.
 
     Attributes:
-        prefixes: The column prefixes axis values are read from, in order of preference.
+        prefixes: The column prefixes axis values are read from, in order of preference: the index's own
+            ``layout_prefixes``, so the axes are labelled by the side the grid was laid out along.
         colorscale: The plotly colour scale cells are drawn with.
     """
 
-    prefixes: tuple[str, ...] = ("source_",)
     colorscale = SEQUENTIAL
 
     def __init__(self, result: pd.DataFrame, operation_input: InputT, model: Model, index: Index) -> None:
         self.result = result
         self.operation_input = operation_input
         self.model = model
+        self.prefixes = index.layout_prefixes
         self.tokens = self.str_tokens()
         self.grid = IndexGrid.of(index.layout_df)
 

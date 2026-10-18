@@ -78,6 +78,7 @@ class ProbeConfig(AbstractConfig):
     source: ModelLocatorConfig
 
     def __post_init__(self):
+        super().__post_init__()
         unpoolable = {ModelAxis.LAYER, ModelAxis.NEURON} & set(self.pool)
         if unpoolable:
             raise ValueError(f"Locations {sorted(location.value for location in unpoolable)} cannot be pooled")

@@ -6,7 +6,8 @@ Operations receive it in place of the raw model and never know the difference: e
 other than ``run_with_cache`` is forwarded to the wrapped model, so tokenization,
 ``run_with_hooks`` (patching), weight access and ``cfg`` behave exactly as before, while repeated
 forward passes for the same ``(model, tokens, names_filter)`` are read back from ``cache_dir``
-instead of recomputed.
+instead of recomputed. A forwarded method that hands back the model itself, as ``to`` and ``eval``
+do, hands back the wrapper, so ``model = model.to(device)`` keeps the cache.
 
 Usage::
 
@@ -17,9 +18,12 @@ Usage::
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import inspect
 import os
 import re
+from collections import defaultdict
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -93,7 +97,9 @@ def _weight_digest(model: Any) -> str:
     without this they would share cache entries. Hashing every parameter in full would cost more than
     the forward pass the cache saves, so each one contributes its name, its layout and the first
     ``_WEIGHT_SAMPLE`` of its values: bounded by the parameter count rather than the parameter size,
-    and deterministic, so an entry written by one process is still found by the next.
+    and deterministic, so an entry written by one process is still found by the next. It is taken on
+    every call, so the samples leave the device in one transfer per device and dtype rather than one
+    per parameter.
 
     Args:
         model: The transformer.
@@ -102,10 +108,33 @@ def _weight_digest(model: Any) -> str:
         A SHA-256 hex digest.
     """
     digest = hashlib.sha256()
+    samples: defaultdict[tuple[str, str], list[torch.Tensor]] = defaultdict(list)
     for name, parameter in sorted(model.named_parameters(), key=lambda item: item[0]):
         digest.update(f"{name}|{tuple(parameter.shape)}|{parameter.dtype}|".encode())
-        digest.update(_encode_input(parameter.detach().flatten()[:_WEIGHT_SAMPLE]))
+        samples[(str(parameter.device), str(parameter.dtype))].append(parameter.detach().flatten()[:_WEIGHT_SAMPLE])
+    for group in sorted(samples):
+        digest.update(_encode_input(torch.cat(samples[group])))
     return digest.hexdigest()
+
+
+def _compact(tensor: torch.Tensor) -> torch.Tensor:
+    """Store a tensor whose batch rows are all alike as one row, expanded back to its shape.
+
+    ``torch.save`` writes a view's storage rather than its shape, so the entry holds the row once and
+    ``torch.load`` hands back the expanded view. Patching runs each prompt as wide as its patched runs,
+    which is where such rows come from. Rows are compared exactly, so nothing a backend computed
+    differently for one of them is lost.
+
+    Args:
+        tensor: A cached tensor, its batch rows along the first axis.
+
+    Returns:
+        The tensor, or the view of its single row when every row equals the first.
+    """
+    if tensor.ndim == 0 or tensor.shape[0] < 2:
+        return tensor
+    row = tensor[:1].clone()
+    return row.expand_as(tensor) if torch.equal(tensor, row.expand_as(tensor)) else tensor
 
 
 def _sanitize(name: str) -> str:
@@ -147,6 +176,8 @@ class ActivationDiskCache:
             A SHA-256 hex digest.
         """
         digest = hashlib.sha256()
+        # An entry written in another layout lives under another key, so it is never read back.
+        digest.update(f"format {FORMAT_VERSION}\x00".encode())
         digest.update(model_fingerprint.encode("utf-8"))
         for arg in model_args:
             digest.update(b"\x00")
@@ -173,12 +204,14 @@ class ActivationDiskCache:
             model_name: The model the entry belongs to.
 
         Returns:
-            The stored payload, on the CPU, or ``None`` when there is no such entry.
+            The stored payload, on the CPU, or ``None`` when there is no such entry or it was written in
+            another format.
         """
         path = self._path(digest, model_name)
         if not os.path.exists(path):
             return None
-        return torch.load(path, map_location="cpu")
+        payload = torch.load(path, map_location="cpu")
+        return payload if payload.get("format_version") == FORMAT_VERSION else None
 
     def store(self, digest: str, model_name: str, payload: dict) -> None:
         """Write an entry atomically.
@@ -198,9 +231,11 @@ class ActivationDiskCache:
 class CachedModel:
     """Transparent read-through disk cache around a ``transformer_lens`` model.
 
-    Overrides only ``run_with_cache``, and forwards every other attribute to the wrapped model. Cache
-    keys fold in a sampled digest of the model's weights, so a fine-tune cannot read the base model's
-    entries.
+    Overrides only ``run_with_cache``, and forwards every other attribute to the wrapped model, a method
+    that returns the model itself returning the wrapper instead. Cache keys fold in a sampled digest of
+    the model's weights, taken on every call, so neither a fine-tune nor an edit made after wrapping,
+    such as ``enable_compatibility_mode()`` or a change of dtype, reads the entries of the weights it
+    replaced.
 
     Args:
         model: A ``TransformerBridge`` or a ``HookedTransformer``.
@@ -211,12 +246,34 @@ class CachedModel:
     def __init__(self, model: Model, cache_dir: str | None = None):
         self._model = model
         self._cache = ActivationDiskCache(cache_dir) if cache_dir else None
-        self._model_fingerprint = self._fingerprint() if self._cache else ""
 
     def __getattr__(self, name: str) -> Any:
-        if name in {"_model", "_cache", "_model_fingerprint"}:
+        if name in {"_model", "_cache"}:
             raise AttributeError(name)
-        return getattr(self._model, name)
+        attribute = getattr(self._model, name)
+        if inspect.ismethod(attribute) and attribute.__self__ is self._model:
+            return self._keeping_the_wrapper(attribute)
+        return attribute
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self._model(*args, **kwargs)
+
+    def _keeping_the_wrapper(self, method: Callable) -> Callable:
+        """Forward a method of the model, handing back the wrapper wherever the method hands back the model.
+
+        Args:
+            method: A method bound to the wrapped model.
+
+        Returns:
+            The method, returning the wrapper in place of the model.
+        """
+
+        @functools.wraps(method)
+        def forwarded(*args: Any, **kwargs: Any) -> Any:
+            result = method(*args, **kwargs)
+            return self if result is self._model else result
+
+        return forwarded
 
     def _fingerprint(self) -> str:
         cfg = self._model.cfg
@@ -260,8 +317,9 @@ class CachedModel:
         extra = {key: value for key, value in kwargs.items() if key not in _NON_DIGEST_KWARGS}
         extra["remove_batch_dim"] = remove_batch_dim
 
+        fingerprint = self._fingerprint()
         digest = self._cache.key(
-            model_fingerprint=self._model_fingerprint,
+            model_fingerprint=fingerprint,
             model_args=model_args,
             names_filter=names_normalized,
             extra=extra,
@@ -272,17 +330,22 @@ class CachedModel:
             return self._rebuild(payload)
 
         logits, cache = self._model.run_with_cache(*model_args, **kwargs)
+
+        def stored(tensor: torch.Tensor) -> torch.Tensor:
+            tensor = tensor.detach().cpu()
+            return tensor if remove_batch_dim else _compact(tensor)
+
         self._cache.store(
             digest,
             model_name,
             {
                 "format_version": FORMAT_VERSION,
                 "model_name": model_name,
-                "model_fingerprint": self._model_fingerprint,
+                "model_fingerprint": fingerprint,
                 "names_filter": names_normalized,
                 "remove_batch_dim": remove_batch_dim,
-                "logits": None if logits is None else logits.detach().cpu(),
-                "cache": {name: tensor.detach().cpu() for name, tensor in cache.cache_dict.items()},
+                "logits": None if logits is None else stored(logits),
+                "cache": {name: stored(tensor) for name, tensor in cache.cache_dict.items()},
             },
         )
         return logits, cache
@@ -290,8 +353,9 @@ class CachedModel:
     def _rebuild(self, payload: dict) -> tuple[Any, ActivationCache]:
         device = self._model.cfg.device
         logits = payload["logits"]
+        # ``contiguous`` materializes a row stored once, so the tensors can be written to as computed ones can.
         if logits is not None:
-            logits = logits.to(device)
-        cache_dict = {name: tensor.to(device) for name, tensor in payload["cache"].items()}
+            logits = logits.to(device).contiguous()
+        cache_dict = {name: tensor.to(device).contiguous() for name, tensor in payload["cache"].items()}
         cache = ActivationCache(cache_dict, self._model, has_batch_dim=not payload["remove_batch_dim"])
         return logits, cache

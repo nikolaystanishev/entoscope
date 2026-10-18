@@ -53,7 +53,12 @@ ValueError: Unknown keys for LensConfig: ['top-k']
 ```
 
 The checks go into `method` too: a method nothing registered raises and lists the methods that are
-registered, and a field the method does not take is an unknown key of its method config.
+registered, and a field the method does not take is an unknown key of its method config. A value its
+field cannot take is refused as well, such as a quoted `"0.04"` for a float or `true` for a count; an
+int written for a float field is read as that float.
+
+A config built in code is read the same way, so it may hold a field's raw form, such as
+`method="exact"` or `metric={"logit_diff": ["normalized"]}`, and is refused what a file would be.
 
 ## The `method` field
 
@@ -87,8 +92,8 @@ a method names its config class.
 ## Environment variables
 
 A value may name environment variables as `${NAME}`. Each is replaced by the variable's value, or by
-`NAME` itself when the variable is unset. A value that is a single variable holding only digits
-becomes an int:
+`NAME` itself when the variable is unset. A value that is a single variable reads as the variable's
+value would written in its place, so `0.5` is a float, `-1` an int and `true` a bool:
 
 ```yaml
 my_data:

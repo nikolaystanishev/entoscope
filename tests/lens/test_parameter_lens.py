@@ -275,9 +275,9 @@ def test_key_and_value_weights_are_rejected_on_grouped_query_attention(gqa_model
     "activation_name", ["embed", "resid.pre", "resid.mid", "resid.post", "attn.out", "attn.pattern", "mlp.out"]
 )
 def test_an_activation_that_names_no_weight_vector_raises(model, activation_name):
-    config = coordinates_config(
-        {"activation": activation_name, "layer": 0}, method=ParameterLensConfig(type="parameter_lens")
-    )
+    # ``embed`` is not inside a block, so it is the one activation located without a layer.
+    coordinate = {"activation": activation_name, **({} if activation_name == "embed" else {"layer": 0})}
+    config = coordinates_config(coordinate, method=ParameterLensConfig(type="parameter_lens"))
 
     with pytest.raises(ValueError, match="ParameterLens cannot project"):
         Lens(model).apply(LensInput(config), verbose=False)

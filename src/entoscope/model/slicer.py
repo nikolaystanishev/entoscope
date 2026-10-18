@@ -95,3 +95,19 @@ class PatternActivationSlicer(ActivationSlicer):
     @staticmethod
     def extract(index: defaultdict[str, slice | int | list[int]]) -> tuple[slice | int | list[int], ...]:
         return index["batch"], index[ModelAxis.HEAD], index["dest_pos"], index["src_pos"]
+
+
+def located_axes(activation: ModelLayerLocation) -> set[ModelAxis]:
+    """Name the axes a locator may name for an activation.
+
+    Those are the axes of the activation's tensor, batch aside, and the layer for an activation inside a
+    block, which every activation but ``embed`` is.
+
+    Args:
+        activation: The activation.
+
+    Returns:
+        The axes.
+    """
+    axes = {axis for axis in ActivationSlicer.get(activation).AXES if isinstance(axis, ModelAxis)}
+    return axes if activation is ModelLayerLocation.EMBEDDING else axes | {ModelAxis.LAYER}

@@ -35,7 +35,6 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
         index: The index that laid the result out.
     """
 
-    prefixes = ("target_", "source_")
     colorscale = DIVERGING
 
     def __init__(self, result: pd.DataFrame, operation_input: PatchingInput, model: Model, index: Index) -> None:

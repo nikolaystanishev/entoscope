@@ -47,8 +47,11 @@ follows the same four-part shape, and adding one means writing the same four pie
 
 - **Config** (`<op>/config.py`) - a `kw_only` dataclass extending `AbstractConfig`, validating in
   `__post_init__`. Loadable from YAML through `ConfigFactory[TheConfig](path).create("id")`, which
-  deserializes strictly via `entoscope.util.data.from_dict` (unknown/missing keys raise; a
-  `from_config` classmethod on a field's type overrides the default handling). Its `method` field is
+  deserializes strictly via `entoscope.util.data.from_dict` (unknown/missing keys and mistyped scalars
+  raise; a `from_config` classmethod on a field's type overrides the default handling). Every config,
+  method config and locator also reads its own fields through `from_dict` in `__post_init__`
+  (`read_fields`), so one built in code is read as its file twin is; a subclass's `__post_init__`
+  calls `super().__post_init__()` first. Its `method` field is
   the method config, a `MethodConfig` whose `type` names the method - in YAML a mapping or just
   the type. `type` is `MethodConfig`'s own field and has no default, since one method config class
   serves several methods. It is saved as `config.json` beside the run's results,
@@ -82,7 +85,9 @@ the model to look, in one of two mutually exclusive modes:
 
 `parse(model, n_positions)` turns that into a DataFrame. `n_positions=None` means the prompt length
 varies (probing over unequal-length prompts): positions stay symbolic so torch resolves a negative
-against each prompt's own cache at slice time, and an unfiltered `position` axis is rejected.
+against each prompt's own cache at slice time, and an unfiltered `position` axis is rejected. A known
+axis size bounds every value (`count_from_end`), and a locator may name only the axes its
+activation's tensor has (`located_axes` in `model/slicer.py`), plus `layer` inside a block.
 
 `Index` (`model/index.py`) wraps the DataFrame(s) and is what operators iterate. A source and a target
 pair row by row by position: as many rows, or one side of a single row repeated along the other; any
@@ -114,9 +119,10 @@ stream it sits on, and `ACTIVATION_WEIGHT` maps an activation to its own weight;
 weight through them.
 
 `CachedModel` (`model/cache.py`) is a transparent read-through disk cache that overrides only
-`run_with_cache` and forwards everything else via `__getattr__`; `cache_dir=None` makes it a
-pass-through. Cache keys fold in a sampled digest of the model's weights, so a fine-tune or a
-supplied `hf_model` cannot collide with the base model.
+`run_with_cache` and forwards everything else via `__getattr__`, a method returning the model
+returning the wrapper; `cache_dir=None` makes it a pass-through. Cache keys fold in a sampled digest
+of the model's weights, taken on every call, so neither a fine-tune nor an edit after wrapping
+(compatibility mode, a dtype change) can read another model's entries.
 
 ### Visualization is a collector choice, not a config flag
 
@@ -158,8 +164,11 @@ the metric is obtained. Patched run `i` applies row `i` of every patch element, 
 out along the element with the most rows. The config's `metric` maps the first onto a list of the second, one result column
 per pair, so the comparison is chosen per metric and a metric may carry several. Every method yields
 the same primitive - the patched run's metric minus the unpatched target run's, one per *metric* -
-so adding one means implementing `AbstractPatchingMethod.scores` and nothing else; `_report` fans
-that out into the columns and the figure draws one plot per `config.metric_pairs()` entry. A method
+so adding one means implementing `AbstractPatchingMethod.scores` (and `passes`, which a plan reports;
+`check` refuses an input before any forward pass); `_report` fans that out into the columns and the
+figure draws one plot per `config.metric_pairs()` entry. `integrated_gradients` interpolates one hook
+per pass, so its cost grows with the hooks an index patches but a row's score never depends on the
+rest of the index. A method
 that actually runs the patched model (only `exact`) also reports that run's next token as the row's
 `generation`; the gradient methods have no such run and leave it out. Backends (MPS notably) round
 differently at different batch shapes, so the input's cached source and target runs are made as wide

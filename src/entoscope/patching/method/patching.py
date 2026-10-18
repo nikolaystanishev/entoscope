@@ -75,17 +75,31 @@ class AbstractPatchingMethod(abc.ABC, Generic[PatchingMethodConfigT]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def passes(self, runs: int, batches: int) -> tuple[int, int]:
+    def passes(self, patching_input: PatchingInput, batches: int) -> tuple[int, int]:
         """Count the passes the sweep costs, over and above the input's cached runs.
 
         Args:
-            runs: The number of patched runs.
-            batches: The number of batches they fall into, for a batched method.
+            patching_input: The input, its index resolved: ``rows()`` lists the patched runs and
+                ``target_activation_names()`` the hooks a patch writes.
+            batches: The number of batches the patched runs fall into, for a batched method.
 
         Returns:
             The forward and the backward passes.
         """
         raise NotImplementedError
+
+    def check(self, patching_input: PatchingInput) -> None:
+        """Reject an input the method cannot score, before either prompt is run.
+
+        Called once the input's index is resolved, by ``plan`` as well as by the run, so a plan never
+        promises a run the method would refuse. Nothing is rejected by default.
+
+        Args:
+            patching_input: The input, its index resolved and no forward pass made.
+
+        Raises:
+            ValueError: If the method cannot score the input.
+        """
 
     def _report(self, patching_input: PatchingInput, deltas: dict[PatchingMetric, torch.Tensor]) -> dict[str, float]:
         """Fan one row's change in every metric out into the result columns.

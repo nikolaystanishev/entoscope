@@ -1,4 +1,5 @@
 import json
+from html import escape
 from pathlib import Path
 
 import networkx as nx
@@ -76,6 +77,19 @@ def test_artifacts_saved_to_disk(model: Model, tmp_path: Path):
         "path_threshold": None,
         "prediction_positions": [-1],
     }
+
+
+def test_the_tokens_labelling_the_positions_are_escaped_for_the_page(model: Model, tmp_path: Path):
+    # plotly reads a label as HTML, so a token such as Llama's BOS '<s>' would open a strikethrough and
+    # vanish from the axis.
+    prompt = "Fish <b>&chips</b>"
+    save_dir = tmp_path / "markup"
+
+    CircuitDiscoverer(model).apply(CircuitInput(_config(), [prompt]), save_dir=str(save_dir), verbose=False)
+
+    _, graph = rendered_figures(save_dir, "circuit_0.html")
+    tokens = model.to_str_tokens(prompt)
+    assert graph.ticks("xaxis") == [f"{position}: {escape(token)}" for position, token in enumerate(tokens)]
 
 
 def test_a_run_without_a_collector_still_writes_its_artifacts(model: Model, tmp_path: Path):

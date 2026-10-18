@@ -151,6 +151,7 @@ class PatchingConfig(AbstractConfig):
     patch: list[SinglePatchingConfig] = field(default_factory=list)
 
     def __post_init__(self):
+        super().__post_init__()
         if not self.metric:
             raise ValueError("At least one patching metric is required")
         for metric, comparisons in self.metric.items():

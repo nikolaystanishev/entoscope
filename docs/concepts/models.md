@@ -66,7 +66,9 @@ cached.eval()
 ```
 
 With `cache_dir=None` the wrapper passes every call straight through, which lets a script make
-caching optional with a single argument.
+caching optional with a single argument. A method that returns the model itself, such as `to` or
+`eval`, returns the wrapper, so `cached = cached.to("cuda")` keeps the cache, and the wrapper is called
+as the model is.
 
 ### What gets cached
 
@@ -89,12 +91,15 @@ An entry is stored at `<cache_dir>/<model name>/<digest>.pt`, written atomically
 - the tokens, the requested activation names in any order, and every other `run_with_cache` argument
   that changes the result;
 - a fingerprint of the model: its class, its config's dimensions and dtype, and the name, shape,
-  dtype and first 64 values of every parameter.
+  dtype and first 64 values of every parameter;
+- the version of the entry format, so an entry written by a release that stored it differently is
+  recomputed rather than misread.
 
 The weights in the fingerprint keep a fine-tune, a supplied `hf_model` or another revision from sharing
 entries with the base model. A bridge and a `HookedTransformer` of the same model never share entries
 either.
 
-The fingerprint is taken once, when the model is wrapped. If you edit the weights in place afterwards,
-wrap the model again to get a fresh fingerprint. Entries are never evicted; delete the directory to
-clear the cache.
+The fingerprint is taken on every call, so a change made after wrapping, such as
+`enable_compatibility_mode()`, a change of dtype or a training step, is a new entry rather than a stale
+one. A call whose batch rows are all the same, as patching makes when it runs a prompt as wide as its
+patched runs, is stored as one row. Entries are never evicted; delete the directory to clear the cache.

@@ -54,10 +54,10 @@ print(rows(locator))  # 72 rows: 12 layers x 6 positions
 
 A few of them have quirks:
 
-- `embed` sits before the first block, so its locator names no `layer`. With a layer it would name a
-  hook that does not exist.
+- `embed` sits before the first block, so its locator names no `layer`, and one that does is refused.
 - `attn.pattern` is located by `layer` and `head` only. Its two position axes are always read whole,
-  and it has no `neuron` axis.
+  and it has no `neuron` axis, so a locator naming `position` or `neuron` for it is refused rather
+  than reading the same whole pattern on every row.
 - `attn.k` and `attn.v` have `n_key_value_heads` heads on a model with grouped-query attention.
 - `mlp.pre_linear` exists only on a gated MLP, where it is the linear branch and `mlp.pre` the gate.
 
@@ -72,8 +72,13 @@ A row names a value on some of four axes, the members of [`ModelAxis`](#entoscop
   position 0 is BOS and a prompt's first word is at position 1.
 
 A negative value counts from the end of its axis: `position: -1` is the last token and `layer: -1` the
-last layer. An axis a row does not name is read whole: every row of
-`{activation: resid.post, location: [layer]}` spans every position.
+last layer. A value past either end of its axis is refused when the index is resolved, by `plan()` as
+by a run, so `layer: 12` on GPT-2's twelve layers fails before any forward pass. An axis a row does not
+name is read whole: every row of `{activation: resid.post, location: [layer]}` spans every position.
+
+A locator that names any axis needs an `activation` to read it in, set on the locator or on every
+coordinate, and may name only the axes of that activation's tensor, plus `layer` for every activation
+but `embed`: `head` on `resid.post`, say, is refused as the config is read.
 
 ## Two ways to name locations
 
@@ -127,10 +132,12 @@ heads or neurons into one direction, a patch writes the whole group in one run, 
 every one of them as features. Three transforms build such rows, applied after the filter in this
 order:
 
-- `group` merges the listed values of an axis into one row; `all` merges every value.
-- `incremental` follows every row with rows that add growing prefixes of the listed values.
+- `group` merges the listed values of an axis into one row; `all` merges every value. The axis has to
+  be one `location` enumerates.
+- `incremental` follows every row with rows that add growing prefixes of the listed values, adding the
+  axis when `location` does not name it.
 - `combination` expands every row into one row per combination of the values it holds on the listed
-  axes, from one value up to `max_elements`.
+  axes, from one value up to `max_elements`. Each axis has to be one `location` or `incremental` names.
 
 ```python
 from dataclasses import replace

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, TypeVar, get_args
 
 from entoscope.operation.registry import RegistryFactory
-from entoscope.util.data import dataclass_from_dict
+from entoscope.util.data import dataclass_from_dict, read_fields
 
 
 @dataclass(kw_only=True)
@@ -17,11 +17,19 @@ class MethodConfig:
     fields of its own takes its operation's base), so only the instance can say which method it
     configures.
 
+    Every field is read as a config file's would be, however the method config is built.
+
     Attributes:
         type: The name the method is registered under.
+
+    Raises:
+        ValueError: If a field holds a value its type cannot take.
     """
 
     type: str
+
+    def __post_init__(self):
+        read_fields(self)
 
     @classmethod
     def factory(cls) -> builtins.type[RegistryFactory[Any]]:  # ``type`` is the field here

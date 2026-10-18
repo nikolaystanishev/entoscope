@@ -22,7 +22,7 @@ class Patcher(Operator):
         collector_class: The collector to write the results with. The default also draws
             ``result.html``, and ``PatchingCollector`` writes the CSV files alone.
         batch_size: How many patched runs one forward pass of ``exact`` holds. The gradient methods score
-            the whole index from a pass per interpolation step and ignore it.
+            the whole index from passes of their own and ignore it.
     """
 
     def __init__(
@@ -82,10 +82,11 @@ class Patcher(Operator):
         """
         method = PatchingMethodFactory.create(self.model, patching_input.config)
         patching_input.prepare(self.model, index_only=True)
+        method.check(patching_input)
 
         steps = len(patching_input.rows())
         batches = len(list(batch_generator(list(range(steps)), self.batch_size)))
-        forward_passes, backward_passes = method.passes(steps, batches)
+        forward_passes, backward_passes = method.passes(patching_input, batches)
 
         prompts = [("target", patching_input.target_prompt, patching_input.target_tokens.shape[1])]
         if patching_input.source_prompt is not None:
@@ -113,6 +114,8 @@ class Patcher(Operator):
 
     def _patch(self, patching_input: PatchingInput, save_dir: str | None, verbose: bool = True) -> PatchingCollector:
         method = PatchingMethodFactory.create(self.model, patching_input.config)
+        patching_input.prepare(self.model, index_only=True)
+        method.check(patching_input)
         patching_input.prepare(self.model, self.batch_size if method.batched else 1)
         collector = self.collector_class(patching_input, self.model, save_dir)
 

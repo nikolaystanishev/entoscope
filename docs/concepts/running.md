@@ -128,9 +128,11 @@ What a plan counts, per operator:
 | `Lens` | an index row | 1, or 0 for a lens that reads weights | 0 |
 | `Patcher` with `exact` | a patched run, one per index row | one per batch, plus one per prompt | 0 |
 | `Patcher` with `attribution` | an index row | 1, plus one per prompt | one per metric |
-| `Patcher` with `integrated_gradients` | an index row | `interpolation_steps`, plus one per prompt | `interpolation_steps` per metric |
+| `Patcher` with `integrated_gradients` | an index row | `(interpolation_steps - 1) × hooks + 1`, plus one per prompt | `(interpolation_steps - 1) × hooks + 1` per metric |
 | `Prober` | a probe, one per index row | one per example prompt | 0 |
 | `CircuitDiscoverer` | a prompt | one per prompt | 0 |
+
+`hooks` is the number of hooks the patch writes, such as one per layer of a sweep.
 
 In an experiment script, a `dry_run` field on your own config gives the script a `--dry-run` flag; see
 [Experiment scripts](../guides/experiment-scripts.md).

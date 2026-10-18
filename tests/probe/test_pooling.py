@@ -125,9 +125,10 @@ def test_both_of_the_patterns_position_axes_are_pooled(small_model, small_caches
     assert_trained_alike(probe_of(collector, head=0), refit(expected))
 
 
-def test_a_pooling_type_that_is_not_known_raises(small_model):
-    with pytest.raises(ValueError, match="Unknown pooling type"):
-        run_probe(small_model, probe_config(pool={ModelAxis.POSITION: "median"}))
+def test_a_pooling_type_that_is_not_known_raises():
+    # A config built in code is read as a file's is, so a pooling nothing implements is refused as it is built.
+    with pytest.raises(ValueError, match="'median' is not a valid PoolingType"):
+        probe_config(pool={ModelAxis.POSITION: "median"})
 
 
 def test_a_single_value_becomes_a_single_feature(small_model, small_caches):

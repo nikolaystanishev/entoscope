@@ -445,10 +445,9 @@ def test_a_malformed_lens_config_is_rejected_when_it_is_loaded(config_from_yaml,
 
 
 def test_an_activation_without_a_vocabulary_projection_raises(model):
-    config = coordinates_config({"activation": "attn.pattern", "layer": 0, "head": 0, "position": -1})
-
-    with pytest.raises(ValueError, match="only residual-stream, MLP-hidden and attention head"):
-        Lens(model).apply(LensInput(config, PROMPT), verbose=False)
+    # The pattern has no position of its own to rank the tokens at, so its config is refused outright.
+    with pytest.raises(ValueError, match="'attn.pattern' has no 'position' axis"):
+        coordinates_config({"activation": "attn.pattern", "layer": 0, "head": 0, "position": -1})
 
 
 @pytest.mark.parametrize("activation_name", ["attn.k", "attn.v"])
@@ -618,6 +617,18 @@ def test_the_position_axis_is_labelled_with_the_prompts_tokens(model, tmp_path):
     assert (figure.axis_title("xaxis"), figure.axis_title("yaxis")) == ("position", "layer")
     assert figure.ticks("xaxis")[1] == '1: "The"'
     assert figure.ticks("yaxis") == [str(layer) for layer in range(model.cfg.n_layers)]
+
+
+def test_the_tokens_labelling_the_positions_are_escaped_for_the_page(model, tmp_path):
+    # plotly reads a label as HTML, so a token such as Llama's BOS '<s>' would open a strikethrough and
+    # vanish: every token reaches the page escaped, as every other value does.
+    prompt = "Fish <b>&chips</b>"
+
+    figure = _draw(model, declarative_config(**LAYER_POSITION_GRID), tmp_path / "markup", prompt=prompt)
+
+    tokens = model.to_str_tokens(prompt)
+    assert figure.ticks("xaxis") == [f'{position}: "{format_value(token)}"' for position, token in enumerate(tokens)]
+    assert '0: "&lt;|endoftext|&gt;"' in figure.ticks("xaxis")
 
 
 def test_a_head_axis_goes_across_with_the_layers_down(small_model, tmp_path):

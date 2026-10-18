@@ -765,7 +765,7 @@ def _gradient_config(
     method: str | PatchingMethodConfig,
     source_type: PatchingType = PatchingType.REPLACE,
     value: float = 0.0,
-    layer: int = _GRADIENT_LAYER,
+    layer: int | list[int] = _GRADIENT_LAYER,
 ) -> PatchingConfig:
     """A method named by its type alone takes its defaults, the way a YAML file names it."""
     method = method if isinstance(method, PatchingMethodConfig) else PatchingMethodConfig.from_config(method)
@@ -893,6 +893,21 @@ def test_integrated_gradients_beats_a_single_gradient_on_a_full_resample(model: 
     assert abs(integrated - exact) < abs(attribution - exact)
 
 
+def test_integrated_gradients_scores_a_row_the_same_whatever_else_the_index_sweeps(model: Model) -> None:
+    torch.manual_seed(42)
+
+    # Interpolating every hook on one pass would have each later hook scale the gradient reaching an
+    # earlier one by the step's alpha, and move it off its own path, so a row's score would depend on
+    # which other layers the sweep holds.
+    layers = [0, model.cfg.n_layers // 2, model.cfg.n_layers - 1]
+    method = IntegratedGradientsConfig(type="integrated_gradients", interpolation_steps=3)
+
+    swept = _run(model, _gradient_config(method, layer=layers))
+    alone = torch.cat([_run(model, _gradient_config(method, layer=layer)) for layer in layers])
+
+    assert torch.allclose(swept, alone, rtol=1e-4, atol=1e-6)
+
+
 def test_a_gradient_method_runs_the_model_once_however_large_the_index(model: Model, monkeypatch) -> None:
     torch.manual_seed(42)
 
@@ -924,30 +939,39 @@ def test_a_gradient_method_runs_the_model_once_however_large_the_index(model: Mo
         assert len(collector.result) == model.cfg.n_layers
 
     # One patched run per row for the exact method; one pass whatever the index holds for a single
-    # gradient, and one per interpolation step for the integrated one.
-    assert passes == {"exact": model.cfg.n_layers, "attribution": 1, "integrated_gradients": 4}
+    # gradient. The integrated one interpolates each hook on passes of its own, one per step but the
+    # clean point, where every hook is left as it is and one pass serves them all.
+    assert passes == {"exact": model.cfg.n_layers, "attribution": 1, "integrated_gradients": 3 * model.cfg.n_layers + 1}
 
 
-def test_integrated_gradients_needs_a_source_run_to_interpolate_towards(model: Model) -> None:
+def _assert_rejected_before_any_run(model: Model, monkeypatch, patching_input: PatchingInput, message: str) -> None:
+    """The plan refuses the input, and so does the run, before it makes a single forward pass."""
+    runs = record_runs(monkeypatch, model)
+
+    with pytest.raises(ValueError, match=message):
+        Patcher(model).plan(patching_input, verbose=False)
+    with pytest.raises(ValueError, match=message):
+        Patcher(model).apply(patching_input, verbose=False)
+
+    assert runs == []
+
+
+def test_integrated_gradients_needs_a_source_run_to_interpolate_towards(model: Model, monkeypatch) -> None:
     config = replace(
         _last_layer_resid_zero_ablation_config(),
         method=IntegratedGradientsConfig(type="integrated_gradients"),
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]},
     )
+    patching_input = PatchingInput(config, None, TARGET_PROMPT, correct_token=" Madrid", distractor_token=" Barcelona")
 
-    with pytest.raises(ValueError, match="needs a source prompt"):
-        Patcher(model).apply(
-            PatchingInput(config, None, TARGET_PROMPT, correct_token=" Madrid", distractor_token=" Barcelona"),
-            verbose=False,
-        )
+    _assert_rejected_before_any_run(model, monkeypatch, patching_input, "needs a source prompt")
 
 
-def test_integrated_gradients_needs_the_two_prompts_to_line_up(model: Model) -> None:
+def test_integrated_gradients_needs_the_two_prompts_to_line_up(model: Model, monkeypatch) -> None:
     # The interpolation runs position by position, so a shorter source prompt has nowhere to land.
-    config = _gradient_config("integrated_gradients")
+    patching_input = PatchingInput(_gradient_config("integrated_gradients"), "Paris", TARGET_PROMPT)
 
-    with pytest.raises(ValueError, match="same length"):
-        Patcher(model).apply(PatchingInput(config, "Paris", TARGET_PROMPT), verbose=False)
+    _assert_rejected_before_any_run(model, monkeypatch, patching_input, "same length")
 
 
 @pytest.mark.parametrize(
@@ -2033,13 +2057,16 @@ def test_a_plan_counts_a_gradient_runs_passes_instead_of_its_batches(model: Mode
     forbid_model_runs(monkeypatch, model)
     plan = Patcher(model, batch_size=2).plan(patching_input, save_dir=str(tmp_path / "planned"), verbose=False)
 
-    # Every row still gets a score, but they no longer come one batch at a time: three interpolation
-    # steps, each backward once per metric, on top of the two cached runs.
+    # Every row still gets a score, but they no longer come one batch at a time: each of the two steps
+    # short of the clean point interpolates every layer's hook on a pass of its own, the clean point
+    # takes one pass for all of them, and each pass goes backward once per metric - on top of the two
+    # cached runs.
+    passes = 2 * model.cfg.n_layers + 1
     assert plan.steps == model.cfg.n_layers
     assert plan.batches is None
-    assert plan.forward_passes == 3 + 2
-    assert plan.backward_passes == 6
-    assert "5 forward passes, 6 backward passes" in str(plan)
+    assert plan.forward_passes == passes + 2
+    assert plan.backward_passes == 2 * passes
+    assert f"{passes + 2} forward passes, {2 * passes} backward passes" in str(plan)
 
 
 def test_a_plan_for_a_run_without_a_source_prompt_names_one_prompt(model: Model, monkeypatch, tmp_path: Path) -> None:
@@ -2052,6 +2079,63 @@ def test_a_plan_for_a_run_without_a_source_prompt_names_one_prompt(model: Model,
 
     assert [label for label, _, _ in plan.prompts] == ["target"]
     assert plan.forward_passes == plan.batches + 1
+
+
+@pytest.mark.parametrize(
+    ("source_type", "source_prompt"),
+    [
+        # A value reads no run at all, so with no source prompt its positions can only be the target's.
+        (PatchingType.VALUE_REPLACE, None),
+        # Noise corrupts the target run's own activation, so it reads the target's positions however long
+        # the source prompt is.
+        (PatchingType.GAUSSIAN_NOISE, "The capital of the French Republic is"),
+    ],
+)
+def test_a_source_that_reads_no_source_run_counts_its_positions_in_the_target(
+    model: Model, monkeypatch, source_type: PatchingType, source_prompt: str | None
+) -> None:
+    element = {
+        "activation": ModelLayerLocation.RESIDUAL_POST,
+        "location": [ModelAxis.LAYER, ModelAxis.POSITION],
+        "filter": Filter(inclusion_terms=[{ModelAxis.LAYER: 0, ModelAxis.POSITION: -1}]),
+    }
+    config = PatchingConfig(
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]},
+        method=EXACT,
+        patch=[
+            SinglePatchingConfig(
+                source=PatchingElementConfig(**element, type=source_type),
+                target=PatchingElementConfig(**element, type=PatchingType.REPLACE),
+            )
+        ],
+    )
+    patching_input = PatchingInput(
+        config, source_prompt, TARGET_PROMPT, correct_token=" Madrid", distractor_token=" Barcelona"
+    )
+
+    forbid_model_runs(monkeypatch, model)
+    (index,) = Patcher(model).plan(patching_input, verbose=False).index
+
+    last = model.to_tokens(TARGET_PROMPT).shape[1] - 1
+    assert index[["source_position", "target_position"]].values.tolist() == [[last, last]]
+
+
+def test_normalizing_between_two_runs_that_score_the_same_is_rejected_before_any_patched_run(
+    model: Model, monkeypatch
+) -> None:
+    # The same prompt on both sides leaves nothing to normalize against: every row would divide by zero.
+    config = _last_layer_resid_zero_ablation_config()
+    config.metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.NORMALIZED]}
+    patching_input = PatchingInput(
+        config, TARGET_PROMPT, TARGET_PROMPT, correct_token=" Madrid", distractor_token=" Barcelona"
+    )
+    runs = record_runs(monkeypatch, model)
+
+    with pytest.raises(ValueError, match="normalized_logit_diff divides by"):
+        Patcher(model).apply(patching_input, verbose=False)
+
+    # Only the two cached runs were made, both needed to tell.
+    assert [run.entry for run in runs] == ["run_with_cache", "run_with_cache"]
 
 
 def test_a_plan_describes_the_run_that_follows_it(model: Model, tmp_path: Path) -> None:
@@ -2307,6 +2391,30 @@ def test_the_axis_falls_back_to_the_target_when_the_source_does_not_span_it(mode
     assert pd.read_csv(save_dir / "result.csv")["source_position"].nunique() == 1
     positions = model.to_tokens(TARGET_PROMPT).shape[1]
     assert figure.ticks("xaxis")[0].endswith(f"position {positions - 2}")
+
+
+def test_a_sweep_written_into_one_location_is_labelled_by_the_source_it_sweeps(model: Model, tmp_path: Path) -> None:
+    # Every source row is written into the same target location, so the source is what the grid lays out,
+    # and the target, repeated on every row, would give every tick the same label.
+    source = PatchingElementConfig(
+        activation=ModelLayerLocation.RESIDUAL_POST,
+        location=[ModelAxis.LAYER, ModelAxis.POSITION],
+        filter=_FIRST_THREE_LAYERS,
+        type=PatchingType.REPLACE,
+    )
+    target = _explicit_element([{ModelAxis.LAYER: -1, ModelAxis.POSITION: -1}], ModelLayerLocation.RESIDUAL_POST)
+    config = PatchingConfig(
+        config_id="into_one",
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]},
+        method=EXACT,
+        patch=[SinglePatchingConfig(source=source, target=target)],
+    )
+
+    figure = _draw(model, config, tmp_path / "into_one")
+
+    tokens = model.to_str_tokens(SOURCE_PROMPT)
+    assert figure.ticks("xaxis") == [f'{position}: "{escape(token)}"' for position, token in enumerate(tokens)]
+    assert figure.ticks("yaxis") == ["0", "1", "2"]
 
 
 def test_a_single_coordinate_run_still_writes_a_page(model: Model, tmp_path: Path) -> None:
