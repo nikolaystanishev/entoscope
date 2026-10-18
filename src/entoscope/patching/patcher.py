@@ -81,7 +81,7 @@ class Patcher(Operator):
             top of one cached run per prompt.
         """
         method = PatchingMethodFactory.create(self.model, patching_input.config)
-        patching_input.prepare_index(self.model)
+        patching_input.prepare(self.model, index_only=True)
 
         steps = len(patching_input.rows())
         batches = len(list(batch_generator(list(range(steps)), self.batch_size)))

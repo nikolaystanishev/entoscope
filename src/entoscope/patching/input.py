@@ -63,39 +63,8 @@ class PatchingInput(OperationInput):
     def __post_init__(self):
         self._check_available()
 
-    def prepare_index(self, model: Model) -> "PatchingInput":
-        if self._index is not None:
-            return self
-
-        if self.source_prompt is not None:
-            self._source_tokens = model.to_tokens(self.source_prompt)
-        self._target_tokens = model.to_tokens(self.target_prompt)
-
-        index = [
-            Index[PatchingElementConfig](
-                patching_config.source,
-                patching_config.source.parse(
-                    model, self.source_tokens.shape[1] if self._source_tokens is not None else None
-                ),
-                patching_config.target,
-                patching_config.target.parse(model, self.target_tokens.shape[1]),
-            )
-            for patching_config in self.config.patch
-        ]
-        try:
-            broadcast_length(*map(len, index))
-        except ValueError:
-            lengths = " and ".join(str(length) for length in sorted({len(idx) for idx in index} - {1}))
-            raise ValueError(
-                f"Patch elements of {lengths} rows cannot be applied together: patched run i applies row i of every "
-                "element, so they need as many rows, or one"
-            ) from None
-        self._index = index
-
-        return self
-
-    def prepare(self, model: Model, batch_size: int = 1) -> "PatchingInput":
-        """Run both prompts, caching what the index reads, as wide as the patched runs will be.
+    def prepare(self, model: Model, batch_size: int = 1, *, index_only: bool = False) -> "PatchingInput":
+        """Resolve every element's index, then run both prompts, caching what it reads, as wide as the patched runs.
 
         A backend may round differently at different batch shapes (MPS does, by up to half a logit in
         bfloat16), so a patched run has to be compared with, and patched from, runs of its own shape:
@@ -105,15 +74,43 @@ class PatchingInput(OperationInput):
         Args:
             model: The model to run.
             batch_size: How many patched runs each forward pass holds.
+            index_only: Whether to stop after the index, before any forward pass.
 
         Returns:
             The input itself, prepared in place.
 
         Raises:
-            ValueError: If the answer tokens cannot be resolved, or resolve to the same token while a
-                difference metric is asked for.
+            ValueError: If the elements' row counts cannot be paired, or the answer tokens cannot be
+                resolved, or resolve to the same token while a difference metric is asked for.
         """
-        self.prepare_index(model)
+        if self._index is None:
+            if self.source_prompt is not None:
+                self._source_tokens = model.to_tokens(self.source_prompt)
+            self._target_tokens = model.to_tokens(self.target_prompt)
+
+            index = [
+                Index[PatchingElementConfig](
+                    patching_config.source,
+                    patching_config.source.parse(
+                        model, self.source_tokens.shape[1] if self._source_tokens is not None else None
+                    ),
+                    patching_config.target,
+                    patching_config.target.parse(model, self.target_tokens.shape[1]),
+                )
+                for patching_config in self.config.patch
+            ]
+            try:
+                broadcast_length(*map(len, index))
+            except ValueError:
+                lengths = " and ".join(str(length) for length in sorted({len(idx) for idx in index} - {1}))
+                raise ValueError(
+                    f"Patch elements of {lengths} rows cannot be applied together: patched run i applies row i of "
+                    "every element, so they need as many rows, or one"
+                ) from None
+            self._index = index
+
+        if index_only:
+            return self
 
         batch_width = max(1, min(batch_size, len(self.rows())))
         if self._target_cache is None or batch_width != self._batch_width:

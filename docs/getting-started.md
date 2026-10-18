@@ -99,13 +99,12 @@ print(result[result.source_position == 5][["source_layer", "str_token_0", "proba
 
 `keep_default_na=False` keeps tokens such as `"null"` or `"NA"` from being read as missing values.
 
-The same rows from a shell: the `sqlite3` command-line tool reads the file with its CSV quoting, so a
-token such as `","` stays one value:
+The same file from a shell: `less -S` pages through it without wrapping its long rows, and `awk`
+prints the header and the rows at position 5, the second column:
 
 ```bash
-sqlite3 -header -column :memory: \
-  ".import --csv runs/first_lens/result.csv result" \
-  "SELECT source_layer, str_token_0, probability_0 FROM result WHERE source_position = 5"
+less -S runs/first_lens/result.csv
+awk -F, 'NR == 1 || $2 == 5' runs/first_lens/result.csv
 ```
 
 To keep the results in memory instead, pass `return_collector=True`. The collector's `result` is the

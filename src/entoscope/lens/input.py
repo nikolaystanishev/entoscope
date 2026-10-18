@@ -42,25 +42,15 @@ class LensInput(OperationInput):
         if not reads_activations and self.prompt is not None:
             raise ValueError(f"A '{name}' reads the model's weights, not its activations, so it takes no prompt")
 
-    def prepare_index(self, model: Model) -> "LensInput":
-        if self._index is not None:
-            return self
+    def prepare(self, model: Model, *, index_only: bool = False) -> "LensInput":
+        if self._index is None:
+            n_positions = None
+            if self.prompt is not None:
+                self._tokens = model.to_tokens(self.prompt)
+                n_positions = self.tokens.shape[1]
+            self._index = Index[ModelLocatorConfig](self.config.source, self.config.source.parse(model, n_positions))
 
-        if self.prompt is None:
-            self._index = Index[ModelLocatorConfig](self.config.source, self.config.source.parse(model, None))
-            return self
-
-        self._tokens = model.to_tokens(self.prompt)
-        self._index = Index[ModelLocatorConfig](
-            self.config.source, self.config.source.parse(model, self.tokens.shape[1])
-        )
-
-        return self
-
-    def prepare(self, model: Model) -> "LensInput":
-        self.prepare_index(model)
-
-        if self.prompt is not None and self._cache is None:
+        if not index_only and self.prompt is not None and self._cache is None:
             with torch.no_grad():
                 _, self._cache = model.run_with_cache(
                     self._tokens, names_filter=sorted(self.index.source_activation_names())

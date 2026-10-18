@@ -29,7 +29,7 @@ class CircuitInput(OperationInput):
         if not self.prompts:
             raise ValueError("At least one prompt is required for circuit discovery")
 
-    def prepare_index(self, model: Model) -> "CircuitInput":
+    def prepare(self, model: Model, *, index_only: bool = False) -> "CircuitInput":
         return self
 
     def to(self, device: str | torch.device = "cpu") -> "CircuitInput":

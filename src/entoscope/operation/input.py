@@ -12,9 +12,9 @@ from entoscope.operation.config import AbstractConfig
 class OperationInput(abc.ABC):
     """The base of every operation's input: a config together with the prompts it runs on.
 
-    An input fills itself lazily. ``prepare_index`` resolves what a run iterates and ``prepare`` gathers
-    the activations it reads, and both are idempotent, so ``plan`` followed by ``apply`` on the same
-    input resolves the index once.
+    An input fills itself lazily through ``prepare``, which resolves what a run iterates and then
+    gathers the activations it reads. Each of the two is done once, so ``plan`` followed by ``apply``
+    on the same input resolves the index once.
 
     Attributes:
         config: The config the input runs.
@@ -23,32 +23,21 @@ class OperationInput(abc.ABC):
     config: AbstractConfig
 
     @abc.abstractmethod
-    def prepare_index(self, model: Model) -> Self:
-        """Resolve everything that does not need a forward pass, which is what a run would iterate.
+    def prepare(self, model: Model, *, index_only: bool = False) -> Self:
+        """Resolve the index a run iterates, then gather the activations it reads on top of it.
 
-        Split out of ``prepare`` so an operation can be planned against a model without spending
-        the compute.
+        The index needs no forward pass, so ``index_only`` lets an operation be planned against a model
+        without spending the compute. An input that gathers no activations, its method running the
+        model itself, is ready once its index is.
 
         Args:
             model: The model the run reads.
+            index_only: Whether to stop after the index, before any forward pass.
 
         Returns:
             The input itself, prepared in place.
         """
         raise NotImplementedError
-
-    def prepare(self, model: Model) -> Self:
-        """Resolve the index and gather the activations a run reads on top of it.
-
-        An input that gathers none, its method running the model itself, is ready once its index is.
-
-        Args:
-            model: The model the run reads.
-
-        Returns:
-            The input itself, prepared in place.
-        """
-        return self.prepare_index(model)
 
     @abc.abstractmethod
     def to(self, device: str | torch.device = "cpu") -> Self:

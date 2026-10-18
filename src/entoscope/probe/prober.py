@@ -89,7 +89,7 @@ class Prober(Operator):
             The plan: one probe per index row and one forward pass per example prompt.
         """
         ProbeMethodFactory.create(self.model, probe_input.config)
-        probe_input.prepare_index(self.model)
+        probe_input.prepare(self.model, index_only=True)
 
         prompts = [("positive", prompt) for prompt in probe_input.positive_prompts]
         prompts += [("negative", prompt) for prompt in probe_input.negative_prompts]

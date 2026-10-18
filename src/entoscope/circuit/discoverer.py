@@ -81,7 +81,7 @@ class CircuitDiscoverer(Operator):
             The plan: one step and one forward pass per prompt.
         """
         method = CircuitMethodFactory.create(self.model, circuit_input.config)
-        circuit_input.prepare_index(self.model)
+        circuit_input.prepare(self.model, index_only=True)
         activations = method.activation_names()
 
         plan = OperationPlan(

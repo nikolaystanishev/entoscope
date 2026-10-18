@@ -82,7 +82,7 @@ class Lens(Operator):
             The plan: one step per index row and one forward pass, or none for a lens that reads weights.
         """
         method = LensMethodFactory.create(self.model, lens_input.config)
-        lens_input.prepare_index(self.model)
+        lens_input.prepare(self.model, index_only=True)
         reads_activations = method.reads_activations
 
         plan = OperationPlan(

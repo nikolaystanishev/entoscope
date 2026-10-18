@@ -43,50 +43,33 @@ class ProbeInput(OperationInput):
     _index: Index[ModelLocatorConfig] | None = field(init=False, default=None)
     _token_tensors: list[Int[torch.Tensor, "batch pos"]] | None = field(init=False, default=None)
 
-    def prepare_index(self, model: Model) -> "ProbeInput":
-        """Tokenize every prompt and resolve the locations the probes read.
+    def prepare(self, model: Model, *, index_only: bool = False) -> "ProbeInput":
+        """Resolve the locations the probes read, then pool every prompt's activation at each into its features.
 
         Args:
             model: The model the run reads.
+            index_only: Whether to stop after the locations, before any forward pass.
 
         Returns:
             The input itself, prepared in place.
 
         Raises:
-            ValueError: If either set of prompts is empty, or an explicit position is out of range for the
-                shortest prompt.
+            ValueError: If either set of prompts is empty, an explicit position is out of range for the
+                shortest prompt, or a location's feature size varies across prompts.
         """
-        if self._index is not None:
-            return self
+        if self._index is None:
+            if not self.positive_prompts or not self.negative_prompts:
+                raise ValueError("Both positive and negative prompts are required to train a probe")
 
-        if not self.positive_prompts or not self.negative_prompts:
-            raise ValueError("Both positive and negative prompts are required to train a probe")
+            self._token_tensors = [model.to_tokens(prompt) for prompt in self.positive_prompts + self.negative_prompts]
+            lengths = {tokens.shape[1] for tokens in self._token_tensors}
 
-        self._token_tensors = [model.to_tokens(prompt) for prompt in self.positive_prompts + self.negative_prompts]
-        lengths = {tokens.shape[1] for tokens in self._token_tensors}
+            n_positions = next(iter(lengths)) if len(lengths) == 1 else None
+            source = self.config.source.parse(model, n_positions)
+            self._validate_positions(source.df, min(lengths))
+            self._index = Index[ModelLocatorConfig](self.config.source, source)
 
-        n_positions = next(iter(lengths)) if len(lengths) == 1 else None
-        source = self.config.source.parse(model, n_positions)
-        self._validate_positions(source.df, min(lengths))
-        self._index = Index[ModelLocatorConfig](self.config.source, source)
-
-        return self
-
-    def prepare(self, model: Model) -> "ProbeInput":
-        """Run every prompt and pool each location's activation into its features.
-
-        Args:
-            model: The model the run reads.
-
-        Returns:
-            The input itself, prepared in place.
-
-        Raises:
-            ValueError: If a location's feature size varies across prompts.
-        """
-        self.prepare_index(model)
-
-        if self._features is None:
+        if not index_only and self._features is None:
             self._features = self._collect_features(model, self.token_tensors, self.index)
             self._labels = torch.cat(
                 [

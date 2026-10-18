@@ -54,11 +54,11 @@ follows the same four-part shape, and adding one means writing the same four pie
   serves several methods. It is saved as `config.json` beside the run's results,
   which `from_dict` reads back - so a config holds only data, and `to_dict` rejects what has no JSON form.
 - **Input** (`<op>/input.py`) - a dataclass extending `OperationInput` that holds prompts and the
-  lazily-filled tensors. `prepare_index(model)` resolves everything that needs no forward pass;
-  `prepare(model)` calls it and then gathers activations (by default nothing more, for an input whose
-  method runs the model itself). Both are idempotent, guarded on the *cache* rather than the index, so
-  `plan()` followed by `apply()` on the same object costs one index resolution. What needs no model is
-  checked in `__post_init__`, so a bad config fails as the input is built.
+  lazily-filled tensors. `prepare(model)` resolves everything that needs no forward pass, the index,
+  and then gathers activations (nothing more for an input whose method runs the model itself);
+  `prepare(model, index_only=True)`, which `plan()` calls, stops after the index. Each step is guarded
+  on what it fills, so `plan()` followed by `apply()` on the same object costs one index resolution.
+  What needs no model is checked in `__post_init__`, so a bad config fails as the input is built.
 - **Operator** (`<op>/<name>.py`) - `apply(input, save_dir, return_collector, verbose)` iterates
   `input.index`, and `plan(input, save_dir, verbose)` builds an `OperationPlan` describing the same
   run without touching the model or `save_dir`. Constructor takes `(model, collector_class=...)`.

@@ -44,13 +44,13 @@ import pandas as pd
 result = pd.read_csv("runs/first_lens/result.csv", keep_default_na=False)
 ```
 
-From a shell, the `sqlite3` command-line tool reads a result with its CSV quoting and every value as
-text, so tokens such as `","` or `"null"` come through as they are:
+From a shell, `less -S` pages through a result without wrapping its long rows, and `head` and `tail`
+print its first and last rows:
 
 ```bash
-sqlite3 -header -column :memory: \
-  ".import --csv runs/first_lens/result.csv result" \
-  "SELECT * FROM result LIMIT 10"
+less -S runs/first_lens/result.csv
+head -n 5 runs/first_lens/result.csv
+tail -n 5 runs/first_lens/result.csv
 ```
 
 ## Result pages
