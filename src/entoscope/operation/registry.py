@@ -29,9 +29,12 @@ class RegistryFactory(Generic[T]):
     """Resolves a name to the class registered under it, which extends the class the factory names.
 
     A subclass names that class as its type argument and what an implementation is called in messages as
-    ``kind``; each keeps its own entries. A name belongs to one implementation, so a typo or a second
-    implementation cannot shadow the first one, while defining the same class again replaces it - which is
+    ``kind``, and each keeps its own entries. A name belongs to one implementation, so a typo or a second
+    implementation cannot shadow the first one, while defining the same class again replaces it, which is
     what re-running a notebook cell does.
+
+    Attributes:
+        kind: What an implementation is called in messages, such as ``"lens method"``.
     """
 
     kind: ClassVar[str]
@@ -53,6 +56,21 @@ class RegistryFactory(Generic[T]):
 
     @classmethod
     def register(cls, name: str) -> Callable[[ImplementationT], ImplementationT]:
+        """Register the decorated class under ``name``.
+
+        The class is checked as it is registered rather than at its first run.
+
+        Args:
+            name: The name a config's ``type`` selects the class by.
+
+        Returns:
+            A class decorator that registers the class and returns it unchanged.
+
+        Raises:
+            ValueError: If ``name`` is empty or already taken by another class.
+            TypeError: If the decorated class does not extend the factory's base class, or leaves one of
+                its abstract methods unimplemented.
+        """
         key = cls._key(name)
 
         def decorator(implementation: ImplementationT) -> ImplementationT:
@@ -63,6 +81,17 @@ class RegistryFactory(Generic[T]):
 
     @classmethod
     def get(cls, name: str) -> type[T]:
+        """Look up the class registered under ``name``.
+
+        Args:
+            name: A registered name.
+
+        Returns:
+            The class registered under ``name``.
+
+        Raises:
+            ValueError: If nothing is registered under ``name``. The message lists the registered names.
+        """
         key = cls._key(name)
         if key not in cls._registry:
             raise ValueError(
@@ -73,6 +102,11 @@ class RegistryFactory(Generic[T]):
 
     @classmethod
     def registered(cls) -> list[str]:
+        """List the registered names.
+
+        Returns:
+            Every name registered with this factory, sorted.
+        """
         return sorted(cls._registry)
 
     @classmethod
@@ -83,7 +117,16 @@ class RegistryFactory(Generic[T]):
 
     @classmethod
     def _admit(cls, key: str, implementation: type) -> None:
-        """Store ``implementation`` under ``key``, checked now rather than at its first run."""
+        """Store ``implementation`` under ``key``, checked now rather than at its first run.
+
+        Args:
+            key: The name to register under.
+            implementation: The class to register.
+
+        Raises:
+            TypeError: If ``implementation`` does not extend the base class or is abstract.
+            ValueError: If ``key`` belongs to another class already.
+        """
         if not (isinstance(implementation, type) and issubclass(implementation, cls._base)):
             raise TypeError(f"A {cls.kind} must subclass {cls._base.__name__}, got {implementation!r}")
         if inspect.isabstract(implementation):

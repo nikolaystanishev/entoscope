@@ -17,7 +17,7 @@ from entoscope.lens.lens import Lens
 from entoscope.lens.method.factory import LensMethodFactory
 from entoscope.lens.method.logit_lens import LogitLens
 from entoscope.lens.method.parameter_lens import ParameterLens, ParameterLensConfig, ProjectionSpace
-from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.config import Filter, ModelAxis, ModelLayerLocation, ModelLocatorConfig
 from entoscope.util.data import from_dict
 
 from ..conftest import TransformerBridge, forbid_model_runs, rendered_figure
@@ -126,8 +126,8 @@ def _last_position(activation: str, **coordinate: int) -> ModelLocatorConfig:
 def _neurons() -> ModelLocatorConfig:
     return ModelLocatorConfig(
         activation=ModelLayerLocation.MLP_POST,
-        location=[ModelLocation.LAYER, ModelLocation.NEURON],
-        filter=Filter(inclusion_terms=[{ModelLocation.NEURON: NEURON}]),
+        location=[ModelAxis.LAYER, ModelAxis.NEURON],
+        filter=Filter(inclusion_terms=[{ModelAxis.NEURON: NEURON}]),
     )
 
 
@@ -137,7 +137,7 @@ def _neurons() -> ModelLocatorConfig:
 def test_a_registered_lens_reads_every_row_through_its_own_projection(model, activations, temperature_lens):
     _, cache = activations
     grid = ModelLocatorConfig(
-        activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelLocation.LAYER, ModelLocation.POSITION]
+        activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelAxis.LAYER, ModelAxis.POSITION]
     )
 
     result = run_lens(model, _warm(grid)).result

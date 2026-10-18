@@ -10,7 +10,7 @@ from entoscope.circuit.method.information_flow_routes import InformationFlowRout
 from entoscope.lens.config import LensConfig, LensMethodConfig
 from entoscope.lens.input import LensInput
 from entoscope.lens.lens import Lens
-from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.config import ModelAxis, ModelLayerLocation, ModelLocatorConfig
 from entoscope.patching.collector import PatchingCollector
 from entoscope.patching.config import (
     MetricComparison,
@@ -37,7 +37,7 @@ NEGATIVE = [TARGET_PROMPT, "I hated it"]
 # One layer of a three-layer model, so what a run caches is a small part of what it could.
 ONE_LAYER = ModelLocatorConfig(
     activation=ModelLayerLocation.RESIDUAL_POST,
-    location=[ModelLocation.LAYER, ModelLocation.POSITION],
+    location=[ModelAxis.LAYER, ModelAxis.POSITION],
     filter=[{"layer": 1}],
 )
 
@@ -50,10 +50,10 @@ def _lens(model):
 def _probe(model):
     config = ProbeConfig(
         method=LinearProbeConfig(type="linear"),
-        pool={ModelLocation.POSITION: PoolingType.MEAN},
+        pool={ModelAxis.POSITION: PoolingType.MEAN},
         metric=[ProbeMetric.ACCURACY],
         source=ModelLocatorConfig(
-            activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelLocation.LAYER], filter=[{"layer": 1}]
+            activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelAxis.LAYER], filter=[{"layer": 1}]
         ),
     )
     return Prober(model), ProbeInput(config, POSITIVE, NEGATIVE)
@@ -65,7 +65,7 @@ def _patching(model):
     def element(patching_type: PatchingType) -> PatchingElementConfig:
         return PatchingElementConfig(
             activation=ModelLayerLocation.RESIDUAL_POST,
-            location=[ModelLocation.LAYER],
+            location=[ModelAxis.LAYER],
             filter=[{"layer": 1}],
             type=patching_type,
         )

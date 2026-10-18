@@ -15,6 +15,11 @@ class ProbeCollector(FrameCollector[ProbeInput]):
 
     Writes ``result.csv``, ``index.csv``, ``config.json`` and ``probes.pkl``: the fitted probes, pickled
     as a dict from result row to estimator.
+
+    Args:
+        operation_input: The input the run iterates.
+        model: The model the run reads.
+        save_dir: The directory ``save`` writes into, or ``None`` to write nothing.
     """
 
     def __init__(self, operation_input: ProbeInput, model: Model, save_dir: str | None = None):
@@ -23,9 +28,17 @@ class ProbeCollector(FrameCollector[ProbeInput]):
 
     @property
     def probes(self) -> dict[int, Any]:
+        """The fitted probes, keyed by result row."""
         return self._probes
 
     def collect(self, method: AbstractProbeMethod, metric_values: dict[ProbeMetric, float], index: int):
+        """Take one location's fitted probe and its scores.
+
+        Args:
+            method: The fitted probe.
+            metric_values: Its score under every metric the config names.
+            index: The location's row in the index.
+        """
         self._collect_cell(index, {metric.value: value for metric, value in metric_values.items()})
         self._probes[index] = method.probe
 

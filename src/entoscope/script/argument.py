@@ -6,10 +6,17 @@ from collections.abc import Sequence
 
 
 class DictAction(argparse.Action):
-    """Collect ``key:value`` tokens into a dict, converting each side with ``key_type``/``value_type``.
+    """Collects ``key:value`` tokens into a dict, converting each side with its own type.
 
-    Tokens split on the first ``:`` only, so values may contain colons. Each occurrence of the
-    option builds a fresh dict (the last one wins), leaving any default dict untouched.
+    Tokens split on the first ``:`` only, so values may contain colons. Each occurrence of the option
+    builds a fresh dict (the last one wins), leaving any default dict untouched.
+
+    Args:
+        option_strings: The option's flags, as argparse passes them.
+        dest: The attribute to store the dict in.
+        key_type: Converts each key.
+        value_type: Converts each value.
+        **kwargs: The remaining ``add_argument`` arguments.
     """
 
     def __init__(self, option_strings, dest, key_type=str, value_type=str, **kwargs):
@@ -33,11 +40,14 @@ class DictAction(argparse.Action):
 
 
 class TupleAction(argparse.Action):
-    """Collect values into a tuple, converting each position with its own type.
+    """Collects values into a tuple, converting each position with its own type.
 
-    ``element_types`` mirrors ``typing.get_args`` of a ``tuple`` annotation: ``(int, str)``
-    converts exactly two values positionally, ``(int, Ellipsis)`` converts any number of values
-    with ``int``.
+    Args:
+        option_strings: The option's flags, as argparse passes them.
+        dest: The attribute to store the tuple in.
+        element_types: ``typing.get_args`` of a ``tuple`` annotation: ``(int, str)`` converts exactly
+            two values positionally, and ``(int, Ellipsis)`` converts any number of values with ``int``.
+        **kwargs: The remaining ``add_argument`` arguments.
     """
 
     def __init__(self, option_strings, dest, element_types=(str, ...), **kwargs):
@@ -57,7 +67,14 @@ class TupleAction(argparse.Action):
 
 
 def _unwrap_optional(annotation: type) -> type:
-    """Reduce ``X | None`` to ``X``; leave any other annotation untouched."""
+    """Reduce ``X | None`` to ``X``.
+
+    Args:
+        annotation: A type annotation.
+
+    Returns:
+        ``X`` for ``X | None``, and any other annotation unchanged.
+    """
     if typing.get_origin(annotation) in {typing.Union, types.UnionType}:
         args = [arg for arg in typing.get_args(annotation) if arg is not type(None)]
         if len(args) == 1:
@@ -68,14 +85,21 @@ def _unwrap_optional(annotation: type) -> type:
 def build_parser(config_cls: type, description: str | None = None) -> argparse.ArgumentParser:
     """Build an ``ArgumentParser`` with one ``--field-name`` option per dataclass field.
 
-    Type, default, and required-ness are derived from the field itself; anything argparse-specific
-    that cannot be derived (``help``, ``choices``, ...) is read from ``field.metadata`` and
-    overrides the derived kwargs. ``list[X]`` fields become ``nargs="*"`` options whose values are
-    converted with ``X``; ``dict[K, V]`` fields become ``nargs="*"`` options taking ``key:value``
-    tokens (see ``DictAction``); ``tuple[X, Y]`` fields take exactly that many values converted
-    per position, and ``tuple[X, ...]`` any number (see ``TupleAction``). Fields with a default
-    get ``(default: ...)`` appended to their help text; put ``%(default)s`` in the metadata help
-    to control its placement instead.
+    Type, default and required-ness are derived from the field itself, and anything argparse-specific
+    that cannot be derived (``help``, ``choices``, ...) is read from ``field.metadata`` and overrides
+    the derived arguments. ``list[X]`` fields become ``nargs="*"`` options whose values are converted
+    with ``X``, ``dict[K, V]`` fields ``nargs="*"`` options taking ``key:value`` tokens (see
+    ``DictAction``), ``tuple[X, Y]`` fields take exactly that many values converted per position, and
+    ``tuple[X, ...]`` any number (see ``TupleAction``). Fields with a default get ``(default: ...)``
+    appended to their help text. Put ``%(default)s`` in the metadata help to control its placement
+    instead.
+
+    Args:
+        config_cls: The config dataclass.
+        description: The parser's description.
+
+    Returns:
+        The parser.
     """
     parser = argparse.ArgumentParser(description=description)
     hints = typing.get_type_hints(config_cls)
@@ -117,6 +141,15 @@ def build_parser(config_cls: type, description: str | None = None) -> argparse.A
 
 
 def parse_config(config_cls: type, argv: Sequence[str] | None = None, description: str | None = None):
-    """Parse ``argv`` (``sys.argv[1:]`` when ``None``) into an instance of ``config_cls``."""
+    """Parse a command line into a config.
+
+    Args:
+        config_cls: The config dataclass.
+        argv: The arguments, ``sys.argv[1:]`` when ``None``.
+        description: The parser's description, shown by ``--help``.
+
+    Returns:
+        An instance of ``config_cls``.
+    """
     parser = build_parser(config_cls, description)
     return config_cls(**vars(parser.parse_args(argv)))

@@ -10,14 +10,26 @@ from entoscope.operation.registry import RegistryFactory
 class LensMethodFactory(RegistryFactory[AbstractLensMethod]):
     """Resolves the lens a config's ``method.type`` names and builds it for a run.
 
-    It holds ``logit_lens``, ``tuned_lens``, ``parameter_lens`` and every lens registered with ``register``.
-    ``create`` builds the lens once per run, from the model and the config.
+    It holds ``logit_lens``, ``tuned_lens``, ``parameter_lens`` and every lens registered with
+    ``register``.
     """
 
     kind = "lens method"
 
     @classmethod
     def create(cls, model: Model, config: LensConfig) -> AbstractLensMethod:
+        """Build the lens a config names, once per run.
+
+        Args:
+            model: The model the lens reads.
+            config: The run's config, whose ``method.type`` names the lens.
+
+        Returns:
+            The lens.
+
+        Raises:
+            ValueError: If no lens is registered under the name, or the lens rejects the config.
+        """
         return cls.get(config.method.type)(model, config)
 
 

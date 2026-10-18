@@ -17,14 +17,23 @@ from entoscope.util.collections import broadcast_length, zip_broadcast
 class PatchingInput(OperationInput):
     """The two prompts a patching run sits between, and the tokens its metrics compare.
 
-    The target run is the one patched; the source run is what ``replace`` and ``value_scale`` read.
-    ``source_prompt`` may be ``None`` when no element reads it, and then ``kl_divergence`` and
-    ``normalized``, which score against the source run, are unavailable.
+    The target run is the one patched, and the source run is what ``replace`` and ``value_scale`` read.
+    A left-unset answer token only means something while the two prompts disagree, so a pair that
+    predicts the same token is rejected by the difference metrics.
 
-    ``correct_token`` is the ``r`` and ``distractor_token`` the ``r'`` of the metrics: a string that
-    tokenizes to a single token, or a token id. Left unset, the correct token is the source run's own
-    prediction and the distractor the target run's, which only means something while the two prompts
-    disagree - a pair that predicts the same token is rejected by the difference metrics.
+    Attributes:
+        config: The patching config.
+        source_prompt: The prompt patched from. ``None`` when no element reads it, and then
+            ``kl_divergence`` and ``normalized``, which score against the source run, are unavailable.
+        target_prompt: The prompt patched into.
+        correct_token: The ``r`` of the metrics, a string that tokenizes to a single token or a token id.
+            Unset, it is what the source run predicts.
+        distractor_token: The ``r'`` of the metrics, a string that tokenizes to a single token or a token
+            id. Unset, it is what the target run predicts.
+
+    Raises:
+        ValueError: If the config has no patch element, names a patch type, metric or comparison nothing
+            implements, or reads or scores against the source run without a source prompt.
     """
 
     config: PatchingConfig
@@ -88,11 +97,21 @@ class PatchingInput(OperationInput):
     def prepare(self, model: Model, batch_size: int = 1) -> "PatchingInput":
         """Run both prompts, caching what the index reads, as wide as the patched runs will be.
 
-        ``batch_size`` is how many rows each patched run holds. A backend may round differently at
-        different batch shapes - MPS does, by up to half a logit in bfloat16 - so a patched run has
-        to be compared with, and patched from, runs of its own shape: only then does a patch that
-        writes back what was there reproduce the target run exactly. Each prompt is therefore run
-        ``batch_width`` copies abreast and kept at its first row.
+        A backend may round differently at different batch shapes (MPS does, by up to half a logit in
+        bfloat16), so a patched run has to be compared with, and patched from, runs of its own shape:
+        only then does a patch that writes back what was there reproduce the target run exactly. Each
+        prompt is therefore run ``batch_width`` copies abreast and kept at its first row.
+
+        Args:
+            model: The model to run.
+            batch_size: How many patched runs each forward pass holds.
+
+        Returns:
+            The input itself, prepared in place.
+
+        Raises:
+            ValueError: If the answer tokens cannot be resolved, or resolve to the same token while a
+                difference metric is asked for.
         """
         self.prepare_index(model)
 
@@ -134,15 +153,22 @@ class PatchingInput(OperationInput):
         return logits, cache
 
     def rows(self) -> list[tuple]:
-        """The index's rows as a run patches them: one group of elements per patched run, in result row order."""
+        """Group the index's rows as a run patches them.
+
+        Returns:
+            One tuple per patched run, in result row order, holding that run's row of every element.
+        """
         return zip_broadcast(*self.index)
 
     def activation_names(self) -> list[str]:
-        """Every activation the run touches, on either side of the patch.
+        """Name every activation the run touches, on either side of the patch.
 
-        The target's own names are read only by the gradient methods, which need the clean
-        activation a patch would overwrite and the value they interpolate towards; the two sides
-        name the same activation in the common case, so caching both usually costs nothing.
+        The target's own names are read only by the gradient methods, which need the clean activation a
+        patch would overwrite and the value they interpolate towards. The two sides name the same
+        activation in the common case, so caching both usually costs nothing.
+
+        Returns:
+            The hook names, sorted.
         """
         names: set[str] = set()
         for idx in self.index:
@@ -150,14 +176,23 @@ class PatchingInput(OperationInput):
         return sorted(names)
 
     def target_activation_names(self) -> list[str]:
+        """Name every activation a patch writes.
+
+        Returns:
+            The hook names, sorted.
+        """
         return sorted(set().union(*(idx.target_activation_names() for idx in self.index))) if self.index else []
 
     def _check_available(self) -> None:
-        """Name every element's strategies, metric and comparison, then reject those needing a missing source run.
+        """Resolve every element's strategies, metric and comparison, and reject those needing a missing source run.
 
-        Resolved as the input is built, so a config naming something no strategy or metric implements fails
-        before a model is involved. Each is collected into a dict, so a type or comparison named several times
-        is reported once.
+        Resolved as the input is built, so a config naming something no strategy or metric implements
+        fails before a model is involved. Each is collected into a dict, so a type or comparison named
+        several times is reported once.
+
+        Raises:
+            ValueError: If something named is not implemented, or needs the source run without a source
+                prompt.
         """
         if not self.config.patch:
             raise ValueError("A patching run needs at least one patch element")
@@ -213,56 +248,67 @@ class PatchingInput(OperationInput):
 
     @property
     def source_tokens(self) -> Int[torch.Tensor, "batch pos"]:
+        """The source prompt's tokens, once the index is prepared."""
         assert self._source_tokens is not None
         return self._source_tokens
 
     @property
     def target_tokens(self) -> Int[torch.Tensor, "batch pos"]:
+        """The target prompt's tokens, once the index is prepared."""
         assert self._target_tokens is not None
         return self._target_tokens
 
     @property
     def source_logits(self) -> Float[torch.Tensor, "batch pos d_vocab"]:
+        """The unpatched source run's logits, once the input is prepared."""
         assert self._source_logits is not None
         return self._source_logits
 
     @property
     def target_logits(self) -> Float[torch.Tensor, "batch pos d_vocab"]:
+        """The unpatched target run's logits, once the input is prepared."""
         assert self._target_logits is not None
         return self._target_logits
 
     @property
     def source_generation(self) -> int:
+        """The token the unpatched source run predicts, once the input is prepared."""
         assert self._source_generation is not None
         return self._source_generation
 
     @property
     def target_generation(self) -> int:
+        """The token the unpatched target run predicts, once the input is prepared."""
         assert self._target_generation is not None
         return self._target_generation
 
     @property
     def correct_token_id(self) -> int:
+        """The id of the correct token ``r``, once the input is prepared."""
         assert self._correct_token_id is not None
         return self._correct_token_id
 
     @property
     def distractor_token_id(self) -> int:
+        """The id of the distractor token ``r'``, once the input is prepared."""
         assert self._distractor_token_id is not None
         return self._distractor_token_id
 
     @property
     def source_cache(self) -> ActivationCache:
+        """The source run's activations, once the input is prepared."""
         assert self._source_cache is not None
         return self._source_cache
 
     @property
     def target_cache(self) -> ActivationCache:
+        """The target run's activations, once the input is prepared."""
         assert self._target_cache is not None
         return self._target_cache
 
     @property
     def index(self) -> list[Index[PatchingElementConfig]]:
+        """One index per patch element, once the index is prepared."""
         assert self._index is not None
         return self._index
 
@@ -273,18 +319,42 @@ class PatchingInput(OperationInput):
 
     @property
     def batch_width(self) -> int:
-        """How many rows every patched run holds - the width the cached runs were made at."""
+        """How many rows every patched run holds, the width the cached runs were made at."""
         assert self._batch_width is not None
         return self._batch_width
 
     def source_baseline(self, metric: PatchingMetric) -> torch.Tensor:
+        """Read a metric off the unpatched source run.
+
+        Args:
+            metric: The metric.
+
+        Returns:
+            The metric's value, computed once.
+        """
         return self._baseline("source", metric)
 
     def target_baseline(self, metric: PatchingMetric) -> torch.Tensor:
+        """Read a metric off the unpatched target run.
+
+        Args:
+            metric: The metric.
+
+        Returns:
+            The metric's value, computed once.
+        """
         return self._baseline("target", metric)
 
     def _baseline(self, run: str, metric: PatchingMetric) -> torch.Tensor:
-        """``metric`` on one of the two unpatched runs - what a patched run is reported against."""
+        """Read a metric off one of the two unpatched runs, which a patched run is reported against.
+
+        Args:
+            run: ``"source"`` or ``"target"``.
+            metric: The metric.
+
+        Returns:
+            The metric's value, computed once.
+        """
         if (run, metric) not in self._baselines:
             logits = self.source_logits if run == "source" else self.target_logits
             self._baselines[(run, metric)] = AbstractMetric.get(metric).compute(self, logits[0, -1])
@@ -292,15 +362,21 @@ class PatchingInput(OperationInput):
 
     @property
     def source_probabilities(self) -> torch.Tensor:
+        """The unpatched source run's next-token distribution, which ``kl_divergence`` scores against."""
         if self._source_probabilities is None:
             self._source_probabilities = self.source_logits[0, -1].softmax(dim=-1)
         return self._source_probabilities
 
     def noise_scale(self, name: str) -> torch.Tensor:
-        """The standard deviation ``gaussian_noise`` draws at for activation ``name``.
+        """Find the standard deviation ``gaussian_noise`` draws at for an activation.
 
-        Three times the target run's own spread there, as in causal tracing (Meng et al. 2022), and
-        measured once per activation rather than once per row that noises it.
+        Measured once per activation rather than once per row that noises it.
+
+        Args:
+            name: The activation's hook name.
+
+        Returns:
+            Three times the target run's own spread there, as in causal tracing (Meng et al. 2022).
         """
         if name not in self._noise_scales:
             self._noise_scales[name] = 3 * self.target_cache[name].std()

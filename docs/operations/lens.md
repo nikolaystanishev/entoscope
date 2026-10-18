@@ -22,10 +22,10 @@ from entoscope import (
     LensConfig,
     LensInput,
     LensMethodConfig,
+    ModelAxis,
     ModelLayerLocation,
-    ModelLocation,
+    ModelLocatorConfig,
 )
-from entoscope.model.config import ModelLocatorConfig
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
@@ -36,7 +36,7 @@ config = LensConfig(
     top_k=5,
     source=ModelLocatorConfig(
         activation=ModelLayerLocation.ATTENTION_Z,
-        location=[ModelLocation.LAYER, ModelLocation.HEAD, ModelLocation.POSITION],
+        location=[ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.POSITION],
         filter=Filter.from_config([{"position": -1}]),
     ),
 )
@@ -101,7 +101,7 @@ tuned = LensConfig(
     top_k=5,
     source=ModelLocatorConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        location=[ModelAxis.LAYER, ModelAxis.POSITION],
     ),
 )
 Lens(model).apply(LensInput(tuned, "The capital of France is"), save_dir="runs/tuned")
@@ -134,7 +134,7 @@ values = LensConfig(
     top_k=5,
     source=ModelLocatorConfig(
         activation=ModelLayerLocation.MLP_POST,
-        location=[ModelLocation.LAYER, ModelLocation.NEURON],
+        location=[ModelAxis.LAYER, ModelAxis.NEURON],
         filter=Filter.from_config([{"neuron": 373}]),
     ),
 )

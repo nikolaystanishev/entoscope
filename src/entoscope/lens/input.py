@@ -16,9 +16,14 @@ from entoscope.operation.input import OperationInput
 class LensInput(OperationInput):
     """A lens config and the prompt it reads.
 
-    ``prompt`` is ``None`` exactly when the lens reads the model's weights rather than its activations,
-    as ``parameter_lens`` does; either mismatch is rejected as the input is built, before a model is
-    involved.
+    Attributes:
+        config: The lens config.
+        prompt: The prompt whose activations the lens reads, ``None`` exactly when the lens reads the
+            model's weights instead, as ``parameter_lens`` does.
+
+    Raises:
+        ValueError: If the prompt is missing for a lens that reads activations, or given to one that
+            reads weights.
     """
 
     config: LensConfig
@@ -65,16 +70,19 @@ class LensInput(OperationInput):
 
     @property
     def tokens(self) -> Int[torch.Tensor, "batch pos"]:
+        """The prompt's tokens, once the index is prepared."""
         assert self._tokens is not None
         return self._tokens
 
     @property
     def cache(self) -> ActivationCache:
+        """The activations the index reads, once the input is prepared."""
         assert self._cache is not None
         return self._cache
 
     @property
     def index(self) -> Index[ModelLocatorConfig]:
+        """The rows the lens reads, once the index is prepared."""
         assert self._index is not None
         return self._index
 

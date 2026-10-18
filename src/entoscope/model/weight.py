@@ -36,12 +36,23 @@ ACTIVATION_WEIGHT: dict[ModelLayerLocation, ModelWeight] = {
 
 
 def activation_weight(model: Model, activation: ModelLayerLocation, layer: int) -> Float[torch.Tensor, "... d_model"]:
-    """The weight ``ACTIVATION_WEIGHT`` names for ``activation``, as ``model_weight`` returns it.
+    """Read the weight ``ACTIVATION_WEIGHT`` names for ``activation``.
 
     That is the weight computing the activation off the residual stream, or, for one other activations
-    compute (``attn.z``, ``mlp.post``), the weight writing it back. A gated MLP computes ``mlp.pre`` with its
-    gate and ``mlp.pre_linear`` with ``W_in``; any other MLP computes ``mlp.pre`` with ``W_in`` and has no
-    ``mlp.pre_linear``.
+    compute (``attn.z``, ``mlp.post``), the weight writing it back. A gated MLP computes ``mlp.pre`` with
+    its gate and ``mlp.pre_linear`` with ``W_in``, and any other MLP computes ``mlp.pre`` with ``W_in``
+    and has no ``mlp.pre_linear``.
+
+    Args:
+        model: The model to read.
+        activation: An activation ``ACTIVATION_WEIGHT`` maps.
+        layer: The block to read the weight of.
+
+    Returns:
+        The weight, as ``model_weight`` returns it.
+
+    Raises:
+        ValueError: If ``activation`` is ``mlp.pre_linear`` on a model without a gated MLP.
     """
     name = ACTIVATION_WEIGHT[activation]
     if not model.cfg.gated_mlp:
@@ -56,10 +67,23 @@ def activation_weight(model: Model, activation: ModelLayerLocation, layer: int) 
 
 
 def model_weight(model: Model, name: ModelWeight, layer: int | None = None) -> Float[torch.Tensor, "... d_model"]:
-    """``name`` as one ``d_model`` vector per unit it reads or writes, whichever side of the residual stream it is on.
+    """Read a weight as one ``d_model`` vector per unit it reads or writes.
 
-    ``[d_vocab, d_model]`` for the embedding and unembedding, ``[d_mlp, d_model]`` for an MLP weight and
-    ``[head, d_head, d_model]`` for an attention one. ``layer`` names the block of every weight but those two.
+    The layout is the same whichever side of the residual stream the weight is on, and whichever
+    backend holds it, so a lens can read every weight the same way.
+
+    Args:
+        model: The model to read.
+        name: The weight.
+        layer: The block to read, for every weight but the embedding and unembedding.
+
+    Returns:
+        ``[d_vocab, d_model]`` for the embedding and unembedding, ``[d_mlp, d_model]`` for an MLP weight
+        and ``[head, d_head, d_model]`` for an attention one.
+
+    Raises:
+        ValueError: If a block's weight is read without a ``layer``, or ``W_gate`` on a model without a
+            gated MLP.
     """
     match name:
         case ModelWeight.EMBED:
@@ -83,14 +107,24 @@ def _block(name: ModelWeight, layer: int | None) -> int:
 
 
 def _mlp_weight(model: Model, layer: int, name: ModelWeight) -> torch.Tensor:
-    """A block's MLP weight in HookedTransformer's orientation.
+    """Read a block's MLP weight in HookedTransformer's orientation.
 
-    ``W_in`` and ``W_gate`` come back as ``[d_model, d_mlp]`` and ``W_out`` as ``[d_mlp, d_model]``.
     On a bridge the weight is read off the wrapped module's parameter, whose layout its type fixes:
     ``nn.Linear`` stores ``[out, in]`` while GPT-2's ``Conv1D`` stores ``[in, out]``, so only the
     former needs transposing. The bridge's own ``W_in``-style aliases are no help: transformer-lens has
     returned an ``nn.Linear`` weight through them in either orientation, depending on the release.
     ``enable_compatibility_mode`` processes the parameter in place, so the processed weights come back.
+
+    Args:
+        model: The model to read.
+        layer: The block.
+        name: ``W_in``, ``W_gate`` or ``W_out``.
+
+    Returns:
+        ``[d_model, d_mlp]`` for ``W_in`` and ``W_gate``, ``[d_mlp, d_model]`` for ``W_out``.
+
+    Raises:
+        ValueError: If ``W_gate`` is read on a model without a gated MLP.
     """
     if name is ModelWeight.MLP_GATE and not model.cfg.gated_mlp:
         raise ValueError("This model's MLP has no gate, so it has no 'W_gate'")
@@ -104,12 +138,19 @@ def _mlp_weight(model: Model, layer: int, name: ModelWeight) -> torch.Tensor:
 
 
 def _attention_out_weight(model: Model, layer: int) -> torch.Tensor:
-    """A block's ``W_O`` in HookedTransformer's orientation, ``[head, d_head, d_model]``.
+    """Read a block's ``W_O`` in HookedTransformer's orientation.
 
     A bridge picks its reshape by reading the layout off the matrix shape, and ``W_O`` is square
-    whenever ``d_model == n_heads * d_head`` - so on the architectures ``_mlp_weight`` describes it
+    whenever ``d_model == n_heads * d_head``, so on the architectures ``_mlp_weight`` describes it
     takes the ``Conv1D`` branch and skips the transpose ``nn.Linear`` needs. Rebuilding from the
     parameter also covers the non-square case, where the bridge's reading is already right.
+
+    Args:
+        model: The model to read.
+        layer: The block.
+
+    Returns:
+        ``[head, d_head, d_model]``.
     """
     attn = model.blocks[layer].attn
     out = attn._modules.get("o") if is_bridge(model) else None

@@ -8,11 +8,14 @@ from entoscope.model.weight import ModelWeight, model_weight
 
 
 class _BridgeUnembed(Unembed):
-    """``Unembed`` built from a bridge's own tensors.
+    """A tuned-lens ``Unembed`` built from a bridge's own tensors.
 
     ``Unembed.__init__`` reaches the model through ``tuned_lens.model_surgery``, which dispatches
-    on ``HookedTransformer`` and ``PreTrainedModel``; a bridge is neither, and its ``original_model``
+    on ``HookedTransformer`` and ``PreTrainedModel``. A bridge is neither, and its ``original_model``
     carries the unprocessed HuggingFace weights rather than the ones the bridge reads.
+
+    Args:
+        model: A ``TransformerBridge``.
     """
 
     def __init__(self, model: Model):
@@ -27,5 +30,13 @@ class _BridgeUnembed(Unembed):
 
 
 def build_unembed(model: Model) -> Unembed:
+    """Build the final norm and unembedding a tuned lens reads a residual stream through.
+
+    Args:
+        model: The model, wrapped in a ``CachedModel`` or not.
+
+    Returns:
+        A frozen tuned-lens ``Unembed`` holding the model's final norm and unembedding.
+    """
     transformer = unwrap(model)
     return _BridgeUnembed(transformer) if is_bridge(transformer) else Unembed(transformer)

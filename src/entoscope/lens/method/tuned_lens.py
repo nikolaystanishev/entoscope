@@ -24,6 +24,17 @@ _RESIDUAL_STATES = (
 
 
 def resource_id(model: Model) -> str:
+    """Name the pretrained tuned lens that belongs to a model.
+
+    Args:
+        model: The model.
+
+    Returns:
+        The model's tokenizer name, or its model name when it has no tokenizer name.
+
+    Raises:
+        ValueError: If the model has neither.
+    """
     resource = model.cfg.tokenizer_name or model.cfg.model_name
     if not resource:
         raise ValueError(
@@ -34,10 +45,21 @@ def resource_id(model: Model) -> str:
 
 
 def load_translators(model: Model, resource: str) -> torch.nn.ModuleList:
-    """Pretrained translators for ``resource`` - a directory, or a resource id on the hub space.
+    """Load the pretrained translators of a tuned lens.
 
-    Checked against the model they translate for and placed on its device and dtype, which is why a lens
-    loads its own rather than sharing them across models.
+    They are checked against the model they translate for and placed on its device and dtype, which is
+    why a lens loads its own rather than sharing them across models.
+
+    Args:
+        model: The model the translators translate for.
+        resource: A local directory holding ``config.json`` and ``params.pt``, or a resource id on the
+            tuned-lens hub space.
+
+    Returns:
+        One frozen translator per residual state but the last.
+
+    Raises:
+        ValueError: If the translators were trained for a model of another depth or width.
     """
     lens = PretrainedTunedLens.from_unembed_and_pretrained(build_unembed(model), resource)
     if lens.config.d_model != model.cfg.d_model or lens.config.num_hidden_layers != model.cfg.n_layers:
@@ -51,14 +73,28 @@ def load_translators(model: Model, resource: str) -> torch.nn.ModuleList:
 
 @dataclass(kw_only=True)
 class TunedLensConfig(LensMethodConfig):
-    """``translators`` picks the pretrained translators: a resource id on the tuned-lens hub space or a
-    local directory holding ``config.json`` and ``params.pt``. Unset, the model's own name is used."""
+    """The method config of ``tuned_lens``.
+
+    Attributes:
+        translators: The pretrained translators, a resource id on the tuned-lens hub space or a local
+            directory holding ``config.json`` and ``params.pt``. Unset, the model's own name is used.
+    """
 
     translators: str | None = None
 
 
 class TunedLens(LogitLens[TunedLensConfig]):
-    """The logit lens with each residual state's trained translator applied before the model's read-out."""
+    """The logit lens with each residual state's trained translator applied before the model's read-out.
+
+    The translators are loaded the first time an element is projected.
+
+    Args:
+        model: The model the lens reads.
+        config: The run's config.
+
+    Raises:
+        ValueError: If no translators are named and the model has no name to find them by.
+    """
 
     def __init__(self, model: Model, config: LensConfig):
         super().__init__(model, config)
@@ -66,6 +102,7 @@ class TunedLens(LogitLens[TunedLensConfig]):
 
     @cached_property
     def translators(self) -> torch.nn.ModuleList:
+        """The pretrained translators, one per residual state but the last."""
         return load_translators(self.model, self.resource)
 
     def _query_key_logits(
@@ -101,11 +138,16 @@ class TunedLens(LogitLens[TunedLensConfig]):
         return transformed
 
     def _translator_index(self, index: IndexElement[ModelLocatorConfig]) -> int | None:
-        """The translator of the residual state the element is, or the one it writes into.
+        """Find the translator of the residual state the element is, or the one it writes into.
 
         Translators are indexed by residual state, as in the model's hidden states: state ``l`` is
         ``resid.pre`` of layer ``l``, and everything layer ``l`` writes lands in state ``l + 1``.
-        The last state is the one the model unembeds itself, so it needs no translation.
+
+        Args:
+            index: The element.
+
+        Returns:
+            The translator's index, or ``None`` for the last state, which the model unembeds itself.
         """
         if index.activation() is ModelLayerLocation.EMBEDDING:
             return 0

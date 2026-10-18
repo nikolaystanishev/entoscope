@@ -18,12 +18,12 @@ from entoscope import (
     LensConfig,
     LensInput,
     LensMethodConfig,
+    ModelAxis,
     ModelLayerLocation,
-    ModelLocation,
+    ModelLocatorConfig,
 )
 from entoscope.lens import LensMethodFactory
 from entoscope.lens.method.logit_lens import LogitLens
-from entoscope.model.config import ModelLocatorConfig
 
 
 # 1. The method's settings, as a dataclass extending the operation's method config.
@@ -46,7 +46,7 @@ config = LensConfig(
     method=TemperatureLensConfig(type="temperature_lens", temperature=2.0),
     top_k=5,
     source=ModelLocatorConfig(
-        activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelLocation.LAYER, ModelLocation.POSITION]
+        activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelAxis.LAYER, ModelAxis.POSITION]
     ),
 )
 Lens(model).apply(LensInput(config, "The capital of France is"), save_dir="runs/warm")

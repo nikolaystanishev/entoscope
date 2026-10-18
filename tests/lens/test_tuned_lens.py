@@ -18,7 +18,7 @@ from entoscope.lens.input import LensInput
 from entoscope.lens.lens import Lens
 from entoscope.lens.method import tuned_lens
 from entoscope.lens.method.tuned_lens import TunedLensConfig
-from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.config import Filter, ModelAxis, ModelLayerLocation, ModelLocatorConfig
 from entoscope.model.unembed import build_unembed
 
 from ..conftest import build_small_model, forbid_model_runs
@@ -119,7 +119,7 @@ def test_a_declarative_residual_state_is_translated_by_the_translator_of_its_sta
     method = TunedLensConfig(type="tuned_lens", translators=translators["scaled"])
     declarative = declarative_config(
         ModelLayerLocation.RESIDUAL_PRE,
-        [ModelLocation.LAYER, ModelLocation.POSITION],
+        [ModelAxis.LAYER, ModelAxis.POSITION],
         method=method,
         filter=Filter.from_config([{"layer": 3, "position": -1}]),
     )
@@ -195,7 +195,7 @@ def test_a_declarative_run_reads_every_layer_through_its_own_translator(model, a
     logits, _ = activations
     config = declarative_config(
         ModelLayerLocation.RESIDUAL_POST,
-        [ModelLocation.LAYER, ModelLocation.POSITION],
+        [ModelAxis.LAYER, ModelAxis.POSITION],
         method=TunedLensConfig(type="tuned_lens", translators="gpt2"),
         filter=Filter.from_config([{"position": -1}]),
     )
@@ -283,9 +283,9 @@ def test_a_yaml_tuned_lens_config_runs(model, config_from_yaml):
         source=ModelLocatorConfig(
             coordinates=[
                 {
-                    ModelLocation.ACTIVATION: ModelLayerLocation.RESIDUAL_POST,
-                    ModelLocation.LAYER: -1,
-                    ModelLocation.POSITION: -1,
+                    ModelAxis.ACTIVATION: ModelLayerLocation.RESIDUAL_POST,
+                    ModelAxis.LAYER: -1,
+                    ModelAxis.POSITION: -1,
                 }
             ]
         ),

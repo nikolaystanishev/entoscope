@@ -11,10 +11,11 @@ from entoscope.util.collections import batch_generator
 
 
 class ExactPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
-    """Patch and run the model, once per index row.
+    """Patches and runs the model, once per index row.
 
-    The reference the other methods approximate: nothing is assumed about how the model responds
-    to the intervention, at the price of a forward pass per row.
+    The reference the other methods approximate: nothing is assumed about how the model responds to the
+    intervention, at the price of a forward pass per row. Its last batch is padded to the full width, so
+    every patched run has the shape the cached runs were made at.
     """
 
     batched = True

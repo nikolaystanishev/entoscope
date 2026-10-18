@@ -8,6 +8,18 @@ from entoscope.script.argument import parse_config
 
 
 def _config_class(func: Callable) -> type | None:
+    """Find the config dataclass an experiment function takes.
+
+    Args:
+        func: The experiment function.
+
+    Returns:
+        The annotation of its first parameter, or ``None`` when it takes no parameter.
+
+    Raises:
+        TypeError: If the first parameter is unannotated, keyword-only or not a dataclass, or a later one
+            is required.
+    """
     params = list(inspect.signature(func).parameters.values())
     if not params:
         return None
@@ -31,16 +43,29 @@ def _config_class(func: Callable) -> type | None:
 
 
 def experiment(func: Callable | None = None, *, description: str | None = None) -> Callable:
-    """Turn ``main(config: Config)`` into a CLI entry point.
+    """Turn ``main(config: Config)`` into a command-line entry point.
 
     The config dataclass is taken from the first parameter's annotation and its fields become
-    ``--field-name`` options (see ``entoscope.script.argument.build_parser``). The parser description
-    is ``description`` if given, else a module-level ``DESCRIPTION``, else the function docstring.
+    ``--field-name`` options (see ``entoscope.script.argument.build_parser``). When the decorated
+    function lives in the ``__main__`` module it runs immediately at decoration time, so the config
+    class and ``DESCRIPTION`` must be defined above it in the script.
 
-    When the decorated function lives in the ``__main__`` module it runs immediately at decoration
-    time, so the config class and ``DESCRIPTION`` must be defined above it in the script. The
-    returned wrapper stays callable with an explicit config (``main(Config(...))``) or a custom
-    argv (``main(argv=[...])``), which bypasses/feeds the parser respectively.
+    Usable bare, ``@experiment``, or with arguments, ``@experiment(description=...)``.
+
+    Args:
+        func: The experiment function, when used bare.
+        description: The parser's description. Defaults to a module-level ``DESCRIPTION``, else the
+            function's docstring.
+
+    Returns:
+        The wrapped function, or a decorator when called with arguments only. The wrapper parses the
+        command line into a config and calls the function with it. It stays callable with an explicit
+        config, ``main(Config(...))``, which bypasses the parser, or with ``main(argv=[...])``, which
+        feeds it.
+
+    Raises:
+        TypeError: If the function's first parameter is not a config dataclass, or it has another
+            required parameter.
     """
 
     def wrap(fn: Callable) -> Callable:

@@ -16,8 +16,8 @@ from entoscope.model.config import (
     Filter,
     Group,
     Incremental,
+    ModelAxis,
     ModelLayerLocation,
-    ModelLocation,
 )
 from entoscope.patching.config import (
     MetricComparison,
@@ -103,11 +103,11 @@ def _cell(value):
     return value
 
 
-def coordinates_of(index_df: pd.DataFrame, *locations: ModelLocation) -> list[tuple]:
+def coordinates_of(index_df: pd.DataFrame, *locations: ModelAxis) -> list[tuple]:
     return [tuple(_cell(row[location]) for location in locations) for _, row in index_df.iterrows()]
 
 
-def values_of(index_df: pd.DataFrame, location: ModelLocation) -> list:
+def values_of(index_df: pd.DataFrame, location: ModelAxis) -> list:
     return [coordinate[0] for coordinate in coordinates_of(index_df, location)]
 
 
@@ -140,13 +140,13 @@ def test_a_location_enumerates_the_model_dimension_it_names(
 
     index_df = planned(model, {"activation": activation, "location": [location]})
 
-    assert values_of(index_df, ModelLocation(location)) == list(range(axis_size(model)))
+    assert values_of(index_df, ModelAxis(location)) == list(range(axis_size(model)))
 
 
 def test_locations_form_a_cartesian_product(small_model, planned):
     index_df = planned(small_model, {"activation": "mlp.post", "location": ["layer", "neuron"]})
 
-    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.NEURON) == [
+    assert coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.NEURON) == [
         (layer, neuron) for layer in range(small_model.cfg.n_layers) for neuron in range(small_model.cfg.d_mlp)
     ]
 
@@ -154,9 +154,7 @@ def test_locations_form_a_cartesian_product(small_model, planned):
 def test_the_configured_activation_is_stamped_on_every_row(small_model, planned):
     index_df = planned(small_model, {"activation": "attn.out", "location": ["layer"]})
 
-    assert (
-        values_of(index_df, ModelLocation.ACTIVATION) == [ModelLayerLocation.ATTENTION_OUT] * small_model.cfg.n_layers
-    )
+    assert values_of(index_df, ModelAxis.ACTIVATION) == [ModelLayerLocation.ATTENTION_OUT] * small_model.cfg.n_layers
 
 
 def test_without_a_location_only_the_activation_is_left(small_model, planned):
@@ -164,7 +162,7 @@ def test_without_a_location_only_the_activation_is_left(small_model, planned):
     from_empty = planned(small_model, {"activation": "resid.post", "location": []})
     from_missing = planned(small_model, {"activation": "resid.post"})
 
-    assert list(from_empty.columns) == list(from_missing.columns) == [ModelLocation.ACTIVATION]
+    assert list(from_empty.columns) == list(from_missing.columns) == [ModelAxis.ACTIVATION]
     assert len(from_empty) == len(from_missing) == 1
 
 
@@ -192,7 +190,7 @@ def test_a_filter_narrows_a_single_axis(model, planned, filter_config, expected_
 
     index_df = planned(model, {"activation": "resid.post", "location": ["layer"], "filter": filter_config})
 
-    assert values_of(index_df, ModelLocation.LAYER) == expected_layers
+    assert values_of(index_df, ModelAxis.LAYER) == expected_layers
 
 
 def test_the_keys_within_a_filter_term_are_and_ed(small_model, planned):
@@ -200,7 +198,7 @@ def test_the_keys_within_a_filter_term_are_and_ed(small_model, planned):
         small_model, {"activation": "attn.z", "location": ["layer", "head"], "filter": [{"layer": 0, "head": 1}]}
     )
 
-    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.HEAD) == [(0, 1)]
+    assert coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.HEAD) == [(0, 1)]
 
 
 def test_filter_terms_are_or_ed_across_locations(small_model, planned):
@@ -209,7 +207,7 @@ def test_filter_terms_are_or_ed_across_locations(small_model, planned):
         small_model, {"activation": "attn.z", "location": ["layer", "head"], "filter": [{"layer": 0}, {"head": 1}]}
     )
 
-    assert set(coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.HEAD)) == {
+    assert set(coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.HEAD)) == {
         *((0, head) for head in range(small_model.cfg.n_heads)),
         *((layer, 1) for layer in range(small_model.cfg.n_layers)),
     }
@@ -220,7 +218,7 @@ def test_filter_terms_are_or_ed_across_locations(small_model, planned):
 # a grouped cell again. They run in that order, after the filter.
 # --------------------------------------------------------------------------------------------------
 def _layers(planned, model, **source) -> list:
-    return values_of(planned(model, {"activation": "resid.post", "location": ["layer"], **source}), ModelLocation.LAYER)
+    return values_of(planned(model, {"activation": "resid.post", "location": ["layer"], **source}), ModelAxis.LAYER)
 
 
 def test_group_collapses_the_listed_values_into_one_row(small_model, planned):
@@ -236,7 +234,7 @@ def test_group_drops_the_duplicate_rows_it_creates(small_model, planned):
     # Grouping one axis leaves one row per value of the other, not one per pair.
     index_df = planned(small_model, {"activation": "attn.z", "location": ["layer", "head"], "group": {"layer": "all"}})
 
-    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.HEAD) == [
+    assert coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.HEAD) == [
         (tuple(range(small_model.cfg.n_layers)), head) for head in range(small_model.cfg.n_heads)
     ]
 
@@ -244,7 +242,7 @@ def test_group_drops_the_duplicate_rows_it_creates(small_model, planned):
 def test_group_counts_a_negative_value_from_the_end_of_its_axis(small_model, planned):
     def heads(values: list[int]) -> list:
         index_df = planned(small_model, {"activation": "attn.z", "location": ["head"], "group": {"head": values}})
-        return values_of(index_df, ModelLocation.HEAD)
+        return values_of(index_df, ModelAxis.HEAD)
 
     n_heads = small_model.cfg.n_heads
 
@@ -264,7 +262,7 @@ def test_incremental_can_add_a_location_the_index_does_not_have(small_model, pla
         {"activation": "mlp.post", "location": ["layer"], "filter": [{"layer": 0}], "incremental": {"neuron": [4, 5]}},
     )
 
-    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.NEURON) == [(0, (4,)), (0, (4, 5))]
+    assert coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.NEURON) == [(0, (4,)), (0, (4, 5))]
 
 
 def test_incremental_counts_a_negative_value_from_the_end_of_its_axis(small_model, planned):
@@ -275,7 +273,7 @@ def test_incremental_counts_a_negative_value_from_the_end_of_its_axis(small_mode
             "filter": [{"head": 0}],
             "incremental": {"head": values},
         }
-        return values_of(planned(small_model, locator), ModelLocation.HEAD)
+        return values_of(planned(small_model, locator), ModelAxis.HEAD)
 
     last = small_model.cfg.n_heads - 1
 
@@ -293,7 +291,7 @@ def test_incremental_keeps_the_other_locations(model, planned):
         },
     )
 
-    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.HEAD) == [
+    assert coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.HEAD) == [
         (0, (0,)),
         (0, (0, 9)),
         (0, (1,)),
@@ -337,14 +335,14 @@ def test_coordinates_are_indexed_in_order(model, planned):
         model, {"activation": "resid.post", "coordinates": [{"layer": 2, "position": 1}, {"layer": 0, "position": 3}]}
     )
 
-    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.POSITION) == [(2, 1), (0, 3)]
-    assert values_of(index_df, ModelLocation.ACTIVATION) == [ModelLayerLocation.RESIDUAL_POST] * 2
+    assert coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.POSITION) == [(2, 1), (0, 3)]
+    assert values_of(index_df, ModelAxis.ACTIVATION) == [ModelLayerLocation.RESIDUAL_POST] * 2
 
 
 def test_coordinates_resolve_negative_values(model, planned):
     index_df = planned(model, {"activation": "mlp.post", "coordinates": [{"layer": -1, "neuron": -2}]})
 
-    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.NEURON) == [
+    assert coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.NEURON) == [
         (model.cfg.n_layers - 1, model.cfg.d_mlp - 2)
     ]
 
@@ -353,7 +351,7 @@ def test_a_coordinate_list_addresses_several_values_in_one_row(model, planned):
     # A list value addresses those elements together in one row; negatives resolve inside lists too.
     index_df = planned(model, {"activation": "resid.post", "coordinates": [{"layer": 1, "position": [0, -1]}]})
 
-    assert coordinates_of(index_df, ModelLocation.POSITION) == [((0, n_positions(model) - 1),)]
+    assert coordinates_of(index_df, ModelAxis.POSITION) == [((0, n_positions(model) - 1),)]
 
 
 def test_coordinates_carry_their_own_activation(model, planned):
@@ -362,12 +360,12 @@ def test_coordinates_carry_their_own_activation(model, planned):
     )
 
     # The activation column comes last, as index.csv writes it.
-    assert list(index_df.columns) == [ModelLocation.LAYER, ModelLocation.ACTIVATION]
-    assert values_of(index_df, ModelLocation.ACTIVATION) == [
+    assert list(index_df.columns) == [ModelAxis.LAYER, ModelAxis.ACTIVATION]
+    assert values_of(index_df, ModelAxis.ACTIVATION) == [
         ModelLayerLocation.RESIDUAL_POST,
         ModelLayerLocation.MLP_OUT,
     ]
-    assert values_of(index_df, ModelLocation.LAYER) == [0, model.cfg.n_layers - 1]
+    assert values_of(index_df, ModelAxis.LAYER) == [0, model.cfg.n_layers - 1]
 
 
 def test_a_negative_coordinate_resolves_against_its_own_activations_dimension(model, planned):
@@ -382,14 +380,14 @@ def test_a_negative_coordinate_resolves_against_its_own_activations_dimension(mo
         },
     )
 
-    assert values_of(index_df, ModelLocation.NEURON) == [model.cfg.d_head - 1, model.cfg.d_mlp - 1]
+    assert values_of(index_df, ModelAxis.NEURON) == [model.cfg.d_head - 1, model.cfg.d_mlp - 1]
 
 
 def test_an_empty_coordinate_list_yields_no_rows(model, planned):
     index_df = planned(model, {"activation": "resid.post", "coordinates": []})
 
     assert len(index_df) == 0
-    assert ModelLocation.ACTIVATION in index_df.columns
+    assert ModelAxis.ACTIVATION in index_df.columns
 
 
 # --------------------------------------------------------------------------------------------------
@@ -406,11 +404,11 @@ def test_a_code_built_locator_plans_the_index_its_config_file_twin_does(model, p
     }
     typed = PatchingElementConfig(
         activation=ModelLayerLocation.ATTENTION_Z,
-        location=[ModelLocation.LAYER, ModelLocation.HEAD],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: [0, 1]}], exclusion_terms=[{ModelLocation.HEAD: 0}]),
-        group=Group({ModelLocation.HEAD: "all"}),
-        incremental=Incremental({ModelLocation.NEURON: [-1]}),
-        combination=Combination(location=[ModelLocation.HEAD], max_elements=2),
+        location=[ModelAxis.LAYER, ModelAxis.HEAD],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: [0, 1]}], exclusion_terms=[{ModelAxis.HEAD: 0}]),
+        group=Group({ModelAxis.HEAD: "all"}),
+        incremental=Incremental({ModelAxis.NEURON: [-1]}),
+        combination=Combination(location=[ModelAxis.HEAD], max_elements=2),
         type=PatchingType.REPLACE,
     )
 
@@ -423,7 +421,7 @@ def test_a_code_built_locator_plans_the_index_its_config_file_twin_does(model, p
 
 
 def test_a_code_built_locator_rejects_a_location_it_does_not_know():
-    with pytest.raises(ValueError, match="'layers' is not a valid ModelLocation"):
+    with pytest.raises(ValueError, match="'layers' is not a valid ModelAxis"):
         PatchingElementConfig(activation="resid.post", location=["layers"], type=PatchingType.REPLACE)
 
 
@@ -456,7 +454,7 @@ def test_a_position_stays_symbolic_when_the_prompt_length_varies(
         small_model, {"activation": "resid.post", "location": ["position"], "filter": filter_config}
     )
 
-    assert values_of(index_df, ModelLocation.POSITION) == expected_positions
+    assert values_of(index_df, ModelAxis.POSITION) == expected_positions
 
 
 def test_a_symbolic_position_keeps_the_other_locations(small_model, planned_symbolic):
@@ -464,7 +462,7 @@ def test_a_symbolic_position_keeps_the_other_locations(small_model, planned_symb
         small_model, {"activation": "resid.post", "location": ["layer", "position"], "filter": [{"position": -1}]}
     )
 
-    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.POSITION) == [
+    assert coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.POSITION) == [
         (layer, -1) for layer in range(small_model.cfg.n_layers)
     ]
 
@@ -475,7 +473,7 @@ def test_a_known_prompt_length_resolves_a_negative_position(small_model, planned
         small_model, {"activation": "resid.post", "location": ["position"], "filter": [{"position": -1}]}
     )
 
-    assert values_of(index_df, ModelLocation.POSITION) == [n_positions(small_model) - 1]
+    assert values_of(index_df, ModelAxis.POSITION) == [n_positions(small_model) - 1]
 
 
 def test_symbolic_coordinates_keep_their_signs(small_model, planned_symbolic):
@@ -484,7 +482,7 @@ def test_symbolic_coordinates_keep_their_signs(small_model, planned_symbolic):
         {"activation": "resid.post", "coordinates": [{"layer": 1, "position": -2}, {"layer": 0, "position": [0, -1]}]},
     )
 
-    assert coordinates_of(index_df, ModelLocation.LAYER, ModelLocation.POSITION) == [(1, -2), (0, (0, -1))]
+    assert coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.POSITION) == [(1, -2), (0, (0, -1))]
 
 
 def test_a_transform_treats_a_symbolic_position_like_any_other_value(small_model, planned_symbolic):
@@ -499,7 +497,7 @@ def test_a_transform_treats_a_symbolic_position_like_any_other_value(small_model
         },
     )
 
-    assert values_of(index_df, ModelLocation.POSITION) == [-3, (-2, -1)]
+    assert values_of(index_df, ModelAxis.POSITION) == [-3, (-2, -1)]
 
 
 @pytest.mark.parametrize(
@@ -528,15 +526,15 @@ def test_a_position_grid_that_depends_on_the_prompt_length_raises(small_model, p
         ({"filter": [{"not": {}}]}, "Invalid filter term: {'not': {}}"),  # empty negated pattern
         ({"filter": ["foo"]}, "Invalid filter term: 'foo'"),  # term is not a mapping
         ({"filter": [5]}, "Invalid filter term: 5"),
-        ({"location": ["bogus"]}, "'bogus' is not a valid ModelLocation"),  # not a ModelLocation value
+        ({"location": ["bogus"]}, "'bogus' is not a valid ModelAxis"),  # not a ModelAxis value
         ({"fitler": [{"layer": 0}]}, r"Unknown keys for PatchingElementConfig: \['fitler'\]"),  # a typo is rejected
-        ({"filter": [{"bogus": 0}]}, "'bogus' is not a valid ModelLocation"),
-        ({"group": {"bogus": "all"}}, "'bogus' is not a valid ModelLocation"),
+        ({"filter": [{"bogus": 0}]}, "'bogus' is not a valid ModelAxis"),
+        ({"group": {"bogus": "all"}}, "'bogus' is not a valid ModelAxis"),
         # a section that keys values by location needs a mapping
         ({"group": "all"}, "Expected a mapping for Group, got 'all'"),
         ({"incremental": [1, 2]}, r"Expected a mapping for Incremental, got \[1, 2\]"),
         ({"location": ["activation"]}, "'activation' is not a declarative location"),
-        ({"coordinates": [{"bogus": 0}]}, "'bogus' is not a valid ModelLocation"),
+        ({"coordinates": [{"bogus": 0}]}, "'bogus' is not a valid ModelAxis"),
         # the two modes are exclusive
         ({"coordinates": [{"layer": 0}], "location": ["layer"]}, "'coordinates' cannot be combined with 'location'"),
         ({"coordinates": [{"layer": 0}], "filter": [{"layer": 0}]}, "'coordinates' cannot be combined with"),

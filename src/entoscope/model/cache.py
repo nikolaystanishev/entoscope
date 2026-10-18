@@ -1,7 +1,7 @@
 """Local-storage caching of model activations.
 
-``CachedModel`` is a transparent wrapper around a ``transformer_lens`` model - a
-``TransformerBridge`` or a ``HookedTransformer`` - that memorizes ``run_with_cache`` to disk.
+``CachedModel`` is a transparent wrapper around a ``transformer_lens`` model, a
+``TransformerBridge`` or a ``HookedTransformer``, that memorizes ``run_with_cache`` to disk.
 Operations receive it in place of the raw model and never know the difference: every attribute
 other than ``run_with_cache`` is forwarded to the wrapped model, so tokenization,
 ``run_with_hooks`` (patching), weight access and ``cfg`` behave exactly as before, while repeated
@@ -48,10 +48,15 @@ _NUMPY_UNSUPPORTED_DTYPES = frozenset(
 
 
 def _normalize_names_filter(names_filter: Any) -> str | list[str]:
-    """Canonical, hashable form of a ``names_filter`` (order-independent).
+    """Put a ``names_filter`` into a canonical form that does not depend on the order of its names.
 
-    ``None`` (capture everything) becomes a sentinel; a single name becomes a one-element list;
-    any iterable of names becomes a sorted list. Callables are unsupported and rejected upstream.
+    Callables are not supported and are handled by the caller.
+
+    Args:
+        names_filter: ``None`` for every activation, a hook name, or an iterable of hook names.
+
+    Returns:
+        A sentinel string for ``None``, otherwise the names as a sorted list.
     """
     if names_filter is None:
         return _ALL_ACTIVATIONS
@@ -61,7 +66,14 @@ def _normalize_names_filter(names_filter: Any) -> str | list[str]:
 
 
 def _encode_input(model_input: Any) -> bytes:
-    """Deterministic byte encoding of one ``run_with_cache`` positional argument."""
+    """Encode one ``run_with_cache`` argument as bytes, the same in every process.
+
+    Args:
+        model_input: A tensor, a string, or anything with a stable ``repr``.
+
+    Returns:
+        The encoding, tagged with the kind of value it encodes.
+    """
     if isinstance(model_input, torch.Tensor):
         tensor = model_input.detach().cpu().contiguous()
         header = f"{tensor.dtype}|{tuple(tensor.shape)}|".encode()
@@ -74,14 +86,20 @@ def _encode_input(model_input: Any) -> bytes:
 
 
 def _weight_digest(model: Any) -> str:
-    """A digest of the weights a model holds, not of the architecture its ``cfg`` describes.
+    """Digest the weights a model holds, not the architecture its ``cfg`` describes.
 
-    Two models can read back the same ``cfg`` and the same name and still compute different things -
-    a fine-tune, a merged adapter, a supplied ``hf_model``, a checkpoint at another revision - and
+    Two models can read back the same ``cfg`` and the same name and still compute different things (a
+    fine-tune, a merged adapter, a supplied ``hf_model``, a checkpoint at another revision), and
     without this they would share cache entries. Hashing every parameter in full would cost more than
     the forward pass the cache saves, so each one contributes its name, its layout and the first
     ``_WEIGHT_SAMPLE`` of its values: bounded by the parameter count rather than the parameter size,
     and deterministic, so an entry written by one process is still found by the next.
+
+    Args:
+        model: The transformer.
+
+    Returns:
+        A SHA-256 hex digest.
     """
     digest = hashlib.sha256()
     for name, parameter in sorted(model.named_parameters(), key=lambda item: item[0]):
@@ -97,9 +115,13 @@ def _sanitize(name: str) -> str:
 class ActivationDiskCache:
     """Content-addressed on-disk store for ``(logits, activation cache)`` pairs.
 
-    Pure filesystem/key logic with no dependency on a live model, so the key derivation can be
-    unit-tested directly. Entries live at ``<cache_dir>/<model_name>/<digest>.pt`` and are written
-    atomically (temp file + ``os.replace``) so an interrupted run never leaves a half-written file.
+    Pure filesystem and key logic with no dependency on a live model, so the key derivation can be
+    tested directly. Entries live at ``<cache_dir>/<model_name>/<digest>.pt`` and are written
+    atomically, through a temporary file and ``os.replace``, so an interrupted run never leaves a
+    half-written file.
+
+    Args:
+        cache_dir: The directory entries are stored under.
     """
 
     def __init__(self, cache_dir: str):
@@ -113,6 +135,17 @@ class ActivationDiskCache:
         names_filter: str | list[str],
         extra: dict[str, Any],
     ) -> str:
+        """Derive the key of one forward pass.
+
+        Args:
+            model_fingerprint: What identifies the model, its architecture and weights.
+            model_args: The positional arguments of the ``run_with_cache`` call.
+            names_filter: The activations cached, as ``_normalize_names_filter`` returns them.
+            extra: Any other keyword argument that changes the result.
+
+        Returns:
+            A SHA-256 hex digest.
+        """
         digest = hashlib.sha256()
         digest.update(model_fingerprint.encode("utf-8"))
         for arg in model_args:
@@ -133,12 +166,28 @@ class ActivationDiskCache:
         return os.path.join(self.cache_dir, _sanitize(model_name), f"{digest}.pt")
 
     def load(self, digest: str, model_name: str) -> dict | None:
+        """Read an entry back.
+
+        Args:
+            digest: The entry's key.
+            model_name: The model the entry belongs to.
+
+        Returns:
+            The stored payload, on the CPU, or ``None`` when there is no such entry.
+        """
         path = self._path(digest, model_name)
         if not os.path.exists(path):
             return None
         return torch.load(path, map_location="cpu")
 
     def store(self, digest: str, model_name: str, payload: dict) -> None:
+        """Write an entry atomically.
+
+        Args:
+            digest: The entry's key.
+            model_name: The model the entry belongs to.
+            payload: What to store.
+        """
         path = self._path(digest, model_name)
         create_if_not_exists(os.path.dirname(path))
         tmp_path = f"{path}.tmp.{os.getpid()}"
@@ -149,8 +198,14 @@ class ActivationDiskCache:
 class CachedModel:
     """Transparent read-through disk cache around a ``transformer_lens`` model.
 
-    Overrides only ``run_with_cache``; every other attribute is forwarded to the wrapped model via
-    ``__getattr__``. When ``cache_dir`` is ``None`` the wrapper is a pure pass-through.
+    Overrides only ``run_with_cache``, and forwards every other attribute to the wrapped model. Cache
+    keys fold in a sampled digest of the model's weights, so a fine-tune cannot read the base model's
+    entries.
+
+    Args:
+        model: A ``TransformerBridge`` or a ``HookedTransformer``.
+        cache_dir: The directory activations are stored under. ``None`` makes the wrapper a pure
+            pass-through.
     """
 
     def __init__(self, model: Model, cache_dir: str | None = None):
@@ -182,6 +237,18 @@ class CachedModel:
         return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
 
     def run_with_cache(self, *model_args: Any, **kwargs: Any) -> tuple[Any, ActivationCache]:
+        """Run the model and cache its activations, reading an earlier identical run back from disk.
+
+        A callable ``names_filter`` or ``incl_bwd=True`` cannot be keyed, so such a call always runs
+        the model.
+
+        Args:
+            *model_args: The wrapped model's ``run_with_cache`` positional arguments, such as tokens.
+            **kwargs: Its keyword arguments, such as ``names_filter``.
+
+        Returns:
+            The logits and the activation cache, on the model's device.
+        """
         names_filter = kwargs.get("names_filter")
 
         if self._cache is None or isinstance(names_filter, Callable) or kwargs.get("incl_bwd"):

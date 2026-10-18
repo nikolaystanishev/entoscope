@@ -16,7 +16,7 @@ from entoscope.lens.input import LensInput
 from entoscope.lens.lens import Lens
 from entoscope.lens.method.logit_lens import _attention_scale
 from entoscope.model.cache import CachedModel
-from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.config import Filter, ModelAxis, ModelLayerLocation, ModelLocatorConfig
 from entoscope.operation.config import ConfigFactory
 from entoscope.operation.visualization import format_value
 
@@ -35,9 +35,7 @@ from .conftest import (
     unembed,
 )
 
-LAYER_POSITION_GRID = dict(
-    activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelLocation.LAYER, ModelLocation.POSITION]
-)
+LAYER_POSITION_GRID = dict(activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelAxis.LAYER, ModelAxis.POSITION])
 
 # What entoscope's own handler puts before every message it writes to stderr.
 LOG_PREFIX = r"\[entoscope\] INFO \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} "
@@ -165,7 +163,7 @@ def test_a_neuron_grid_projects_every_row_through_its_own_layer(model, activatio
     neurons = [NEURON, NEURON + 1]
     config = declarative_config(
         ModelLayerLocation.MLP_POST,
-        [ModelLocation.LAYER, ModelLocation.NEURON, ModelLocation.POSITION],
+        [ModelAxis.LAYER, ModelAxis.NEURON, ModelAxis.POSITION],
         filter=Filter.from_config([{"neuron": neurons, "position": -1}]),
     )
     result = lens_rows(model, config)
@@ -256,7 +254,7 @@ def test_a_head_grid_projects_every_row_through_its_own_head(model, activations)
     _, cache = activations
     config = declarative_config(
         ModelLayerLocation.ATTENTION_Z,
-        [ModelLocation.LAYER, ModelLocation.HEAD, ModelLocation.POSITION],
+        [ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.POSITION],
         filter=Filter.from_config([{"position": -1}]),
     )
     result = lens_rows(model, config)
@@ -336,7 +334,7 @@ def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model, config_fro
         top_k=2,
         source=ModelLocatorConfig(
             activation=ModelLayerLocation.RESIDUAL_POST,
-            location=[ModelLocation.LAYER, ModelLocation.POSITION],
+            location=[ModelAxis.LAYER, ModelAxis.POSITION],
         ),
     )
 
@@ -626,8 +624,8 @@ def test_a_head_axis_goes_across_with_the_layers_down(small_model, tmp_path):
     # The position is pinned to one value, so it carries no comparison and leaves the axes entirely.
     config = declarative_config(
         activation=ModelLayerLocation.ATTENTION_Z,
-        location=[ModelLocation.LAYER, ModelLocation.HEAD, ModelLocation.POSITION],
-        filter=Filter(inclusion_terms=[{ModelLocation.POSITION: -1}]),
+        location=[ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.POSITION],
+        filter=Filter(inclusion_terms=[{ModelAxis.POSITION: -1}]),
     )
 
     figure = _draw(small_model, config, tmp_path / "heads")
@@ -642,7 +640,7 @@ def test_a_third_axis_folds_into_the_y_ticks(small_model, tmp_path):
     # Nothing is aggregated away: every (layer, head) pair keeps its own row of positions.
     config = declarative_config(
         activation=ModelLayerLocation.ATTENTION_Z,
-        location=[ModelLocation.LAYER, ModelLocation.HEAD, ModelLocation.POSITION],
+        location=[ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.POSITION],
     )
 
     figure = _draw(small_model, config, tmp_path / "folded")

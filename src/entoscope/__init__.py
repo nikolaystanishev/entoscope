@@ -24,8 +24,9 @@ from entoscope.model import (
     Filter,
     Group,
     Incremental,
+    ModelAxis,
     ModelLayerLocation,
-    ModelLocation,
+    ModelLocatorConfig,
 )
 from entoscope.operation import ConfigFactory
 from entoscope.patching import (
@@ -73,8 +74,9 @@ __all__ = [
     "LensMethodConfig",
     "LinearProbeConfig",
     "MetricComparison",
+    "ModelAxis",
     "ModelLayerLocation",
-    "ModelLocation",
+    "ModelLocatorConfig",
     "ParameterLensConfig",
     "Patcher",
     "PatchingConfig",

@@ -3,17 +3,22 @@
 Every operation is made of the same four parts, so once one operation makes sense the others mostly
 do too.
 
-| Part | What it is | Lens | Probing | Activation patching | Circuit discovery |
-|---|---|---|---|---|---|
-| Config | What to run: a dataclass, built in code or read from YAML | `LensConfig` | `ProbeConfig` | `PatchingConfig` | `CircuitConfig` |
-| Input | The config together with the prompts it runs on | `LensInput` | `ProbeInput` | `PatchingInput` | `CircuitInput` |
-| Operator | Runs the config's method over the input | `Lens` | `Prober` | `Patcher` | `CircuitDiscoverer` |
-| Collector | Gathers one result per row and writes the run's files | `LensVisualizationCollector` | `ProbeCollector` | `PatchingVisualizationCollector` | `CircuitVisualizationCollector` |
+- **Config**: what to run, a dataclass built in code or read from YAML.
+- **Input**: the config together with the prompts it runs on.
+- **Operator**: runs the config's method over the input.
+- **Collector**: gathers one result per row and writes the run's files.
+
+| Operation | Config | Input | Operator | Collector |
+|---|---|---|---|---|
+| Lens | `LensConfig` | `LensInput` | `Lens` | `LensVisualizationCollector` |
+| Activation patching | `PatchingConfig` | `PatchingInput` | `Patcher` | `PatchingVisualizationCollector` |
+| Probing | `ProbeConfig` | `ProbeInput` | `Prober` | `ProbeCollector` |
+| Circuit discovery | `CircuitConfig` | `CircuitInput` | `CircuitDiscoverer` | `CircuitVisualizationCollector` |
 
 The configs, inputs and operators, with the method configs, the locator classes and `CachedModel`, are
 importable from `entoscope` itself: `from entoscope import Lens, LensConfig, LensInput`. Each operation's
-package - `entoscope.lens`, `entoscope.probe`, `entoscope.patching` and `entoscope.circuit` - exports the
-rest of its public classes, such as its collectors, its methods and its method factory, and
+package - `entoscope.lens`, `entoscope.patching`, `entoscope.probe` and `entoscope.circuit` - exports the
+rest of its public classes, such as its collectors, its method base class and its method factory, and
 `entoscope.model` and `entoscope.operation` export the shared ones. Each class is defined in a module
 named after its part (`entoscope.lens.config`, `entoscope.lens.input`, `entoscope.lens.lens`,
 `entoscope.lens.collector`, ...), which is how the [API reference](../reference/operation.md) is laid out.
@@ -34,7 +39,7 @@ See [Running and reading results](running.md).
 
 ## The index
 
-Lens, probing and patching read activations at many locations: every layer, every head of a layer,
+Lens, patching and probing read activations at many locations: every layer, every head of a layer,
 one neuron at the last position, and so on. The config's locator (`source`, and `target` for
 patching) names those locations, and resolving it against the model and the prompt gives the
 **index**: a table with one row per location.

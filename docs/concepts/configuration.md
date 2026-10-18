@@ -122,29 +122,3 @@ attribution:
     - source: *residual
       target: *residual
 ```
-
-## The config a run leaves behind
-
-Every run writes the config it was made under to `config.json` beside its results, with every field,
-defaults included. `from_dict` reads it back into the same config:
-
-```python
-import json
-from pathlib import Path
-
-from transformer_lens.model_bridge import TransformerBridge
-
-from entoscope import Lens, LensInput
-from entoscope.util.data import from_dict
-
-model = TransformerBridge.boot_transformers("gpt2")
-model.eval()
-Lens(model).apply(LensInput(config, "The capital of France is"), save_dir="runs/logit_lens", verbose=False)
-
-saved = from_dict(LensConfig, json.loads(Path("runs/logit_lens/config.json").read_text()))
-print(saved == config)  # True
-```
-
-A config therefore holds only data: numbers, strings, enums and paths, and lists, tuples, sets,
-mappings and dataclasses of them. A field with no such form, such as a function or a tensor, cannot be
-written to `config.json`, and saving the run raises a `TypeError`.

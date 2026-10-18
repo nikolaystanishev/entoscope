@@ -18,7 +18,14 @@ def _listed(items: list[str]) -> str:
 
 
 def _printable(index: pd.DataFrame) -> pd.DataFrame:
-    """Locations as ``index.csv`` spells them - ``to_string`` would print an enum by its member name."""
+    """Spell an index's locations as ``index.csv`` does, since ``to_string`` prints an enum by its member name.
+
+    Args:
+        index: An index frame.
+
+    Returns:
+        The frame with every enum cell replaced by its value.
+    """
     return index.map(lambda cell: cell.value if isinstance(cell, Enum) else cell)
 
 
@@ -32,13 +39,24 @@ def _plural(count: int, noun: str) -> str:
 class OperationPlan:
     """What a run would do, as an operator's ``plan`` reports it.
 
-    ``steps`` counts the run's units of work, named by ``steps_label`` (an index element, a probe, a
-    patched run, a prompt). ``forward_passes`` and ``backward_passes`` count every pass, the cached runs
-    of the prompts included; ``batches`` is set only for a method that runs the model a batch at a time.
-    ``index`` holds one frame per index, the same frame ``index.csv`` would hold, and ``prompts`` one
-    ``(label, prompt, token count)`` per prompt. ``activations`` are the hook names the run caches, unless
-    ``reads_full_cache`` says it caches every activation. ``outputs`` are the file names the run would
-    write into ``save_dir``.
+    ``str(plan)`` gives ``describe()``.
+
+    Attributes:
+        operation: The operation's name, such as ``"Lens"``.
+        method: The name of the method the config runs.
+        config: The config the run would be made under.
+        steps: How many units of work the run makes.
+        steps_label: What a unit of work is: an index element, a probe, a patched run or a prompt.
+        forward_passes: Every forward pass the run makes, the cached runs of the prompts included.
+        backward_passes: Every backward pass the run makes.
+        batches: How many batches the run makes, set only for a method that runs the model a batch at a
+            time.
+        index: One frame per index, the same frame ``index.csv`` would hold.
+        prompts: One ``(label, prompt, token count)`` per prompt.
+        activations: The hook names the run caches.
+        reads_full_cache: Whether the run caches every activation, in which case ``activations`` is empty.
+        save_dir: The directory the run would write into.
+        outputs: The file names the run would write into ``save_dir``.
     """
 
     operation: str
@@ -57,7 +75,14 @@ class OperationPlan:
     outputs: list[str] = field(default_factory=list)
 
     def describe(self, max_rows: int = 100) -> str:
-        """The plan as text, with up to ``max_rows`` rows of each index - what ``str(plan)`` and the log show."""
+        """Render the plan as text, which is what ``str(plan)`` and the log show.
+
+        Args:
+            max_rows: The most rows of each index to print.
+
+        Returns:
+            The plan, one fact per line, followed by each index.
+        """
         lines = [f"{self.operation} plan", f"  method: {self.method}"]
         if self.config.config_id:
             lines.append(f"  config: {self.config.config_id}")

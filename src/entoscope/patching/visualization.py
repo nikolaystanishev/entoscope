@@ -1,6 +1,6 @@
 """Interactive Plotly rendering of a patching run.
 
-The grid is the run's own index - layer down, position across for the canonical sweep - coloured by
+The grid is the run's own index, layer up and position across for the canonical sweep, coloured by
 the metric on a diverging scale centred on the value an ineffective patch would produce, so warm
 cells are the locations that moved the model toward the source. One such grid is drawn per column
 the config names, each centred on its own comparison's ineffective value. A cell's hover names the
@@ -23,6 +23,18 @@ from entoscope.patching.input import PatchingInput
 
 
 class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
+    """The page of a patching run: one grid per result column, each panel a metric and its comparison.
+
+    The patch elements the result is not laid out along are described in the subtitle when they patch
+    the same location in every run, and in each cell's hover when they vary with the row.
+
+    Args:
+        result: The run's result frame.
+        operation_input: The input the run iterated.
+        model: The model the run patched.
+        index: The index that laid the result out.
+    """
+
     prefixes = ("target_", "source_")
     colorscale = DIVERGING
 
@@ -87,10 +99,13 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
         return f'{run}: "{escape(prompt)}" generates "{format_value(str_token(self.model, generation))}"'
 
     def _companions(self) -> tuple[str, list[str]]:
-        """What the other patch elements did: a constant clause for the subtitle, a line per result row.
+        """Describe what the patch elements other than the laid-out one did.
 
-        An element either has one row - the same location on every run, so it belongs in the subtitle -
+        An element either has one row, the same location on every run, so it belongs in the subtitle,
         or as many rows as the result, in which case it co-varies and is reported per cell.
+
+        Returns:
+            A clause for the subtitle, and a line for each result row's hover.
         """
         rows = len(self.result)
         constant = []

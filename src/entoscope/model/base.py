@@ -25,9 +25,24 @@ else:
 
 
 def unwrap(model: Model) -> Any:
-    """The transformer itself, with any ``CachedModel`` wrapper removed."""
+    """Remove a ``CachedModel`` wrapper.
+
+    Args:
+        model: A model, wrapped or not.
+
+    Returns:
+        The transformer itself.
+    """
     return getattr(model, "_model", model)
 
 
 def is_bridge(model: Model) -> bool:
+    """Tell a ``TransformerBridge`` from a ``HookedTransformer``.
+
+    Args:
+        model: A model, wrapped in a ``CachedModel`` or not.
+
+    Returns:
+        Whether the transformer is a ``TransformerBridge``.
+    """
     return TransformerBridge is not None and isinstance(unwrap(model), TransformerBridge)

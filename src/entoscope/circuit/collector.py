@@ -10,10 +10,15 @@ from entoscope.util.data import write_graph, write_json
 
 
 class CircuitCollector(AbstractCollector[CircuitInput]):
-    """Persists the discovered graphs (GraphML + node-link JSON) and a ``prompts.json`` index.
+    """Writes every prompt's graphs, as GraphML and node-link JSON, and a ``prompts.json`` summary.
 
-    This base collector writes graph data only. Use ``CircuitVisualizationCollector`` to also render
-    an interactive HTML per prompt.
+    This base collector writes graph data only, and ``CircuitVisualizationCollector`` also draws a page
+    per prompt.
+
+    Args:
+        operation_input: The input the run iterates.
+        model: The model the run reads.
+        save_dir: The directory ``save`` writes into, or ``None`` to write nothing.
     """
 
     def __init__(self, operation_input: CircuitInput, model: Model, save_dir: str | None = None):
@@ -22,9 +27,16 @@ class CircuitCollector(AbstractCollector[CircuitInput]):
 
     @property
     def result(self) -> list[PromptCircuit]:
+        """One circuit per prompt collected so far, in prompt order."""
         return self._circuits
 
     def collect(self, circuit: PromptCircuit, index: int) -> None:
+        """Take one prompt's circuit.
+
+        Args:
+            circuit: The circuit.
+            index: The prompt's position among the input's prompts, collected in order.
+        """
         assert index == len(self._circuits)
         self._circuits.append(circuit)
 

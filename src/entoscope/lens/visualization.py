@@ -1,6 +1,6 @@
 """Interactive Plotly rendering of a lens run.
 
-The grid is the run's own index - layer down, position (or head, or neuron) across - coloured by a
+The grid is the run's own index, layer up and position (or head, or neuron) across, coloured by a
 rank's probability, with that rank's token printed in the cell and the whole top-k in hover. One
 grid is drawn per rank, so a run's second and third guesses are as visible as its first.
 """
@@ -15,6 +15,8 @@ from entoscope.operation.visualization import GridFigure, describe_row, format_v
 
 
 class LensFigure(GridFigure[LensInput, int]):
+    """The page of a lens run: one grid per top-k rank, each panel named by its rank from 0."""
+
     @property
     def title(self) -> str:
         return titled(f"Lens - {self.operation_input.config.method.type}", self.operation_input.config)

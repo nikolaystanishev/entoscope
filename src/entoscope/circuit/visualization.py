@@ -2,7 +2,7 @@
 
 Lays the graph out as the Information Flow Routes figures do: token position on the x axis, model
 depth on the y axis (input tokens at the bottom, the final layer at the top). Attention edges are
-drawn per head - the coloured midpoint markers encode which head carries each edge (colour) and how
+drawn per head: the coloured midpoint markers encode which head carries each edge (colour) and how
 strong it is (size). One self-contained HTML file is produced per prompt, holding two figures: the
 pruned routes-to-prediction (headline) and the full contribution graph.
 """
@@ -65,6 +65,16 @@ def _line_trace(segments: list[tuple[float, float]], color: str, name: str, dash
 
 
 class CircuitFigure(Figure[tuple[nx.MultiDiGraph, str]]):
+    """The page of one prompt's circuit: the routes to the prediction, then the full contribution graph.
+
+    Each panel is a graph and its plot's title.
+
+    Args:
+        circuit: The prompt's circuit.
+        model: The model the circuit was discovered in.
+        config: The run's config.
+    """
+
     def __init__(self, circuit: PromptCircuit, model: Model, config: CircuitConfig) -> None:
         self.circuit = circuit
         self.n_layers = model.cfg.n_layers

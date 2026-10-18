@@ -21,8 +21,8 @@ from transformer_lens.model_bridge import TransformerBridge
 
 from entoscope import (
     MetricComparison,
+    ModelAxis,
     ModelLayerLocation,
-    ModelLocation,
     Patcher,
     PatchingConfig,
     PatchingElementConfig,
@@ -39,7 +39,7 @@ model.eval()
 residual = PatchingElementConfig(
     type=PatchingType.REPLACE,
     activation=ModelLayerLocation.RESIDUAL_PRE,
-    location=[ModelLocation.LAYER, ModelLocation.POSITION],
+    location=[ModelAxis.LAYER, ModelAxis.POSITION],
 )
 config = PatchingConfig(
     metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.NORMALIZED]},

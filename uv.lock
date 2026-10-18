@@ -885,7 +885,7 @@ dev = [
 ]
 docs = [
     { name = "furo", specifier = ">=2024.8.6" },
-    { name = "myst-parser", specifier = ">=4.0" },
+    { name = "myst-parser", specifier = ">=5.1" },
     { name = "sphinx", specifier = ">=8.1" },
 ]
 

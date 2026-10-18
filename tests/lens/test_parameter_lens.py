@@ -10,7 +10,7 @@ from entoscope.lens.config import LensConfig
 from entoscope.lens.input import LensInput
 from entoscope.lens.lens import Lens
 from entoscope.lens.method.parameter_lens import ParameterLensConfig, ProjectionSpace
-from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.config import Filter, ModelAxis, ModelLayerLocation, ModelLocatorConfig
 
 from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
 from .conftest import (
@@ -41,8 +41,8 @@ def _parameter_config(
         top_k=top_k,
         source=ModelLocatorConfig(
             activation=ModelLayerLocation.MLP_POST,
-            location=[ModelLocation.LAYER, ModelLocation.NEURON],
-            filter=Filter(inclusion_terms=[{ModelLocation.NEURON: NEURON}]),
+            location=[ModelAxis.LAYER, ModelAxis.NEURON],
+            filter=Filter(inclusion_terms=[{ModelAxis.NEURON: NEURON}]),
         ),
     )
 
@@ -221,7 +221,7 @@ def test_a_declarative_gated_mlp_reads_its_key_vector_from_the_gate(gated_model)
         method=ParameterLensConfig(type="parameter_lens"),
         source=ModelLocatorConfig(
             activation=ModelLayerLocation.MLP_PRE,
-            location=[ModelLocation.LAYER, ModelLocation.NEURON],
+            location=[ModelAxis.LAYER, ModelAxis.NEURON],
             filter=Filter.from_config([{"layer": 0, "neuron": 1}]),
         ),
     )
@@ -401,9 +401,7 @@ def test_a_parameter_lens_page_needs_no_prompt(model, tmp_path):
 def test_a_neuron_axis_goes_across_with_the_layers_down(small_model, tmp_path):
     config = LensConfig(
         method=ParameterLensConfig(type="parameter_lens"),
-        source=ModelLocatorConfig(
-            activation=ModelLayerLocation.MLP_POST, location=[ModelLocation.LAYER, ModelLocation.NEURON]
-        ),
+        source=ModelLocatorConfig(activation=ModelLayerLocation.MLP_POST, location=[ModelAxis.LAYER, ModelAxis.NEURON]),
     )
 
     figure = _draw(small_model, config, tmp_path / "neurons")
@@ -422,8 +420,8 @@ def test_an_empty_index_still_writes_a_page(model, tmp_path):
         top_k=3,
         source=ModelLocatorConfig(
             activation=ModelLayerLocation.MLP_POST,
-            location=[ModelLocation.LAYER],
-            filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0}], exclusion_terms=[{ModelLocation.LAYER: 0}]),
+            location=[ModelAxis.LAYER],
+            filter=Filter(inclusion_terms=[{ModelAxis.LAYER: 0}], exclusion_terms=[{ModelAxis.LAYER: 0}]),
         ),
     )
     save_dir = tmp_path / "empty"

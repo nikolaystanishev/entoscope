@@ -28,18 +28,6 @@ The prompts are options too, and the YAML files explain every entry in their com
 :language: yaml
 ```
 
-## Probing
-
-```{literalinclude} ../examples/probe.py
-:caption: probe.py
-:language: python
-```
-
-```{literalinclude} ../examples/probe.yaml
-:caption: probe.yaml
-:language: yaml
-```
-
 ## Activation patching
 
 ```{literalinclude} ../examples/patching.py
@@ -49,6 +37,18 @@ The prompts are options too, and the YAML files explain every entry in their com
 
 ```{literalinclude} ../examples/patching.yaml
 :caption: patching.yaml
+:language: yaml
+```
+
+## Probing
+
+```{literalinclude} ../examples/probe.py
+:caption: probe.py
+:language: python
+```
+
+```{literalinclude} ../examples/probe.yaml
+:caption: probe.yaml
 :language: yaml
 ```
 

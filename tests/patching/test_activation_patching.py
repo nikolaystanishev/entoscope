@@ -10,7 +10,7 @@ import yaml
 
 from entoscope.model import Model
 from entoscope.model.cache import CachedModel
-from entoscope.model.config import Filter, Group, Incremental, ModelLayerLocation, ModelLocation
+from entoscope.model.config import Filter, Group, Incremental, ModelAxis, ModelLayerLocation
 from entoscope.operation.config import ConfigFactory
 from entoscope.patching.collector import PatchingCollector
 from entoscope.patching.config import (
@@ -140,8 +140,8 @@ def _copying_hooks(model: Model, writes: list[tuple[str, tuple]]) -> list:
 def _last_layer_resid_element() -> PatchingElementConfig:
     return PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: -1}]),
+        location=[ModelAxis.LAYER],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: -1}]),
         type=PatchingType.REPLACE,
     )
 
@@ -179,15 +179,15 @@ def _resid_value_scale_config(scale: float, layer: int) -> PatchingConfig:
     """
     source = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer}]),
+        location=[ModelAxis.LAYER],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: layer}]),
         type=PatchingType.VALUE_SCALE,
         value=scale,
     )
     target = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer}]),
+        location=[ModelAxis.LAYER],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: layer}]),
         type=PatchingType.REPLACE,
     )
     return PatchingConfig(
@@ -207,20 +207,20 @@ def _mlp_mhsa_pattern_elements(layer: int, head: int) -> list[PatchingElementCon
     """
     mlp = PatchingElementConfig(
         activation=ModelLayerLocation.MLP_POST,
-        location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer}]),
+        location=[ModelAxis.LAYER],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: layer}]),
         type=PatchingType.REPLACE,
     )
     mhsa = PatchingElementConfig(
         activation=ModelLayerLocation.ATTENTION_Q,
-        location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer}]),
+        location=[ModelAxis.LAYER],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: layer}]),
         type=PatchingType.REPLACE,
     )
     pattern = PatchingElementConfig(
         activation=ModelLayerLocation.ATTENTION_PATTERN,
-        location=[ModelLocation.LAYER, ModelLocation.HEAD],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layer, ModelLocation.HEAD: head}]),
+        location=[ModelAxis.LAYER, ModelAxis.HEAD],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: layer, ModelAxis.HEAD: head}]),
         type=PatchingType.REPLACE,
     )
     return [mlp, mhsa, pattern]
@@ -384,7 +384,7 @@ def _no_op_element() -> PatchingElementConfig:
     forward passes."""
     return PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        coordinates=[{ModelLocation.LAYER: -1, ModelLocation.POSITION: 0}],
+        coordinates=[{ModelAxis.LAYER: -1, ModelAxis.POSITION: 0}],
         type=PatchingType.REPLACE,
     )
 
@@ -660,8 +660,8 @@ def test_each_row_generates_what_its_own_patched_run_predicts(model: Model, batc
     position = 4
     element = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER, ModelLocation.POSITION],
-        filter=Filter(inclusion_terms=[{ModelLocation.POSITION: position}]),
+        location=[ModelAxis.LAYER, ModelAxis.POSITION],
+        filter=Filter(inclusion_terms=[{ModelAxis.POSITION: position}]),
         type=PatchingType.REPLACE,
     )
     collector = Patcher(model, batch_size=batch_size).apply(
@@ -769,7 +769,7 @@ def _gradient_config(
 ) -> PatchingConfig:
     """A method named by its type alone takes its defaults, the way a YAML file names it."""
     method = method if isinstance(method, PatchingMethodConfig) else PatchingMethodConfig.from_config(method)
-    location, index_filter = [ModelLocation.LAYER], Filter(inclusion_terms=[{ModelLocation.LAYER: layer}])
+    location, index_filter = [ModelAxis.LAYER], Filter(inclusion_terms=[{ModelAxis.LAYER: layer}])
     return PatchingConfig(
         config_id=method.type,
         metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]},
@@ -898,7 +898,7 @@ def test_a_gradient_method_runs_the_model_once_however_large_the_index(model: Mo
 
     element = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER],
+        location=[ModelAxis.LAYER],
         type=PatchingType.REPLACE,
     )
     calls: list[int] = []
@@ -1141,7 +1141,7 @@ def test_explicit_coordinates_matches_declarative_patch(model: Model) -> None:
 
     # The explicit twin of ``test_activation_patching_from_source_into_target``: one coordinate covering
     # the last layer's full residual stream reproduces the declarative filter's result.
-    coordinate = [{ModelLocation.LAYER: -1}]
+    coordinate = [{ModelAxis.LAYER: -1}]
     result = _run_explicit(model, coordinate, coordinate)
 
     assert result.shape == (1,)
@@ -1155,8 +1155,8 @@ def test_explicit_position_is_respected(model: Model) -> None:
     # patching just that coordinate reproduces the full source run (metric 1.0). The prompts share their
     # prefix, so position 0 carries identical activations in both runs and patching it is a no-op
     # (metric 0.0). If the position were ignored (patching every position), both would give 1.0.
-    last_layer_last_position = [{ModelLocation.LAYER: -1, ModelLocation.POSITION: -1}]
-    last_layer_first_position = [{ModelLocation.LAYER: -1, ModelLocation.POSITION: 0}]
+    last_layer_last_position = [{ModelAxis.LAYER: -1, ModelAxis.POSITION: -1}]
+    last_layer_first_position = [{ModelAxis.LAYER: -1, ModelAxis.POSITION: 0}]
     last_position = _run_explicit(model, last_layer_last_position, last_layer_last_position)
     first_position = _run_explicit(model, last_layer_first_position, last_layer_first_position)
 
@@ -1169,12 +1169,12 @@ def test_explicit_pairing_and_artifacts(model: Model, tmp_path: Path) -> None:
 
     # Two pairs reading different source layers into different target positions of layer 7.
     source_coordinates = [
-        {ModelLocation.LAYER: 5, ModelLocation.POSITION: -1},
-        {ModelLocation.LAYER: 6, ModelLocation.POSITION: -1},
+        {ModelAxis.LAYER: 5, ModelAxis.POSITION: -1},
+        {ModelAxis.LAYER: 6, ModelAxis.POSITION: -1},
     ]
     target_coordinates = [
-        {ModelLocation.LAYER: 7, ModelLocation.POSITION: -1},
-        {ModelLocation.LAYER: 7, ModelLocation.POSITION: -2},
+        {ModelAxis.LAYER: 7, ModelAxis.POSITION: -1},
+        {ModelAxis.LAYER: 7, ModelAxis.POSITION: -2},
     ]
     save_dir = tmp_path / "explicit_patch_run"
     paired = _run_explicit(model, source_coordinates, target_coordinates, save_dir=str(save_dir))
@@ -1207,11 +1207,11 @@ def test_explicit_per_coordinate_activation(model: Model) -> None:
     # metric lands well away from 1.0 -- proving each row is patched at its own activation's hook.
     coordinates = [
         {
-            ModelLocation.ACTIVATION: ModelLayerLocation.RESIDUAL_POST,
-            ModelLocation.LAYER: -1,
-            ModelLocation.POSITION: -1,
+            ModelAxis.ACTIVATION: ModelLayerLocation.RESIDUAL_POST,
+            ModelAxis.LAYER: -1,
+            ModelAxis.POSITION: -1,
         },
-        {ModelLocation.ACTIVATION: ModelLayerLocation.MLP_OUT, ModelLocation.LAYER: -1, ModelLocation.POSITION: -1},
+        {ModelAxis.ACTIVATION: ModelLayerLocation.MLP_OUT, ModelAxis.LAYER: -1, ModelAxis.POSITION: -1},
     ]
     result = _run_explicit(model, coordinates, coordinates, activation=None)
 
@@ -1232,10 +1232,10 @@ def test_two_sources_differing_only_in_activation_keep_their_own_metric(model: M
         type=PatchingType.REPLACE,
         coordinates=[
             {
-                ModelLocation.ACTIVATION: activation,
-                ModelLocation.LAYER: 0,
-                ModelLocation.POSITION: -1,
-                ModelLocation.NEURON: 1,
+                ModelAxis.ACTIVATION: activation,
+                ModelAxis.LAYER: 0,
+                ModelAxis.POSITION: -1,
+                ModelAxis.NEURON: 1,
             }
             for activation in (ModelLayerLocation.MLP_POST, ModelLayerLocation.MLP_PRE)
         ],
@@ -1244,8 +1244,8 @@ def test_two_sources_differing_only_in_activation_keep_their_own_metric(model: M
     target = PatchingElementConfig(
         type=PatchingType.REPLACE,
         activation=ModelLayerLocation.MLP_POST,
-        location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0}]),
+        location=[ModelAxis.LAYER],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: 0}]),
     )
     config = PatchingConfig(
         config_id="same_coordinate_two_activations",
@@ -1260,10 +1260,10 @@ def test_two_sources_differing_only_in_activation_keep_their_own_metric(model: M
     result = collector.result
 
     # The two coordinates are one grid point once the activation is set aside...
-    locations = [f"source_{location.value}" for location in (ModelLocation.LAYER, ModelLocation.POSITION)]
+    locations = [f"source_{location.value}" for location in (ModelAxis.LAYER, ModelAxis.POSITION)]
     assert len(result[[*locations, "source_neuron"]].drop_duplicates()) == 1
     # ...yet each run keeps its own row, naming the activation it read and the metric it produced.
-    assert result[f"source_{ModelLocation.ACTIVATION.value}"].to_list() == [
+    assert result[f"source_{ModelAxis.ACTIVATION.value}"].to_list() == [
         ModelLayerLocation.MLP_POST,
         ModelLayerLocation.MLP_PRE,
     ]
@@ -1340,14 +1340,14 @@ def _gaussian_noise_config() -> PatchingConfig:
     """Add seeded Gaussian noise to the target's own residual, then write it back over itself."""
     source = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: _VALUE_SCALE_LAYER}]),
+        location=[ModelAxis.LAYER],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: _VALUE_SCALE_LAYER}]),
         type=PatchingType.GAUSSIAN_NOISE,
     )
     target = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: _VALUE_SCALE_LAYER}]),
+        location=[ModelAxis.LAYER],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: _VALUE_SCALE_LAYER}]),
         type=PatchingType.REPLACE,
     )
     return PatchingConfig(
@@ -1405,7 +1405,7 @@ def test_a_batched_run_scores_what_an_unbatched_one_does(model: Model, source_ty
     # the one prompt each cache keeps. Five rows a batch leaves a ragged last one, padded to five.
     def element(patching_type: PatchingType) -> PatchingElementConfig:
         return PatchingElementConfig(
-            activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelLocation.LAYER], type=patching_type, value=2.0
+            activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelAxis.LAYER], type=patching_type, value=2.0
         )
 
     config = PatchingConfig(
@@ -1429,14 +1429,14 @@ def test_a_one_row_element_is_patched_into_every_row_of_a_batch(model: Model, ba
     # companion's effect alone - in each row of a batch, not only the one whose hooks were built last.
     sweep = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER, ModelLocation.POSITION],
-        filter=Filter(inclusion_terms=[{ModelLocation.POSITION: 0}]),
+        location=[ModelAxis.LAYER, ModelAxis.POSITION],
+        filter=Filter(inclusion_terms=[{ModelAxis.POSITION: 0}]),
         type=PatchingType.REPLACE,
     )
     companion = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_PRE,
-        location=[ModelLocation.LAYER, ModelLocation.POSITION],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0, ModelLocation.POSITION: 4}]),
+        location=[ModelAxis.LAYER, ModelAxis.POSITION],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: 0, ModelAxis.POSITION: 4}]),
         type=PatchingType.REPLACE,
     )
     metric = {PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]}
@@ -1489,7 +1489,7 @@ def batch_shape_dependent_model(model: Model):
 def _self_patch_config() -> PatchingConfig:
     element = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        location=[ModelAxis.LAYER, ModelAxis.POSITION],
         type=PatchingType.REPLACE,
     )
     return PatchingConfig(
@@ -1571,8 +1571,8 @@ def _batched(model: Model, config: PatchingConfig, batch_size: int) -> PatchingC
 def _layer_sweep(layers: list[int], position: int = -1) -> PatchingElementConfig:
     return PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER, ModelLocation.POSITION],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: layers, ModelLocation.POSITION: position}]),
+        location=[ModelAxis.LAYER, ModelAxis.POSITION],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: layers, ModelAxis.POSITION: position}]),
         type=PatchingType.REPLACE,
     )
 
@@ -1601,11 +1601,11 @@ def test_a_source_and_a_target_pair_row_by_row_in_the_result(model: Model) -> No
     # Both filters leave gaps in the frame's row labels; the rows still pair in order.
     source = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        location=[ModelAxis.LAYER, ModelAxis.POSITION],
         filter=Filter(
             inclusion_terms=[
-                {ModelLocation.LAYER: 0, ModelLocation.POSITION: 1},
-                {ModelLocation.LAYER: [1, 2], ModelLocation.POSITION: 2},
+                {ModelAxis.LAYER: 0, ModelAxis.POSITION: 1},
+                {ModelAxis.LAYER: [1, 2], ModelAxis.POSITION: 2},
             ]
         ),
         type=PatchingType.REPLACE,
@@ -1830,7 +1830,7 @@ def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model: Model, con
     assert from_file.metric == {PatchingMetric.LOGIT_DIFF: [MetricComparison.ABSOLUTE]}
     assert from_file.method == EXACT
     assert from_file.patch[0].source.activation is ModelLayerLocation.RESIDUAL_POST
-    assert from_file.patch[0].source.location == [ModelLocation.LAYER]
+    assert from_file.patch[0].source.location == [ModelAxis.LAYER]
     assert from_file.patch[0].source.type is PatchingType.REPLACE
 
     def run(config: PatchingConfig) -> torch.Tensor:
@@ -1934,7 +1934,7 @@ def test_an_exclusion_term_is_deserialized_into_its_own_filter(model: Model, con
     )
 
     assert config.patch[0].source.filter == Filter(
-        inclusion_terms=[{ModelLocation.LAYER: {"range": [0, 2]}}], exclusion_terms=[{ModelLocation.LAYER: 1}]
+        inclusion_terms=[{ModelAxis.LAYER: {"range": [0, 2]}}], exclusion_terms=[{ModelAxis.LAYER: 1}]
     )
 
     collector = Patcher(model).apply(
@@ -1996,7 +1996,7 @@ def _every_layer_patch_config() -> PatchingConfig:
     """Replace the residual stream of every layer in turn - one patched run per layer."""
     element = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER],
+        location=[ModelAxis.LAYER],
         type=PatchingType.REPLACE,
     )
     return _patch_config(element, config_id="every_layer_resid_patch")
@@ -2078,7 +2078,7 @@ def test_a_plan_describes_the_run_that_follows_it(model: Model, tmp_path: Path) 
 # --------------------------------------------------------------------------------------------------
 # Visualization - the run's own grid, drawn from result.csv's columns
 # --------------------------------------------------------------------------------------------------
-_FIRST_THREE_LAYERS = Filter(inclusion_terms=[{ModelLocation.LAYER: {"range": [0, 2]}}])
+_FIRST_THREE_LAYERS = Filter(inclusion_terms=[{ModelAxis.LAYER: {"range": [0, 2]}}])
 
 
 def _layer_position_config(
@@ -2088,7 +2088,7 @@ def _layer_position_config(
 ) -> PatchingConfig:
     element = PatchingElementConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        location=[ModelAxis.LAYER, ModelAxis.POSITION],
         filter=index_filter,
         type=PatchingType.REPLACE,
     )
@@ -2205,7 +2205,7 @@ def test_the_subtitle_names_what_each_unpatched_prompt_generates(model: Model, t
 def test_each_cell_names_what_its_patched_run_generates_on_hover(model: Model, tmp_path: Path) -> None:
     # One layer over every position is drawn as a bar, whose cells are the result's rows in order.
     save_dir = tmp_path / "one_layer"
-    config = _layer_position_config(index_filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0}]))
+    config = _layer_position_config(index_filter=Filter(inclusion_terms=[{ModelAxis.LAYER: 0}]))
 
     figure = _draw(model, config, save_dir)
     generations = pd.read_csv(save_dir / "result.csv", keep_default_na=False)["str_generation"].tolist()
@@ -2251,7 +2251,7 @@ def test_patching_a_prompt_with_itself_leaves_the_scale_intact(model: Model, tmp
 
 def test_an_axis_the_run_does_not_vary_over_is_dropped(model: Model, tmp_path: Path) -> None:
     # One layer over every position: the layer offers no comparison, so it leaves the axes entirely.
-    config = _layer_position_config(index_filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0}]))
+    config = _layer_position_config(index_filter=Filter(inclusion_terms=[{ModelAxis.LAYER: 0}]))
 
     figure = _draw(model, config, tmp_path / "one_layer")
 
@@ -2266,8 +2266,8 @@ def test_a_sparse_index_leaves_holes_in_the_grid(model: Model, tmp_path: Path) -
     config = _layer_position_config(
         index_filter=Filter(
             inclusion_terms=[
-                {ModelLocation.LAYER: 0, ModelLocation.POSITION: 1},
-                {ModelLocation.LAYER: 1, ModelLocation.POSITION: 2},
+                {ModelAxis.LAYER: 0, ModelAxis.POSITION: 1},
+                {ModelAxis.LAYER: 1, ModelAxis.POSITION: 2},
             ]
         )
     )
@@ -2281,8 +2281,8 @@ def test_a_sparse_index_leaves_holes_in_the_grid(model: Model, tmp_path: Path) -
 def test_explicit_coordinates_are_drawn_as_a_bar_labelled_by_coordinate(model: Model, tmp_path: Path) -> None:
     # An explicit index is a list of points, not a grid, so there is no second axis to lay out.
     coordinates = [
-        {ModelLocation.LAYER: -2, ModelLocation.POSITION: -1},
-        {ModelLocation.LAYER: -1, ModelLocation.POSITION: -1},
+        {ModelAxis.LAYER: -2, ModelAxis.POSITION: -1},
+        {ModelAxis.LAYER: -1, ModelAxis.POSITION: -1},
     ]
 
     figure = _draw(model, _explicit_patch_config(coordinates, coordinates), tmp_path / "coordinates")
@@ -2295,10 +2295,10 @@ def test_explicit_coordinates_are_drawn_as_a_bar_labelled_by_coordinate(model: M
 def test_the_axis_falls_back_to_the_target_when_the_source_does_not_span_it(model: Model, tmp_path: Path) -> None:
     # One source coordinate read into two target coordinates: the source is repeated on both rows, so it
     # varies over nothing and cannot name the axis the target laid out.
-    source = [{ModelLocation.LAYER: -1, ModelLocation.POSITION: -1}]
+    source = [{ModelAxis.LAYER: -1, ModelAxis.POSITION: -1}]
     target = [
-        {ModelLocation.LAYER: -1, ModelLocation.POSITION: -2},
-        {ModelLocation.LAYER: -1, ModelLocation.POSITION: -1},
+        {ModelAxis.LAYER: -1, ModelAxis.POSITION: -2},
+        {ModelAxis.LAYER: -1, ModelAxis.POSITION: -1},
     ]
 
     save_dir = tmp_path / "uneven"
@@ -2311,7 +2311,7 @@ def test_the_axis_falls_back_to_the_target_when_the_source_does_not_span_it(mode
 
 def test_a_single_coordinate_run_still_writes_a_page(model: Model, tmp_path: Path) -> None:
     # One row has no axis to vary over at all, so the grid degenerates to a single bar.
-    coordinates = [{ModelLocation.LAYER: -1, ModelLocation.POSITION: -1}]
+    coordinates = [{ModelAxis.LAYER: -1, ModelAxis.POSITION: -1}]
 
     figure = _draw(model, _explicit_patch_config(coordinates, coordinates), tmp_path / "one_coordinate")
 
@@ -2341,9 +2341,9 @@ def test_a_grouped_location_does_not_break_the_page(model: Model, tmp_path: Path
     # Grouping puts a list of heads in one index cell; it has to survive being turned into a label.
     element = PatchingElementConfig(
         activation=ModelLayerLocation.ATTENTION_Z,
-        location=[ModelLocation.LAYER, ModelLocation.HEAD],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: -1, ModelLocation.HEAD: [0, 1, 2]}]),
-        group=Group({ModelLocation.HEAD: [0, 1]}),
+        location=[ModelAxis.LAYER, ModelAxis.HEAD],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: -1, ModelAxis.HEAD: [0, 1, 2]}]),
+        group=Group({ModelAxis.HEAD: [0, 1]}),
         type=PatchingType.REPLACE,
     )
     config = PatchingConfig(
@@ -2363,8 +2363,8 @@ def test_the_other_patched_elements_are_named_on_the_page(model: Model, tmp_path
     # rather than in every cell's hover.
     companion = PatchingElementConfig(
         activation=ModelLayerLocation.ATTENTION_PATTERN,
-        location=[ModelLocation.LAYER, ModelLocation.HEAD],
-        filter=Filter(inclusion_terms=[{ModelLocation.LAYER: 0, ModelLocation.HEAD: 0}]),
+        location=[ModelAxis.LAYER, ModelAxis.HEAD],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: 0, ModelAxis.HEAD: 0}]),
         type=PatchingType.REPLACE,
     )
     config = _layer_position_config()

@@ -18,7 +18,13 @@ def write_json(file_path: str, data: dict | list):
 
 
 def write_graph(graph: nx.Graph, save_dir: str, name: str) -> None:
-    """Persist a graph as both GraphML (portable) and node-link JSON (readable / round-trippable)."""
+    """Write a graph as both GraphML, which other tools read, and node-link JSON, which reads back exactly.
+
+    Args:
+        graph: The graph.
+        save_dir: The directory to write into.
+        name: The file name, without its extension.
+    """
     nx.write_graphml(graph, os.path.join(save_dir, f"{name}.graphml"))
     write_json(os.path.join(save_dir, f"{name}.json"), nx.node_link_data(graph, edges="links"))
 
@@ -28,9 +34,10 @@ _ENV_VARIABLE = re.compile(r".*?\${(\w+)}.*?")
 
 
 class _EnvLoader(yaml.FullLoader):
-    """``FullLoader`` that also replaces ``${NAME}`` with the environment variable's value.
+    """A ``FullLoader`` that also replaces ``${NAME}`` with the environment variable's value.
 
-    A subclass, so registering the resolver leaves ``yaml.FullLoader`` itself as every other reader expects it.
+    A subclass, so registering the resolver leaves ``yaml.FullLoader`` itself as every other reader
+    expects it.
     """
 
 
@@ -52,6 +59,17 @@ _EnvLoader.add_constructor(_ENV_TAG, _construct_env_variables)
 
 
 def read_yaml(file_path: str) -> list | dict:
+    """Read a YAML file, replacing every ``${NAME}`` with the environment variable's value.
+
+    An unset variable is replaced by its own name, and a value that is a single variable holding only
+    digits becomes an int.
+
+    Args:
+        file_path: The file to read.
+
+    Returns:
+        The file's content.
+    """
     with open(file_path, encoding="utf-8") as f:
         return yaml.load(f, Loader=_EnvLoader)
 
@@ -62,18 +80,28 @@ def create_if_not_exists(directory: str):
 
 
 def from_dict(cls: type, value: Any) -> Any:
-    """Deserialize a raw YAML/JSON shape into ``cls``, driven by its type hints.
+    """Read a raw YAML or JSON shape into ``cls``, driven by its type hints.
 
-    Values that are already of the target type pass through untouched, so raw shapes and
-    code-built objects can mix freely. A ``from_config`` classmethod on the target type
-    overrides the default handling (for fields whose config shape differs from their fields);
-    enums are constructed by value, paths from their string, and dataclasses recurse field-wise
-    from a mapping - strictly, so unknown or missing keys raise ``ValueError``. ``list``/``tuple``/
-    ``set``/``dict`` annotations recurse into their elements (keys and values for dicts), ``dict``
-    subclasses construct through the key/value types of their generic base, ``X | None`` unwraps to
-    ``X``, and anything else is returned as-is. The input is never mutated (YAML anchors may alias
-    sub-mappings). ``to_dict`` writes each of these shapes back, a ``to_config`` method standing in for
-    ``from_config``.
+    Values that are already of the target type pass through untouched, so raw shapes and code-built
+    objects can mix freely. A ``from_config`` classmethod on the target type overrides the default
+    handling, for a type whose config shape differs from its fields. Enums are constructed by value,
+    paths from their string, and dataclasses field by field from a mapping, strictly. ``list``,
+    ``tuple``, ``set`` and ``dict`` annotations recurse into their elements (keys and values for
+    dicts), ``dict`` subclasses construct through the key and value types of their generic base,
+    ``X | None`` unwraps to ``X``, and anything else is returned as-is. The input is never mutated,
+    since YAML anchors may alias sub-mappings. ``to_dict`` writes each of these shapes back, a
+    ``to_config`` method standing in for ``from_config``.
+
+    Args:
+        cls: The type to read into.
+        value: The raw shape.
+
+    Returns:
+        ``value`` as an instance of ``cls``.
+
+    Raises:
+        ValueError: If ``value`` does not have the shape ``cls`` needs, or a dataclass's mapping has an
+            unknown key or misses a required one.
     """
     if cls is Any:
         return value
@@ -122,9 +150,17 @@ def from_dict(cls: type, value: Any) -> Any:
 
 
 def to_dict(value: Any) -> Any:
-    """The raw JSON shape of ``value``, which ``from_dict`` reads back.
+    """Write a value as its raw JSON shape, which ``from_dict`` reads back.
 
-    Raises ``TypeError`` for a value with no such shape (a function, a tensor): a config holds only data.
+    Args:
+        value: A config, or any value a config holds.
+
+    Returns:
+        The value as JSON types: dicts, lists, strings, numbers, booleans and ``None``.
+
+    Raises:
+        TypeError: If the value, or anything in it, has no such shape, such as a function or a tensor. A
+            config holds only data.
     """
     return json.loads(json.dumps(value, default=_raw))
 
@@ -164,10 +200,21 @@ def _key_from_dict(key_type: Any, key: Any) -> Any:
 
 
 def dataclass_from_dict(cls: type, value: Any) -> Any:
-    """``value`` read field by field into the dataclass ``cls``, bypassing any ``from_config`` of its own.
+    """Read a mapping field by field into a dataclass, bypassing any ``from_config`` of its own.
 
     What a ``from_config`` that only picks the class to read into hands the reading on to, since calling
     ``from_dict`` there would call that ``from_config`` again.
+
+    Args:
+        cls: The dataclass.
+        value: A mapping of its init fields.
+
+    Returns:
+        The dataclass instance.
+
+    Raises:
+        ValueError: If ``value`` is not a mapping, has a key the dataclass does not, or misses a required
+            one.
     """
     if not isinstance(value, dict):
         raise ValueError(f"Expected a mapping for {cls.__name__}, got {value!r}")

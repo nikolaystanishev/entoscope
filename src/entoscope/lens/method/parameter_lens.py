@@ -9,7 +9,7 @@ from jaxtyping import Float
 from entoscope.lens.config import LensMethodConfig
 from entoscope.lens.method.lens import AbstractLensMethod
 from entoscope.lens.method.logit_lens import projection_layer
-from entoscope.model.config import ModelLocation, ModelLocatorConfig
+from entoscope.model.config import ModelAxis, ModelLocatorConfig
 from entoscope.model.index import IndexElement
 from entoscope.model.slicer import ActivationSlicer
 from entoscope.model.weight import ACTIVATION_WEIGHT, ModelWeight, activation_weight, model_weight
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from entoscope.lens.input import LensInput
 
 
-def _selection(index: IndexElement[ModelLocatorConfig], location: ModelLocation) -> list[int] | slice:
+def _selection(index: IndexElement[ModelLocatorConfig], location: ModelAxis) -> list[int] | slice:
     # Always a list or a slice: a single advanced index per bracket keeps the axis and never pairs
     # 'head' with 'neuron' the way two list indices in one bracket would.
     value = index.get(location)
@@ -43,8 +43,13 @@ _PROJECTION_WEIGHT = {ProjectionSpace.EMBEDDING: ModelWeight.EMBED, ProjectionSp
 
 @dataclass(kw_only=True)
 class ParameterLensConfig(LensMethodConfig):
-    """``projection`` picks the vocabulary space a weight is read in, and ``scale`` multiplies the weight
-    first: a negative scale reads it against its own direction, and the magnitude acts as a temperature."""
+    """The method config of ``parameter_lens``.
+
+    Attributes:
+        projection: The vocabulary space a weight is read in.
+        scale: What the weight is multiplied by first. A negative scale reads it against its own direction,
+            and the magnitude acts as a temperature.
+    """
 
     projection: ProjectionSpace = ProjectionSpace.UNEMBEDDING
     scale: float = 1.0
@@ -53,9 +58,9 @@ class ParameterLensConfig(LensMethodConfig):
 class ParameterLens(AbstractLensMethod[ParameterLensConfig]):
     """Reads a weight vector onto the vocabulary: what a neuron or a head dimension reads or writes.
 
-    A unit is read through the weight ``ACTIVATION_WEIGHT`` names for its activation: the one computing it off
-    the residual stream, or, for one no weight computes (``mlp.post``, ``attn.z``), the one writing it back. It
-    reads the model's weights rather than a prompt's activations, so a run takes no prompt.
+    A unit is read through the weight ``ACTIVATION_WEIGHT`` names for its activation: the one computing it
+    off the residual stream, or, for one no weight computes (``mlp.post``, ``attn.z``), the one writing it
+    back. It reads the model's weights rather than a prompt's activations, so a run takes no prompt.
     """
 
     reads_activations = False
@@ -65,6 +70,19 @@ class ParameterLens(AbstractLensMethod[ParameterLensConfig]):
         lens_input: "LensInput",
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, " d_model"]:
+        """Read the weight vectors of the units an element names, summed into one direction.
+
+        Args:
+            lens_input: The input, whose prompt is unused.
+            index: The element.
+
+        Returns:
+            The summed weight vector.
+
+        Raises:
+            ValueError: If the activation names no weight vector, as a residual-stream one does not, or the
+                element names no single layer.
+        """
         activation = index.activation()
         if activation not in ACTIVATION_WEIGHT:
             raise ValueError(
@@ -84,5 +102,14 @@ class ParameterLens(AbstractLensMethod[ParameterLensConfig]):
         weight: Float[torch.Tensor, " d_model"],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, " d_vocab"]:
+        """Read a weight vector in the configured vocabulary space, scaled first.
+
+        Args:
+            weight: The element's summed weight vector.
+            index: The element.
+
+        Returns:
+            The element's logits over the vocabulary.
+        """
         vocabulary = model_weight(self.model, _PROJECTION_WEIGHT[self.method_config.projection])
         return (self.method_config.scale * weight) @ vocabulary.T

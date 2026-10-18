@@ -7,7 +7,7 @@ from entoscope.lens.config import LensConfig, LensMethodConfig
 from entoscope.lens.input import LensInput
 from entoscope.lens.lens import Lens
 from entoscope.lens.method.factory import LensMethodFactory
-from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.config import ModelAxis, ModelLayerLocation, ModelLocatorConfig
 from entoscope.model.token import escape_token
 
 PROMPT = "The capital of France is"
@@ -26,7 +26,7 @@ def coordinates_config(*coordinates: dict, method: LensMethodConfig | None = Non
 
 def declarative_config(
     activation: ModelLayerLocation,
-    location: list[ModelLocation],
+    location: list[ModelAxis],
     method: LensMethodConfig | None = None,
     top_k: int = 1,
     **source,

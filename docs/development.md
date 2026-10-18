@@ -55,7 +55,9 @@ uv run --group docs sphinx-build -W --keep-going docs docs/_build/html
 ```
 
 Open `docs/_build/html/index.html` to read the result. `-W` turns every warning into an error, which
-catches broken cross-references and docstrings that are not valid reStructuredText.
+catches broken cross-references and docstrings that are not valid reStructuredText. Docstrings are
+Google style (`Args:`, `Returns:`, `Raises:`, and `Attributes:` for a dataclass's fields), with the
+types left to the signature.
 
 The docs are tested along with the code, so they cannot drift from it unnoticed:
 

@@ -14,11 +14,11 @@ Gradients = dict[PatchingMetric, dict[str, torch.Tensor]]
 
 
 class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
-    """Attribution patching - the first-order Taylor expansion of the true indirect effect.
+    """Attribution patching, the first-order Taylor expansion of the true indirect effect.
 
     ``IE ~= grad(m) . (a_patch - a_clean)``, with the gradient taken on the target run at the
     activation a patch would overwrite. One backward pass scores the whole index, so the cost is
-    flat in the number of rows rather than linear in it; the price is that the estimate is only as
+    flat in the number of rows rather than linear in it. The price is that the estimate is only as
     good as the model's local linearity, which a large intervention (zero ablation of a whole
     layer, say) leaves well behind.
 
@@ -50,20 +50,35 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
         return steps, steps * len(self.config.metric)
 
     def _check_available(self, patching_input: PatchingInput) -> None:
-        """Nothing to check: a single gradient at the target's own activation asks for no second run."""
+        """Reject an input the method cannot score, before any pass is made.
+
+        Nothing to check here: a single gradient at the target's own activation asks for no second run.
+
+        Args:
+            patching_input: The prepared input.
+        """
 
     def _alphas(self) -> list[float]:
-        """Where along the path from the source activation to the target one the gradient is read.
+        """Choose where along the path from the source activation to the target one the gradient is read.
 
-        1.0 is the target (clean) activation itself, which is where the Taylor expansion is centred.
+        Returns:
+            The interpolation points, 1.0 being the target (clean) activation itself, where the Taylor
+            expansion is centred.
         """
         return [1.0]
 
     @torch.enable_grad()
     def _gradients(self, patching_input: PatchingInput, verbose: bool) -> Gradients:
-        """``d m / d a`` for every hooked activation, averaged over the interpolation path.
+        """Take ``d m / d a`` for every patched activation, averaged over the interpolation path.
 
-        Taken with autograd on whatever the caller has set, so a run under ``torch.no_grad()`` scores the same.
+        Autograd is on whatever the caller has set, so a run under ``torch.no_grad()`` scores the same.
+
+        Args:
+            patching_input: The prepared input.
+            verbose: Whether to show a progress bar over the interpolation points.
+
+        Returns:
+            Each metric's gradient with respect to every patched activation, keyed by metric and hook name.
         """
         names = patching_input.target_activation_names()
         alphas = self._alphas()
@@ -95,11 +110,20 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
     def _capture(
         self, name: str, alpha: float, patching_input: PatchingInput, captured: dict[str, torch.Tensor]
     ) -> Callable:
-        """A hook that moves the activation onto the interpolation point and keeps it differentiable.
+        """Build a hook that moves an activation onto the interpolation point and keeps it differentiable.
 
-        The tensor is left in the graph - detaching it would cut the path back through the layers
-        below and zero their gradients - and is handed to ``autograd.grad`` as a non-leaf input. One
-        that no parameter reaches, as on a frozen model, has no graph to cut and becomes a leaf instead.
+        The tensor is left in the graph, since detaching it would cut the path back through the layers
+        below and zero their gradients, and is handed to ``autograd.grad`` as a non-leaf input. One that
+        no parameter reaches, as on a frozen model, has no graph to cut and becomes a leaf instead.
+
+        Args:
+            name: The activation's hook name.
+            alpha: The interpolation point, 1.0 for the target activation.
+            patching_input: The prepared input.
+            captured: Where the hook stores the activation it hands on, keyed by hook name.
+
+        Returns:
+            The hook function.
         """
 
         def interpolate(activation: torch.Tensor, hook) -> torch.Tensor:
@@ -118,7 +142,14 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
 
 @dataclass(kw_only=True)
 class IntegratedGradientsConfig(PatchingMethodConfig):
-    """``interpolation_steps`` is the number of points the gradient is averaged over."""
+    """The method config of ``integrated_gradients``.
+
+    Attributes:
+        interpolation_steps: The number of points the gradient is averaged over.
+
+    Raises:
+        ValueError: If ``interpolation_steps`` is below 1.
+    """
 
     interpolation_steps: int = 10
 
@@ -133,7 +164,7 @@ class IntegratedGradientsMethod(AttributionPatchingMethod[IntegratedGradientsCon
     Averages the gradient over ``interpolation_steps`` points on the straight path from the source
     activation to the target one instead of reading it once at the target. That recovers the
     effects a flat gradient at the clean point hides, and costs one forward and one backward pass
-    per step - still flat in the size of the index.
+    per step, still flat in the size of the index.
 
     Every hooked activation is interpolated on the same pass, which is what keeps the cost at
     ``interpolation_steps`` passes rather than that many per row.
@@ -141,7 +172,7 @@ class IntegratedGradientsMethod(AttributionPatchingMethod[IntegratedGradientsCon
     The path runs between the two runs' activations, so it is the path the intervention actually
     traverses only when the source resamples from the source run. A value-based source (zero
     ablation, scaling, noise) writes something off that path, and the averaged gradient then
-    belongs to a change other than the one being scored - attribution patching, whose expansion
+    belongs to a change other than the one being scored. Attribution patching, whose expansion
     point does not depend on a path at all, is the estimate to reach for there.
     """
 

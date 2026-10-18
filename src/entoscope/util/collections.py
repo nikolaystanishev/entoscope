@@ -21,9 +21,16 @@ T = TypeVar("T")
 
 
 def broadcast_length(*lengths: int) -> int:
-    """The length sequences of ``lengths`` pair up to, one of a single element repeated along the others.
+    """Find the length sequences pair up to, one of a single element repeated along the others.
 
-    Raises ``ValueError`` when two of them are longer than one and differ.
+    Args:
+        *lengths: The sequences' lengths.
+
+    Returns:
+        The common length.
+
+    Raises:
+        ValueError: If two of the lengths are longer than one and differ.
     """
     longer = set(lengths) - {1}
     if len(longer) > 1:
@@ -32,7 +39,17 @@ def broadcast_length(*lengths: int) -> int:
 
 
 def zip_broadcast(*sequences: Sequence[T]) -> list[tuple[T, ...]]:
-    """Zip ``sequences`` element by element, one of a single element repeated along the others."""
+    """Zip sequences element by element, one of a single element repeated along the others.
+
+    Args:
+        *sequences: The sequences to zip.
+
+    Returns:
+        One tuple per element of the longest sequence.
+
+    Raises:
+        ValueError: If two of the sequences are longer than one element and differ in length.
+    """
     length = broadcast_length(*map(len, sequences))
     return list(
         zip(*(list(sequence) * length if len(sequence) == 1 else sequence for sequence in sequences), strict=True)

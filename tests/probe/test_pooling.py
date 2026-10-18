@@ -8,7 +8,7 @@ run's coefficients exactly when - and only when - the run pooled the same way.
 import pytest
 import torch
 
-from entoscope.model.config import Filter, Group, ModelLayerLocation, ModelLocation
+from entoscope.model.config import Filter, Group, ModelAxis, ModelLayerLocation
 from entoscope.probe.config import PoolingType, ProbeConfig
 
 from .conftest import (
@@ -47,7 +47,7 @@ def _stacked(caches, name: str, reduce) -> torch.Tensor:
     ],
 )
 def test_a_pooled_position_axis_is_reduced_over_the_prompt(small_model, small_caches, pooling, reduce):
-    collector = run_probe(small_model, probe_config(pool={ModelLocation.POSITION: pooling}))
+    collector = run_probe(small_model, probe_config(pool={ModelAxis.POSITION: pooling}))
 
     assert _feature_size(collector) == small_model.cfg.d_model
     assert_trained_alike(probe_of(collector), refit(_stacked(small_caches, "blocks.0.hook_resid_post", reduce)))
@@ -77,7 +77,7 @@ def test_each_axis_is_pooled_with_its_own_type(small_model, small_caches):
         small_model,
         probe_config(
             activation=ModelLayerLocation.ATTENTION_Z,
-            pool={ModelLocation.POSITION: PoolingType.MEAN, ModelLocation.HEAD: PoolingType.MAX},
+            pool={ModelAxis.POSITION: PoolingType.MEAN, ModelAxis.HEAD: PoolingType.MAX},
         ),
     )
 
@@ -92,17 +92,17 @@ def test_axes_are_pooled_in_their_own_order_not_the_configs(small_model):
     def collector_for(pool: dict):
         return run_probe(small_model, probe_config(activation=ModelLayerLocation.ATTENTION_Z, pool=pool))
 
-    position_first = collector_for({ModelLocation.POSITION: PoolingType.MEAN, ModelLocation.HEAD: PoolingType.MAX})
-    head_first = collector_for({ModelLocation.HEAD: PoolingType.MAX, ModelLocation.POSITION: PoolingType.MEAN})
+    position_first = collector_for({ModelAxis.POSITION: PoolingType.MEAN, ModelAxis.HEAD: PoolingType.MAX})
+    head_first = collector_for({ModelAxis.HEAD: PoolingType.MAX, ModelAxis.POSITION: PoolingType.MEAN})
 
     assert_trained_alike(probe_of(position_first), probe_of(head_first))
 
 
 def test_a_pooling_entry_that_matches_no_axis_is_ignored(small_model):
     # The residual stream has no head axis, and the grid already pinned the layer.
-    pooled = run_probe(small_model, probe_config(pool={ModelLocation.POSITION: PoolingType.MEAN}))
+    pooled = run_probe(small_model, probe_config(pool={ModelAxis.POSITION: PoolingType.MEAN}))
     with_extra = run_probe(
-        small_model, probe_config(pool={ModelLocation.POSITION: PoolingType.MEAN, ModelLocation.HEAD: PoolingType.MAX})
+        small_model, probe_config(pool={ModelAxis.POSITION: PoolingType.MEAN, ModelAxis.HEAD: PoolingType.MAX})
     )
 
     assert_trained_alike(probe_of(pooled), probe_of(with_extra))
@@ -115,8 +115,8 @@ def test_both_of_the_patterns_position_axes_are_pooled(small_model, small_caches
         small_model,
         probe_config(
             activation=ModelLayerLocation.ATTENTION_PATTERN,
-            location=[ModelLocation.LAYER, ModelLocation.HEAD],
-            pool={ModelLocation.POSITION: PoolingType.SUM},
+            location=[ModelAxis.LAYER, ModelAxis.HEAD],
+            pool={ModelAxis.POSITION: PoolingType.SUM},
         ),
     )
 
@@ -127,14 +127,14 @@ def test_both_of_the_patterns_position_axes_are_pooled(small_model, small_caches
 
 def test_a_pooling_type_that_is_not_known_raises(small_model):
     with pytest.raises(ValueError, match="Unknown pooling type"):
-        run_probe(small_model, probe_config(pool={ModelLocation.POSITION: "median"}))
+        run_probe(small_model, probe_config(pool={ModelAxis.POSITION: "median"}))
 
 
 def test_a_single_value_becomes_a_single_feature(small_model, small_caches):
     # One neuron at one position leaves nothing to flatten - the activation is a scalar.
     config = probe_config(
         activation=ModelLayerLocation.MLP_POST,
-        location=[ModelLocation.LAYER, ModelLocation.NEURON, ModelLocation.POSITION],
+        location=[ModelAxis.LAYER, ModelAxis.NEURON, ModelAxis.POSITION],
         pool={},
         filter=Filter.from_config([{"neuron": 1, "position": -1}]),
     )
@@ -151,8 +151,8 @@ def test_two_grouped_axes_cannot_be_named(small_model):
     # merge into a single axis whose name is no longer attributable.
     config = probe_config(
         activation=ModelLayerLocation.ATTENTION_Z,
-        location=[ModelLocation.LAYER, ModelLocation.HEAD, ModelLocation.NEURON],
-        group=Group({ModelLocation.HEAD: "all", ModelLocation.NEURON: "all"}),
+        location=[ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.NEURON],
+        group=Group({ModelAxis.HEAD: "all", ModelAxis.NEURON: "all"}),
     )
 
     with pytest.raises(ValueError, match="more than one axis is indexed with a list"):
@@ -162,7 +162,7 @@ def test_two_grouped_axes_cannot_be_named(small_model):
 def test_an_unpooled_pattern_needs_prompts_of_equal_length(small_model):
     config = probe_config(
         activation=ModelLayerLocation.ATTENTION_PATTERN,
-        location=[ModelLocation.LAYER, ModelLocation.HEAD],
+        location=[ModelAxis.LAYER, ModelAxis.HEAD],
         pool={},
     )
 
@@ -175,7 +175,7 @@ def test_an_unpooled_pattern_needs_prompts_of_equal_length(small_model):
 # --------------------------------------------------------------------------------------------------
 def _position_config(*positions: int) -> ProbeConfig:
     return probe_config(
-        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        location=[ModelAxis.LAYER, ModelAxis.POSITION],
         pool={},
         filter=Filter.from_config([{"position": position} for position in positions]),
     )
@@ -205,9 +205,7 @@ def test_an_absolute_and_a_relative_position_stay_apart(small_model, small_cache
     result = collector.result
 
     assert set(result["source_position"]) == {2, -2}
-    from_start = [
-        single.output for single in collector.operation_input.index if single.source[ModelLocation.POSITION] == 2
-    ]
+    from_start = [single.output for single in collector.operation_input.index if single.source[ModelAxis.POSITION] == 2]
     expected = _stacked(small_caches, "blocks.0.hook_resid_post", lambda residual: residual[2])
     assert_trained_alike(collector.probes[from_start[0]], refit(expected))
 
@@ -221,7 +219,7 @@ def test_a_position_outside_the_shortest_prompt_raises(small_model, position):
 def test_a_full_position_grid_is_built_for_prompts_of_equal_length(small_model):
     collector = run_probe(
         small_model,
-        probe_config(location=[ModelLocation.LAYER, ModelLocation.POSITION]),
+        probe_config(location=[ModelAxis.LAYER, ModelAxis.POSITION]),
         positive=EQUAL_POSITIVE,
         negative=EQUAL_NEGATIVE,
     )

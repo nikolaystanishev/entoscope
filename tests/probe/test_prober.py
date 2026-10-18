@@ -12,7 +12,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 
 from entoscope.model.cache import CachedModel
-from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation
+from entoscope.model.config import Filter, ModelAxis, ModelLayerLocation
 from entoscope.probe.config import PoolingType, ProbeConfig, ProbeMetric
 from entoscope.probe.input import ProbeInput
 from entoscope.probe.prober import Prober
@@ -36,7 +36,7 @@ def _single_neuron_config(**overrides) -> ProbeConfig:
     """One feature per example, so the probe cannot separate any four points it likes."""
     return probe_config(
         activation=ModelLayerLocation.MLP_POST,
-        location=[ModelLocation.LAYER, ModelLocation.NEURON],
+        location=[ModelAxis.LAYER, ModelAxis.NEURON],
         filter=Filter.from_config([{"neuron": NEURON}]),
         metric=list(METRICS),
         **overrides,
@@ -201,7 +201,7 @@ def test_artifacts_are_saved_to_disk(model, config_from_yaml, tmp_path):
 def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model, config_from_yaml):
     from_file = config_from_yaml(ProbeConfig, "my_probe", PROBE_YAML)
 
-    assert from_file.pool == {ModelLocation.POSITION: PoolingType.MEAN}
+    assert from_file.pool == {ModelAxis.POSITION: PoolingType.MEAN}
     assert from_file.metric == list(METRICS)
     assert run_probe(model, from_file).result.equals(run_probe(model, probe_config(metric=list(METRICS))).result)
 

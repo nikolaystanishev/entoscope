@@ -2,9 +2,9 @@
 
 Locating activations, the index operations iterate, and model access.
 
-`Model`, `CachedModel`, the locator transforms and the location enums are importable from `entoscope.model`,
-and all but `Model` from `entoscope` too. `ModelLocatorConfig` and the index classes are imported from the
-modules defining them, `entoscope.model.config` and `entoscope.model.index`.
+`Model`, `CachedModel`, `ModelLocatorConfig`, the locator transforms and the `ModelAxis` and
+`ModelLayerLocation` enums are importable from `entoscope.model`, and all but `Model` from `entoscope` too.
+The index classes are imported from the module defining them, `entoscope.model.index`.
 
 ```{eval-rst}
 .. automodule:: entoscope.model.base

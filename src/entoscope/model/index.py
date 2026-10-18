@@ -13,8 +13,8 @@ except ImportError:  # transformer-lens 2.x (Intel macOS fallback)
     from transformer_lens.utils import get_act_name
 
 from entoscope.model.config import (
+    ModelAxis,
     ModelLayerLocation,
-    ModelLocation,
     ModelLocationIndex,
     ModelLocatorConfig,
     make_df_from_ranges,
@@ -43,11 +43,16 @@ T = TypeVar("T", bound="ModelLocatorConfig")
 
 
 class IndexElement(Generic[T]):
-    """One side of an index row: its location values by name, read off the locator config ``config``.
+    """One side of an index row: its values by axis, read off a locator config.
 
     ``slices`` turns the values into the slice of the activation tensor they address, and
     ``transformer_activation`` names the hook that tensor is cached under. A list value addresses
-    several entries of its axis at once; a location the row does not name is the whole axis.
+    several entries of its axis at once, and an axis the row does not name is read whole.
+
+    Args:
+        config: The locator the row was resolved from.
+        index_names: The row's keys, ``ModelAxis`` values.
+        index: The row's values, one per key.
     """
 
     def __init__(self, config: T, index_names: list[str], index: list[int | list[int] | str | ModelLayerLocation]):
@@ -65,19 +70,30 @@ class IndexElement(Generic[T]):
         return index
 
     def slices(self, batch: int | slice = slice(None)) -> tuple[slice | int | list[int], ...]:
-        """The element's slices into an activation, at ``batch`` along its batch axis.
+        """Slice the element's activation.
 
         The batch row is an argument rather than state on the element: ``zip_broadcast`` hands the same
         element to every row a one-row index is paired with, so a row stored on it would be shared.
+
+        Args:
+            batch: The batch rows to read.
+
+        Returns:
+            One index per axis of the activation tensor, in the order the tensor holds its axes.
         """
         return ActivationSlicer.get(self.activation()).extract(self._index_by_name(batch))
 
-    def remaining_axes(self) -> list[ModelLocation | str]:
-        """Names of the activation axes that survive ``slices()``, batch excluded.
+    def remaining_axes(self) -> list[ModelAxis | str]:
+        """Name the activation axes that survive ``slices()``, batch excluded.
 
-        An ``int`` index drops its axis while a ``slice`` or ``list`` keeps it. Two or more
-        ``list`` indices trigger NumPy-style advanced indexing, which merges those axes into
-        one whose name can no longer be attributed - that case raises instead.
+        An ``int`` index drops its axis while a ``slice`` or ``list`` keeps it.
+
+        Returns:
+            The surviving axes, in tensor order.
+
+        Raises:
+            ValueError: If two or more axes are indexed with a list. NumPy-style advanced indexing merges
+                those axes into one whose name can no longer be attributed.
         """
         slicer = ActivationSlicer.get(self.activation())
         slices = slicer.extract(self._index_by_name())
@@ -88,32 +104,62 @@ class IndexElement(Generic[T]):
         ]
 
     def activation(self) -> ModelLayerLocation:
-        """The row's activation, as a member whichever way the frame stores it (pandas 3 keeps a string)."""
-        activation = self[ModelLocation.ACTIVATION]
+        """Read the row's activation, as a member whichever way the frame stores it (pandas 3 keeps a string).
+
+        Returns:
+            The activation, or ``None`` when the locator names none.
+        """
+        activation = self[ModelAxis.ACTIVATION]
         return activation if activation is None else ModelLayerLocation(activation)
 
     def transformer_activation(self) -> str:
+        """Name the hook the row's activation is cached under.
+
+        Returns:
+            The ``transformer_lens`` hook name, such as ``blocks.3.hook_resid_post``.
+        """
         return get_act_name(TRANSFORMER_ACT_NAME[self.activation()], layer=self.layer())
 
     def layer(self) -> int | None:
-        layer = self.get(ModelLocation.LAYER)
+        """Read the row's layer.
+
+        Returns:
+            The layer, or ``None`` when the row names no single layer.
+        """
+        layer = self.get(ModelAxis.LAYER)
         if not isinstance(layer, str) and not isinstance(layer, Sequence):
             return layer
         return None
 
-    def get(self, location: ModelLocation | str) -> int | list[int] | str | None:
+    def get(self, location: ModelAxis | str) -> int | list[int] | str | None:
+        """Read the row's value on one axis.
+
+        Args:
+            location: The axis, or ``activation``.
+
+        Returns:
+            The value, or ``None`` when the row does not name the axis.
+        """
         return self[location] if location in self.index_names else None
 
-    def __getitem__(self, location: ModelLocation | str):
+    def __getitem__(self, location: ModelAxis | str):
         return self.index[self.index_names.index(location)]
 
 
 class SingleIndex(Generic[T]):
     """One row of an ``Index``: where to read, where to write, and which result row it fills.
 
-    ``output`` is that row's position in the index - the key a collector files its cell under and the
-    row it lands on in the result frame. Positions are what ``Index`` iteration already hands out in
-    order, so a run needs no coordinate of its own to find its row.
+    Positions are what ``Index`` iteration already hands out in order, so a run needs no coordinate of
+    its own to find its row.
+
+    Args:
+        output_position: The row's position in the index.
+        source: Where the row reads.
+        target: Where the row writes, for patching.
+
+    Attributes:
+        output: The row's position in the index, the key a collector files its cell under and the row
+            it lands on in the result frame.
     """
 
     def __init__(self, output_position: int, source: IndexElement[T], target: IndexElement | None = None):
@@ -123,10 +169,12 @@ class SingleIndex(Generic[T]):
 
     @property
     def source(self) -> IndexElement[T]:
+        """Where the row reads."""
         return self._source
 
     @property
     def target(self) -> IndexElement[T]:
+        """Where the row writes. Only a patching index has one."""
         assert self._target is not None
         return self._target
 
@@ -134,10 +182,20 @@ class SingleIndex(Generic[T]):
 class Index(Generic[T]):
     """The rows an operation iterates, one ``SingleIndex`` each.
 
-    ``source`` is a parsed locator; patching adds the ``target`` it writes into, paired with the source
-    row by row - so the two have as many rows, or one of them a single row, which pairs with every row of
-    the other. ``to_df`` is the frame ``index.csv`` holds, its columns prefixed ``source_`` and ``target_``,
-    and ``layout_df`` codes the axes a result page lays the rows out on.
+    Patching adds a target to write into, paired with the source row by row, so the two have as many
+    rows, or one of them a single row, which pairs with every row of the other.
+
+    Args:
+        source_config: The locator the source was resolved from.
+        source: The resolved source.
+        target_config: The locator the target was resolved from, for patching.
+        target: The resolved target, for patching.
+
+    Attributes:
+        layout_df: One integer code per row on every axis a result page lays the rows out on.
+
+    Raises:
+        ValueError: If the source and the target cannot be paired row by row.
     """
 
     def __init__(
@@ -169,15 +227,25 @@ class Index(Generic[T]):
         ):
             self.layout_df = make_df_from_ranges(["coordinate"], [len(laid_out)])
         else:
-            axes = laid_out.drop(columns=ModelLocation.ACTIVATION, errors="ignore")
+            axes = laid_out.drop(columns=ModelAxis.ACTIVATION, errors="ignore")
             self.layout_df = pd.DataFrame(
                 {column: pd.factorize(axes[column].astype(str))[0] for column in axes.columns}
             )
 
     def source_activation_names(self) -> set[str]:
+        """Name the hooks the source rows read.
+
+        Returns:
+            The ``transformer_lens`` hook names.
+        """
         return self._activation_names(self.source_config, self.source)
 
     def target_activation_names(self) -> set[str]:
+        """Name the hooks the target rows write.
+
+        Returns:
+            The ``transformer_lens`` hook names, empty without a target.
+        """
         return self._activation_names(self.target_config, self.target)
 
     @staticmethod
@@ -189,6 +257,12 @@ class Index(Generic[T]):
         return {element.transformer_activation() for element in elements if element.activation() is not None}
 
     def to_df(self) -> pd.DataFrame:
+        """Lay the index out as ``index.csv`` holds it.
+
+        Returns:
+            One row per index row, the source's columns prefixed ``source_`` and the target's
+            ``target_``, a single-row side repeated along the other.
+        """
         frames = [self._paired(self.source.df).add_prefix("source_")]
         if self.target is not None:
             frames.append(self._paired(self.target.df).add_prefix("target_"))
@@ -196,11 +270,23 @@ class Index(Generic[T]):
         return pd.concat(frames, axis=1)
 
     def _paired(self, frame: pd.DataFrame) -> pd.DataFrame:
-        """``frame``'s rows in the order they pair, a single row repeated along every row of the other side."""
+        """Order one side's rows as they pair.
+
+        Args:
+            frame: One side of the index.
+
+        Returns:
+            The rows, a single row repeated along every row of the other side.
+        """
         rows = [0] * len(self) if len(frame) == 1 else list(range(len(frame)))
         return frame.iloc[rows].reset_index(drop=True)
 
     def to_csv(self, path: str):
+        """Write ``to_df()`` as a CSV file.
+
+        Args:
+            path: The file to write.
+        """
         self.to_df().to_csv(path, index=False)
 
     def __iter__(self):

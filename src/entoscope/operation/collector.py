@@ -25,15 +25,19 @@ logger = logging.getLogger(__name__)
 class AbstractCollector(abc.ABC, Generic[InputT]):
     """Accumulates one operation run's per-location results and writes them to ``save_dir``.
 
-    A subclass owns the shape of a result - a DataFrame, a tensor, ... - which it allocates as it is
-    constructed, fills in a single location's cell at a time through ``collect`` and exposes as ``result``.
-    ``save`` creates ``save_dir``, hands it to ``_save_result`` - which owns everything the run
-    leaves behind: its result, the index files beside it and the config it ran under - and reports
-    where that landed.
+    A subclass owns the shape of a result (a DataFrame, a list of graphs, ...), which it allocates as it
+    is constructed, fills one location's cell at a time through ``collect`` and exposes as ``result``.
+    ``save`` creates ``save_dir`` and hands it to ``_save_result``, which owns everything the run leaves
+    behind: its result, the index files beside it and the config it ran under.
 
     Every collector takes the model whether or not it reads one, so an operator constructs whichever
-    ``collector_class`` it was given the same way; swapping in a collector that labels the prompt's
-    tokens (or reads ``cfg``) for one that does not is then only a class name.
+    ``collector_class`` it was given the same way, and swapping in a collector that labels the prompt's
+    tokens (or reads ``cfg``) for one that does not is only a class name.
+
+    Args:
+        operation_input: The input the run iterates.
+        model: The model the run reads.
+        save_dir: The directory ``save`` writes into, or ``None`` to write nothing.
     """
 
     def __init__(self, operation_input: InputT, model: Model, save_dir: str | None = None):
@@ -44,28 +48,46 @@ class AbstractCollector(abc.ABC, Generic[InputT]):
     @property
     @abc.abstractmethod
     def result(self) -> Any:
+        """What the run collected so far."""
         raise NotImplementedError
 
     @abc.abstractmethod
     def collect(self, *args: Any, **kwargs: Any) -> None:
+        """Take one result from the run's method, filed under the index position it belongs to.
+
+        Args:
+            *args: The result and its position, as each collector declares them.
+            **kwargs: The same, by keyword.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def _save_result(self, save_dir: str) -> None:
-        """Persist the collected result and its index file(s) into ``save_dir``."""
+        """Write the collected result, its index files and the config into ``save_dir``.
+
+        Args:
+            save_dir: An existing directory.
+        """
         raise NotImplementedError
 
     def output_files(self) -> list[str]:
-        """The file names ``save`` writes into ``save_dir`` - what a plan reports as the run's output.
+        """List the file names ``save`` writes into ``save_dir``, which a plan reports as the run's output.
 
-        Subclasses extend this to mirror their own ``_save_result``. Deliberately not abstract:
-        ``collector_class`` is an extension point, so a collector that declares no files keeps
-        working and is reported as writing none. A plan asks a collector nothing was collected into, so an
+        Subclasses extend this to mirror their own ``_save_result``. It is deliberately not abstract:
+        ``collector_class`` is an extension point, so a collector that declares no files keeps working
+        and is reported as writing none. A plan asks a collector nothing was collected into, so an
         override may read the input but never the collected result.
+
+        Returns:
+            The file names, relative to ``save_dir``.
         """
         return []
 
     def save(self) -> None:
+        """Write the run's files into ``save_dir``, created if missing, and log where they went.
+
+        Writes nothing when ``save_dir`` is ``None``.
+        """
         if self.save_dir is None:
             return
 
@@ -79,7 +101,13 @@ class FrameCollector(AbstractCollector[InputT]):
     """A collector whose result is a frame with one row per row of the index the run swept.
 
     Cells arrive one at a time under the index position they fill and are glued back onto that
-    index's own columns, so a subclass says only which indices the run has and what a cell holds.
+    index's own columns, so a subclass says only which indices the run has and what a cell holds. It
+    writes ``result.csv``, an index CSV per index and ``config.json``.
+
+    Args:
+        operation_input: The input the run iterates.
+        model: The model the run reads.
+        save_dir: The directory ``save`` writes into, or ``None`` to write nothing.
     """
 
     def __init__(self, operation_input: InputT, model: Model, save_dir: str | None = None):
@@ -88,14 +116,19 @@ class FrameCollector(AbstractCollector[InputT]):
 
     @property
     def result(self) -> pd.DataFrame:
+        """The index's columns followed by the collected cells, one row per index row."""
         rows = pd.DataFrame([self._cells[position] for position in range(len(self._index))])
         return pd.concat([self._index.to_df().reset_index(drop=True), rows], axis=1)
 
     @abc.abstractmethod
     def _indices(self) -> dict[str, Index]:
-        """The run's indices, keyed by the CSV file name each is written to.
+        """Name the run's indices.
 
-        Reached from ``output_files`` too, so it may read the (index-resolved) input and no more.
+        Reached from ``output_files`` too, so it may read the index-resolved input and no more.
+
+        Returns:
+            The run's indices, keyed by the CSV file name each is written to. The first one lays out the
+            result.
         """
         raise NotImplementedError
 
@@ -122,6 +155,9 @@ class FigureMixin(Generic[FigureT]):
     The figure is the last type parameter of whichever ``FigureMixin`` a collector names, so it is
     stated once, in the base list. An explicit assignment still wins, and an intermediate subclass
     that leaves the parameter free resolves nothing and inherits.
+
+    Attributes:
+        figure_class: The ``Figure`` the collector draws.
     """
 
     figure_class: type[FigureT]

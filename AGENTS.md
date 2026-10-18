@@ -42,7 +42,7 @@ patching, probing, lensing, and circuit discovery.
 
 ## Architecture
 
-Every operation - Logit/Tuned/Parameter Lens, Probing, Activation Patching, Circuit Discovery -
+Every operation - Logit/Tuned/Parameter Lens, Activation Patching, Probing, Circuit Discovery -
 follows the same four-part shape, and adding one means writing the same four pieces:
 
 - **Config** (`<op>/config.py`) - a `kw_only` dataclass extending `AbstractConfig`, validating in
@@ -170,9 +170,9 @@ back what was there must reproduce the target run exactly.
 
 Each package's `__init__.py` re-exports its public classes in a sorted `__all__`, and
 `entoscope/__init__.py` re-exports the everyday ones from those (operators, inputs, configs, method
-configs, enums, locator transforms, `CachedModel`, `ConfigFactory`, `experiment`), so
+configs, enums, `ModelLocatorConfig` and its transforms, `CachedModel`, `ConfigFactory`, `experiment`), so
 `from entoscope import Lens, LensConfig, LensInput` works; `tests/test_public_api.py` keeps the levels in
-step. The built-in method classes, `ModelLocatorConfig`, the index classes and `from_dict`/`to_dict` are
+step. The built-in method classes, the index classes and `from_dict`/`to_dict` are
 not re-exported: they are imported from the modules defining them. The docs and examples import from these. Code in `src/` imports from the defining module instead,
 never from `entoscope` or an operation's package, whose `__init__` imports everything and would cycle.
 
@@ -189,6 +189,9 @@ time, so the config class must be defined above it.
 - Comments and docstrings explain *why* and what is non-obvious (a numerical gotcha, why a guard
   exists, what a backend does differently). They do not restate what the code or the math already
   says; such comments get deleted.
+- Docstrings are Google style, rendered by napoleon: a summary line, then `Args:`, `Returns:` (or
+  `Yields:`) and `Raises:` for a function, and `Args:` for a class's constructor or `Attributes:` for a
+  dataclass's fields. Types stay in the signature, not the docstring.
 - Messages to the user go through a module's `logging.getLogger(__name__)`, never `print`.
   `entoscope/__init__.py` gives the `entoscope` logger its own stderr handler at INFO and stops it propagating,
   so a dependency that configures the root logger (transformer_lens does) cannot reformat or mute it.
@@ -200,7 +203,7 @@ time, so the config class must be defined above it.
 ## Docs
 
 `docs/` is a Sphinx site written in Markdown through MyST, with the Furo theme. Each page reads on
-GitHub too, so pages stick to plain Markdown, relative links and hidden toctrees. The API reference
+GitHub too, so pages stick to plain Markdown, GitHub-style `> [!NOTE]` alerts, relative links and hidden toctrees. The API reference
 (`docs/reference/`) is a page per package that lists its modules for autodoc - a new module is added
 there by hand - which makes docstrings part of the docs: they must be valid reStructuredText, since
 the `-W` build fails on any warning. `README.md` is the landing page and the PyPI description, so its

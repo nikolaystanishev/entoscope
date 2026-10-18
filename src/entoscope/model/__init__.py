@@ -6,8 +6,9 @@ from entoscope.model.config import (
     Filter,
     Group,
     Incremental,
+    ModelAxis,
     ModelLayerLocation,
-    ModelLocation,
+    ModelLocatorConfig,
 )
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "Group",
     "Incremental",
     "Model",
+    "ModelAxis",
     "ModelLayerLocation",
-    "ModelLocation",
+    "ModelLocatorConfig",
 ]

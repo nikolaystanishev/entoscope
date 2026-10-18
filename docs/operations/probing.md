@@ -15,15 +15,15 @@ from transformer_lens.model_bridge import TransformerBridge
 
 from entoscope import (
     LinearProbeConfig,
+    ModelAxis,
     ModelLayerLocation,
-    ModelLocation,
+    ModelLocatorConfig,
     PoolingType,
     ProbeConfig,
     ProbeInput,
     ProbeMetric,
     Prober,
 )
-from entoscope.model.config import ModelLocatorConfig
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
@@ -31,9 +31,9 @@ model.eval()
 # A sentiment probe on the last token's residual stream, after every layer.
 config = ProbeConfig(
     method=LinearProbeConfig(type="linear"),
-    pool={ModelLocation.POSITION: PoolingType.LAST},
+    pool={ModelAxis.POSITION: PoolingType.LAST},
     metric=[ProbeMetric.ACCURACY, ProbeMetric.AUROC],
-    source=ModelLocatorConfig(activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelLocation.LAYER]),
+    source=ModelLocatorConfig(activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelAxis.LAYER]),
 )
 positive = ["The movie was absolutely wonderful", "I loved every minute of it", "What a delightful surprise"]
 negative = ["The movie was dreadful and boring", "I hated every minute of it", "What a miserable waste of time"]

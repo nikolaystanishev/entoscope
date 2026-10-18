@@ -9,10 +9,17 @@ from entoscope.operation.input import OperationInput
 
 @dataclass
 class CircuitInput(OperationInput):
-    """A list of prompts to discover circuits for; one contribution graph is built per prompt.
+    """The prompts to discover circuits for, one contribution graph per prompt.
 
     It holds no activations: the method runs each prompt as it builds that prompt's circuit, so peak
     memory stays bounded by the largest single prompt regardless of how many prompts are passed.
+
+    Attributes:
+        config: The circuit discovery config.
+        prompts: The prompts.
+
+    Raises:
+        ValueError: If ``prompts`` is empty.
     """
 
     config: CircuitConfig

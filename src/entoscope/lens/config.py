@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from entoscope.model.config import ModelLocation, ModelLocatorConfig
+from entoscope.model.config import ModelAxis, ModelLocatorConfig
 from entoscope.operation.config import AbstractConfig
 from entoscope.operation.method import MethodConfig
 
@@ -13,11 +13,18 @@ if TYPE_CHECKING:
 
 @dataclass(kw_only=True)
 class LensMethodConfig(MethodConfig):
-    """The method config of a lens that takes no fields, such as ``logit_lens``; a lens with fields names a
-    dataclass extending this one."""
+    """The method config of a lens that takes no fields, such as ``logit_lens``.
+
+    A lens with fields of its own names a dataclass extending this one.
+    """
 
     @classmethod
     def factory(cls) -> type[LensMethodFactory]:
+        """Name the factory lens methods register with.
+
+        Returns:
+            ``LensMethodFactory``.
+        """
         from entoscope.lens.method.factory import LensMethodFactory
 
         return LensMethodFactory
@@ -25,9 +32,21 @@ class LensMethodConfig(MethodConfig):
 
 @dataclass(kw_only=True)
 class LensConfig(AbstractConfig):
-    """``method`` is the lens's method config, ``type`` naming the lens: an instance of its method config class,
-    or in a YAML file the mapping read strictly into that class, or just the lens's type for its defaults - so
-    a file naming a lens nothing registered or a field the lens does not have fails as it is read."""
+    """What a lens run reads and how.
+
+    In a YAML file ``method`` is the mapping read strictly into the lens's method config class, or just
+    the lens's type for its defaults, so a file naming a lens nothing registered or a field the lens
+    does not have fails as it is read.
+
+    Attributes:
+        method: The lens's method config, whose ``type`` names the lens.
+        top_k: How many tokens to keep per row.
+        source: Where to read. A lens that reads activations reads one position per row, and one that
+            reads weights reads no position.
+
+    Raises:
+        ValueError: If ``top_k`` is below 1, or ``source`` does not name the positions the lens reads.
+    """
 
     method: LensMethodConfig
     top_k: int = 1
@@ -39,8 +58,8 @@ class LensConfig(AbstractConfig):
 
         source = self.source
         if not LensMethodConfig.factory().get(self.method.type).reads_activations:
-            if ModelLocation.POSITION in source.location or any(
-                ModelLocation.POSITION in coordinate for coordinate in source.coordinates or []
+            if ModelAxis.POSITION in source.location or any(
+                ModelAxis.POSITION in coordinate for coordinate in source.coordinates or []
             ):
                 raise ValueError(
                     f"'position' is not a location of '{self.method.type}': it reads the model's weights, "
@@ -50,10 +69,10 @@ class LensConfig(AbstractConfig):
 
         if source.coordinates is not None:
             one_position_per_row = all(
-                isinstance(coordinate.get(ModelLocation.POSITION), int) for coordinate in source.coordinates
+                isinstance(coordinate.get(ModelAxis.POSITION), int) for coordinate in source.coordinates
             )
         else:
-            one_position_per_row = ModelLocation.POSITION in source.location and ModelLocation.POSITION not in (
+            one_position_per_row = ModelAxis.POSITION in source.location and ModelAxis.POSITION not in (
                 *source.group,
                 *source.incremental,
                 *source.combination.location,

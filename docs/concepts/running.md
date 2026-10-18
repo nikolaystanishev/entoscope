@@ -11,7 +11,7 @@ Every operator has the same two calls:
 
 - `save_dir` is where the files go; it is created if missing. Left as `None`, the run writes nothing.
 - `return_collector=True` returns the collector. Its `result` holds what the run collected: a
-  DataFrame for the lens, probing and patching, a list of `PromptCircuit` for circuit discovery.
+  DataFrame for the lens, patching and probing, a list of `PromptCircuit` for circuit discovery.
 - `verbose=False` hides the progress bar. Where the results were saved is logged either way (see
   [Logging](#logging)).
 
@@ -20,15 +20,15 @@ Every operator has the same two calls:
 | Operation | Files in `save_dir` |
 |---|---|
 | Lens | `result.csv`, `index.csv`, `config.json`, `result.html` |
-| Probing | `result.csv`, `index.csv`, `config.json`, `probes.pkl` |
 | Activation patching | `result.csv`, `index-0.csv` (one `index-{i}.csv` per patch element), `config.json`, `result.html` |
+| Probing | `result.csv`, `index.csv`, `config.json`, `probes.pkl` |
 | Circuit discovery | `graph_{i}.graphml`, `graph_{i}.json`, `routes_{i}.graphml`, `routes_{i}.json` and `circuit_{i}.html` per prompt, `prompts.json`, `config.json` |
 
 `result.csv` has one row per row of the index: the index's own columns (see
 [Locating activations](locating.md#from-index-to-result)), then the operation's. `index.csv` is the
-index alone, and `config.json` the config the run was made under (see
-[Configuration files](configuration.md#the-config-a-run-leaves-behind)). The operation pages
-describe the rest.
+index alone, and `config.json` the config the run was made under, every field written out with its
+defaults, which `from_dict` (in `entoscope.util.data`) reads back into the same config. The operation
+pages describe the rest.
 
 ### Reading results back
 
@@ -42,6 +42,15 @@ them are exact either way.
 import pandas as pd
 
 result = pd.read_csv("runs/first_lens/result.csv", keep_default_na=False)
+```
+
+From a shell, the `sqlite3` command-line tool reads a result with its CSV quoting and every value as
+text, so tokens such as `","` or `"null"` come through as they are:
+
+```bash
+sqlite3 -header -column :memory: \
+  ".import --csv runs/first_lens/result.csv result" \
+  "SELECT * FROM result LIMIT 10"
 ```
 
 ## Result pages
@@ -117,10 +126,10 @@ What a plan counts, per operator:
 | Operator | A step is | Forward passes | Backward passes |
 |---|---|---|---|
 | `Lens` | an index row | 1, or 0 for a lens that reads weights | 0 |
-| `Prober` | a probe, one per index row | one per example prompt | 0 |
 | `Patcher` with `exact` | a patched run, one per index row | one per batch, plus one per prompt | 0 |
 | `Patcher` with `attribution` | an index row | 1, plus one per prompt | one per metric |
 | `Patcher` with `integrated_gradients` | an index row | `interpolation_steps`, plus one per prompt | `interpolation_steps` per metric |
+| `Prober` | a probe, one per index row | one per example prompt | 0 |
 | `CircuitDiscoverer` | a prompt | one per prompt | 0 |
 
 In an experiment script, a `dry_run` field on your own config gives the script a `--dry-run` flag; see

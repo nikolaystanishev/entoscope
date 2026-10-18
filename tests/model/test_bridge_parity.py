@@ -13,7 +13,7 @@ from entoscope.lens.config import LensConfig, LensMethodConfig
 from entoscope.lens.input import LensInput
 from entoscope.lens.lens import Lens
 from entoscope.lens.method.logit_lens import _attention_scale
-from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.config import ModelAxis, ModelLayerLocation, ModelLocatorConfig
 from entoscope.model.weight import ModelWeight, model_weight
 
 from ..conftest import HookedTransformer, TransformerBridge, _gpt2_bridge, _gpt2_hooked
@@ -84,7 +84,7 @@ def test_a_lens_run_reads_the_same_tokens_from_either_backend(compatible_bridge,
     config = LensConfig(
         method=LensMethodConfig(type="logit_lens"),
         top_k=3,
-        source=ModelLocatorConfig(activation=activation, location=[ModelLocation.LAYER, ModelLocation.POSITION]),
+        source=ModelLocatorConfig(activation=activation, location=[ModelAxis.LAYER, ModelAxis.POSITION]),
     )
 
     def run(model):

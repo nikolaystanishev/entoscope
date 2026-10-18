@@ -35,9 +35,18 @@ _QUERY_KEY_PARTNER = {
 
 
 def projection_layer(model: Model, index: IndexElement[ModelLocatorConfig]) -> int:
-    """The element's single layer, whose weights project it.
+    """Find the single layer whose weights project an element.
 
-    Raises for a key or a value of grouped-query attention, which has fewer heads than those weights.
+    Args:
+        model: The model the element is read from.
+        index: The element.
+
+    Returns:
+        The element's layer.
+
+    Raises:
+        ValueError: If the element names no single layer, or is a key or a value of grouped-query
+            attention, which has fewer heads than the projection weights.
     """
     layer = index.layer()
     if layer is None:
@@ -68,10 +77,18 @@ def _through(
     weight: Float[torch.Tensor, "... d_model"],
     index: IndexElement[ModelLocatorConfig],
 ) -> Float[torch.Tensor, "... d_model"]:
-    """``activation`` carried through ``weight``, one ``d_model`` vector per unit of the activation.
+    """Carry an activation through a weight that holds one ``d_model`` vector per unit of the activation.
 
-    The weight is sliced at the units the element names as the activation was, by the activation's axes after
-    ``batch`` and ``position``, so the two keep the same axes and contract over all of them.
+    The weight is sliced at the units the element names as the activation was, by the activation's axes
+    after ``batch`` and ``position``, so the two keep the same axes and contract over all of them.
+
+    Args:
+        activation: The element's activation.
+        weight: The weight, as ``model_weight`` returns it.
+        index: The element.
+
+    Returns:
+        The activation's contribution in the residual stream's basis.
     """
     weight = weight[index.slices()[2:]]
     return torch.tensordot(activation, weight, dims=weight.ndim - 1)
@@ -90,6 +107,15 @@ class LogitLens(AbstractLensMethod[LensMethodConfigT]):
         lens_input: "LensInput",
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "..."]:
+        """Read the element's activation out of the prompt's cache.
+
+        Args:
+            lens_input: The prepared input.
+            index: The element.
+
+        Returns:
+            The activation, sliced at the element.
+        """
         return lens_input.cache[index.transformer_activation()][index.slices()]
 
     @torch.no_grad()
@@ -98,6 +124,19 @@ class LogitLens(AbstractLensMethod[LensMethodConfigT]):
         activation: Float[torch.Tensor, "..."],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_vocab"]:
+        """Read an activation out through the model's final norm and unembedding.
+
+        Args:
+            activation: The element's activation.
+            index: The element.
+
+        Returns:
+            The element's logits over the vocabulary.
+
+        Raises:
+            ValueError: If the activation is neither in the residual stream nor an MLP-hidden or attention
+                head activation, or names no single layer where it needs one.
+        """
         if index.activation() in _QUERY_KEY_PARTNER:
             return self._query_key_logits(activation, index)
         residual = self._to_final_residual(self._to_residual(activation, index), index)
@@ -123,7 +162,15 @@ class LogitLens(AbstractLensMethod[LensMethodConfigT]):
         residual: Float[torch.Tensor, "... d_model"],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_model"]:
-        """Where a lens moves the residual stream before the model's own read-out (the tuned lens translates it)."""
+        """Move the residual stream before the model's own read-out, which the tuned lens overrides to translate it.
+
+        Args:
+            residual: The element's contribution to the residual stream.
+            index: The element.
+
+        Returns:
+            The residual stream to read out, unchanged here.
+        """
         return residual
 
     def _query_key_logits(
