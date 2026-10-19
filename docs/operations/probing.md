@@ -75,9 +75,10 @@ For each row of the index, every prompt contributes one feature vector:
 
 For example, `resid.post` located by `[layer]` and pooled over `position` gives `d_model` features per
 prompt. `attn.z` located by `[layer, head]` and pooled over `position` gives `d_head` features per
-head. Only `position` and `head` can be pooled: `layer` is never an axis of the tensor, and `neuron` is
-the feature axis itself. A `pool` entry for an axis the row has already pinned is ignored. For
-`attn.pattern`, pooling `position` reduces both the query and the key positions.
+head. Only `position`, `dest_pos`, `src_pos` and `head` can be pooled: `layer` is never an axis of the
+tensor, and `neuron` is the feature axis itself. A `pool` entry names its axis exactly, and one for an
+axis the row has already pinned, or its activation does not have, is ignored. `attn.pattern` has no
+`position` axis: its query and key positions are pooled as `dest_pos` and `src_pos`.
 
 The tokenizer prepends a BOS token, so `mean` and `sum` over positions include position 0. That
 position is the same for every prompt, since it attends only to itself. In GPT-2 its residual stream

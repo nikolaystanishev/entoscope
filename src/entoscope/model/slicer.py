@@ -88,13 +88,18 @@ class HeadActivationSlicer(ActivationSlicer):
 
 
 class PatternActivationSlicer(ActivationSlicer):
-    """Slices a ``[batch, head, dest_pos, src_pos]`` attention pattern, whose positions are read whole."""
+    """Slices a ``[batch, head, dest_pos, src_pos]`` attention pattern: the weight each query gives each key."""
 
-    AXES = ("batch", ModelAxis.HEAD, "dest_pos", "src_pos")
+    AXES = ("batch", ModelAxis.HEAD, ModelAxis.DESTINATION_POSITION, ModelAxis.SOURCE_POSITION)
 
     @staticmethod
     def extract(index: defaultdict[str, slice | int | list[int]]) -> tuple[slice | int | list[int], ...]:
-        return index["batch"], index[ModelAxis.HEAD], index["dest_pos"], index["src_pos"]
+        return (
+            index["batch"],
+            index[ModelAxis.HEAD],
+            index[ModelAxis.DESTINATION_POSITION],
+            index[ModelAxis.SOURCE_POSITION],
+        )
 
 
 def located_axes(activation: ModelLayerLocation) -> set[ModelAxis]:

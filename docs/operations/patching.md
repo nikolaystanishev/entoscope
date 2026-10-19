@@ -161,6 +161,11 @@ corrupted by the same draw and a rerun repeats the sweep exactly. The target's `
 `replace`. A type that cannot run, such as another target type or a source that reads a source run
 the input has no prompt for, is rejected as the `PatchingInput` is built.
 
+An `attn.pattern` element patches attention weights alone: the head still mixes the target run's
+values with them, and a query's weights are not renormalized, so a patched row of the pattern need not
+sum to 1. Located by `dest_pos` and `src_pos`, it patches single entries. Those with `src_pos` past
+`dest_pos` are masked to 0 in both runs, so a `replace` there changes nothing.
+
 ### Several elements at once
 
 With more than one element, patched run `i` applies row `i` of every element together, so their
@@ -287,6 +292,7 @@ All of these are entries of
 |---|---|
 | Where, layer by layer and token by token, is the answer carried? | `residual_sweep` |
 | Which heads matter? | `head_sweep`: `attn.z` over `[layer, head]` |
+| Which of a head's attention weights matter? | `pattern_entries`: `attn.pattern` over `[layer, head, dest_pos, src_pos]` |
 | Which MLP layers matter? | `zero_ablation`: `value_replace` into `mlp.out` over `[layer]` |
 | Which tokens matter? | `noise_tracing`: `gaussian_noise` on `embed` over `[position]` |
 | A whole sweep, cheaply | `attribution`, `integrated_gradients` |

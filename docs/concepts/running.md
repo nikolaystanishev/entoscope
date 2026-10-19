@@ -63,14 +63,15 @@ A lens or patching page draws the run's index as a grid:
 
 - When both `layer` and `position` vary, position goes across and layer up, the usual
   activation-patching layout.
-- Otherwise the varying axes are taken in the order `layer`, `head`, `neuron`, `position`, and the
-  last of them goes across.
+- Otherwise the varying axes are taken in the order `layer`, `head`, `neuron`, `position`,
+  `dest_pos`, `src_pos`, and the last of them goes across. A head's attention pattern is thus drawn
+  the way patterns usually are, `src_pos` across and `dest_pos` up.
 - An axis the run does not vary over is not drawn. More than two varying axes fold into composite
   rows, such as `layer 5 · head 3`.
 - An index that varies along one axis, including one built from explicit `coordinates`, becomes a bar
   chart.
-- Position ticks carry the prompt's tokens, such as `4: " Spain"`. For patching that is the target
-  prompt, since the patched run is the target run.
+- Position ticks, `dest_pos` and `src_pos` ones included, carry the prompt's tokens, such as
+  `4: " Spain"`. For patching that is the target prompt, since the patched run is the target run.
 - A cell's hover gives its full coordinates.
 
 A page holds one plot per panel: a lens draws one per top-k rank and patching one per result column.

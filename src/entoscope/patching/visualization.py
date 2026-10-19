@@ -15,6 +15,7 @@ from html import escape
 import pandas as pd
 
 from entoscope.model import Model
+from entoscope.model.config import POSITION_AXES
 from entoscope.model.index import Index
 from entoscope.model.token import str_token, str_token_labels
 from entoscope.operation.visualization import DIVERGING, GridFigure, describe_row, diverging_range, format_value, titled
@@ -77,7 +78,8 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
         prompts = [("target_", self.operation_input.target_tokens)]
         if self.operation_input.source_prompt is not None:
             prompts.append(("source_", self.operation_input.source_tokens))
-        return {f"{prefix}position": str_token_labels(self.model, tokens) for prefix, tokens in prompts}
+        labels = {prefix: str_token_labels(self.model, tokens) for prefix, tokens in prompts}
+        return {f"{prefix}{axis.value}": labels[prefix] for prefix in labels for axis in POSITION_AXES}
 
     def hover(self, panel: MetricPair, position: int, coordinate: str) -> str:
         row = self.result.iloc[position]

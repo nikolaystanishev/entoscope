@@ -43,6 +43,24 @@ head_sweep:
         type: replace
       target: *heads
 
+# One head's attention pattern, entry by entry: row `dest_pos` is the token attending and column
+# `src_pos` the token it attends to. A patch writes the source run's attention weight alone, the head
+# still mixing the target run's values, and the page draws the grid as the pattern itself, src_pos across
+# and dest_pos up. Entries with src_pos past dest_pos are masked to 0 in both runs, so they score nothing.
+pattern_entries:
+  metric:
+    logit_diff: [normalized]
+  method: exact
+  patch:
+    - source: &pattern
+        activation: attn.pattern
+        location: [layer, head, dest_pos, src_pos]
+        filter:
+          - layer: 9
+            head: 8
+        type: replace
+      target: *pattern
+
 # Zero ablation: the source names no location, only a value (0.0 by default), so nothing is read from
 # a source run - pass `--source-prompt ""` to run without one. Reported as an indirect effect this is
 # 'm(x | do(a = 0)) - m(x)'. 'normalized' and 'kl_divergence' score against the source run, so neither

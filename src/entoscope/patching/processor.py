@@ -115,7 +115,9 @@ class ReplaceSourceStrategy(SourceStrategy):
 
     @staticmethod
     def extract(source_index: IndexElement[PatchingElementConfig], patching_input: PatchingInput) -> torch.Tensor:
-        return patching_input.source_cache[source_index.transformer_activation()][source_index.slices(_CACHE_BATCH)]
+        return source_index.read_slices(
+            patching_input.source_cache[source_index.transformer_activation()], _CACHE_BATCH
+        )
 
 
 class ValueReplaceSourceStrategy(SourceStrategy):
@@ -134,7 +136,7 @@ class ValueScaleSourceStrategy(SourceStrategy):
     @staticmethod
     def extract(source_index: IndexElement[PatchingElementConfig], patching_input: PatchingInput) -> torch.Tensor:
         return (
-            patching_input.source_cache[source_index.transformer_activation()][source_index.slices(_CACHE_BATCH)]
+            source_index.read_slices(patching_input.source_cache[source_index.transformer_activation()], _CACHE_BATCH)
             * source_index.config.value
         )
 
@@ -154,7 +156,7 @@ class GaussianNoiseSourceStrategy(SourceStrategy):
     @staticmethod
     def extract(source_index: IndexElement[PatchingElementConfig], patching_input: PatchingInput) -> torch.Tensor:
         name = source_index.transformer_activation()
-        clean = patching_input.target_cache[name][source_index.slices(_CACHE_BATCH)]
+        clean = source_index.read_slices(patching_input.target_cache[name], _CACHE_BATCH)
         generator = torch.Generator().manual_seed(GaussianNoiseSourceStrategy.SEED)
         noise = torch.randn(clean.shape, generator=generator).to(clean)
 
@@ -171,7 +173,7 @@ class ReplaceTargetStrategy(TargetStrategy):
         extracted_source: torch.Tensor,
         batch: int,
     ) -> torch.Tensor:
-        target_activation[index.slices(batch)] = extracted_source
+        index.write_slices(target_activation, extracted_source, batch)
         return target_activation
 
 

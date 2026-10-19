@@ -213,6 +213,26 @@ def test_a_list_of_heads_sums_their_contributions(model, activations):
     assert_row_reads(model, row, unembed(model, contribution))
 
 
+def test_lists_of_heads_and_dimensions_sum_every_combination_of_them(model, activations):
+    # Two listed axes read the block they span, not the pairs indexing with both lists at once would zip.
+    _, cache = activations
+    layer = model.cfg.n_layers - 1
+    heads, dimensions = [HEAD, HEAD + 1], [0, 11]
+    row = single_row(
+        model,
+        coordinates_config({"activation": "attn.z", "layer": -1, "position": -1, "head": heads, "neuron": dimensions}),
+    )
+
+    w_o = model.blocks[layer].attn.W_O
+    activation = cache[f"blocks.{layer}.attn.hook_z"][:, -1]
+    contribution = sum(
+        activation[:, head, dimension].unsqueeze(-1) * w_o[head, dimension]
+        for head in heads
+        for dimension in dimensions
+    )
+    assert_row_reads(model, row, unembed(model, contribution))
+
+
 def test_every_head_together_is_attn_out_without_its_bias(model, activations):
     _, cache = activations
     layer = model.cfg.n_layers - 1

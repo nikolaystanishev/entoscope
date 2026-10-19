@@ -78,16 +78,16 @@ entry in `examples/` - see [Docs](#docs).
 `ModelLocatorConfig` (`model/config.py`) is what every operation's config embeds to say *where* in
 the model to look, in one of two mutually exclusive modes:
 
-- declarative - `location` names the axes (`layer`, `head`, `neuron`, `position`), the full range of
-  each is generated, then narrowed by `Filter` and reshaped by the `Group` / `Incremental` /
-  `Combination` transforms;
+- declarative - `location` names the axes (`layer`, `head`, `neuron`, `position`, and `attn.pattern`'s
+  `dest_pos` / `src_pos`), the full range of each is generated, then narrowed by `Filter` and reshaped
+  by the `Group` / `Incremental` / `Combination` transforms;
 - explicit - `coordinates` enumerates exact points, optionally each with its own `activation`.
 
 `parse(model, n_positions)` turns that into a DataFrame. `n_positions=None` means the prompt length
 varies (probing over unequal-length prompts): positions stay symbolic so torch resolves a negative
-against each prompt's own cache at slice time, and an unfiltered `position` axis is rejected. A known
-axis size bounds every value (`count_from_end`), and a locator may name only the axes its
-activation's tensor has (`located_axes` in `model/slicer.py`), plus `layer` inside a block.
+against each prompt's own cache at slice time, and an unfiltered position axis (`POSITION_AXES`) is
+rejected. A known axis size bounds every value (`count_from_end`), and a locator may name only the
+axes its activation's tensor has (`located_axes` in `model/slicer.py`), plus `layer` inside a block.
 
 `Index` (`model/index.py`) wraps the DataFrame(s) and is what operators iterate. A source and a target
 pair row by row by position: as many rows, or one side of a single row repeated along the other; any
@@ -96,12 +96,18 @@ carries an `output` position - the row a collector files its cell under - plus a
 `IndexElement` and, for patching, a target one. `IndexElement.slices()` turns a row into the tuple
 of tensor slices for that activation, via `ActivationSlicer` (`model/slicer.py`), which owns the
 axis order per activation kind (`[batch, pos, neuron]`, `[batch, pos, head, neuron]`,
-`[batch, head, dest_pos, src_pos]`). `transformer_activation()` maps entoscope's dotted
-`ModelLayerLocation` values onto `transformer_lens` hook names. pandas 3 stores a frame's enum cells as
-plain `str`, so a row's activation is read through `IndexElement.activation()`, which returns the member.
+`[batch, head, dest_pos, src_pos]`). The tuple holds one value per axis and is applied to a tensor
+with `IndexElement.read_slices` / `write_slices` (`read_unit_slices` for a weight laid out per unit),
+one axis at a time, so lists on several axes
+read every combination of their values and every axis keeps its place; indexing with the tuple
+directly would pair the lists. `transformer_activation()` maps
+entoscope's dotted `ModelLayerLocation` values onto `transformer_lens` hook names. pandas 3 stores a
+frame's enum cells as plain `str`, so a row's activation is read through `IndexElement.activation()`,
+which returns the member.
 
 Adding a location or activation therefore means touching `ModelLayerLocation`,
-`MODEL_LOCATION_MAPPER`, `TRANSFORMER_ACT_NAME` and `ActivationSlicer` together.
+`MODEL_LOCATION_MAPPER`, `TRANSFORMER_ACT_NAME` and `ActivationSlicer` together; a new axis also goes
+in `AXIS_ORDER` (`operation/visualization.py`), and in `POSITION_AXES` when the prompt sizes it.
 
 ### Models and backends
 

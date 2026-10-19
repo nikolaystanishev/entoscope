@@ -7,7 +7,7 @@ import torch
 from jaxtyping import Float, Int
 
 from entoscope.model import Model
-from entoscope.model.config import ModelAxis, ModelLocatorConfig
+from entoscope.model.config import POSITION_AXES, ModelLocatorConfig
 from entoscope.model.index import Index
 from entoscope.operation.input import OperationInput
 from entoscope.probe.config import ProbeConfig
@@ -22,8 +22,9 @@ class ProbeInput(OperationInput):
     that length, so a filtered position resolves to a concrete index. When prompt lengths differ the
     grid is parsed without one: explicit positions stay symbolic, a non-negative one counting from the
     start and a negative one from each prompt's own end, and a grid that would enumerate every
-    position (an unfiltered ``position`` axis) is rejected because its size would depend on the
-    prompt. Position axes left outside the grid stay full slices and adapt to each prompt.
+    position (an unfiltered ``position``, ``dest_pos`` or ``src_pos`` axis) is rejected because its
+    size would depend on the prompt. Position axes left outside the grid stay full slices and adapt to
+    each prompt.
 
     ``model.to_tokens`` prepends BOS, so mean or sum pooling over positions includes it while ``last``
     pooling (or a ``-1`` position) reads the final content token.
@@ -92,7 +93,7 @@ class ProbeInput(OperationInput):
                 _, cache = model.run_with_cache(tokens, names_filter=sorted(index.source_activation_names()))
 
             for single_index in index:
-                activation = cache[single_index.source.transformer_activation()][single_index.source.slices()]
+                activation = single_index.source.read_slices(cache[single_index.source.transformer_activation()])
                 assert activation.shape[0] == 1
                 feature = pool(activation[0], single_index.source.remaining_axes(), self.config.pool)
                 vectors[single_index.output].append(feature.detach().to("cpu", torch.float32))
@@ -101,8 +102,8 @@ class ProbeInput(OperationInput):
         for output, feature_list in vectors.items():
             if len({feature.shape[0] for feature in feature_list}) != 1:
                 raise ValueError(
-                    f"Feature size varies across prompts for index row {output}; activations with a "
-                    "position-sized feature axis (e.g. 'attn.pattern') require equal-length prompts"
+                    f"Feature size varies across prompts for index row {output}; a position axis left in the "
+                    "features, neither pinned nor pooled, requires equal-length prompts"
                 )
             features[output] = torch.stack(feature_list)
 
@@ -117,16 +118,18 @@ class ProbeInput(OperationInput):
             min_length: The shortest prompt's token count.
 
         Raises:
-            ValueError: If a position is out of range.
+            ValueError: If a value of a position axis is out of range.
         """
-        if ModelAxis.POSITION not in index_df.columns:
-            return
-        for cell in index_df[ModelAxis.POSITION]:
-            for position in cell if isinstance(cell, list) else [cell]:
-                if isinstance(position, (int, np.integer)) and not -min_length <= position < min_length:
-                    raise ValueError(
-                        f"Position {int(position)} is out of range for the shortest prompt ({min_length} tokens)"
-                    )
+        for axis in POSITION_AXES:
+            if axis not in index_df.columns:
+                continue
+            for cell in index_df[axis]:
+                for position in cell if isinstance(cell, list) else [cell]:
+                    if isinstance(position, (int, np.integer)) and not -min_length <= position < min_length:
+                        raise ValueError(
+                            f"'{axis.value}' {int(position)} is out of range for the shortest prompt "
+                            f"({min_length} tokens)"
+                        )
 
     @property
     def labels(self) -> Int[torch.Tensor, " examples"]:

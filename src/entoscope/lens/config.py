@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from entoscope.model.config import ModelAxis, ModelLocatorConfig
+from entoscope.model.config import POSITION_AXES, ModelAxis, ModelLocatorConfig
 from entoscope.operation.config import AbstractConfig
 from entoscope.operation.method import MethodConfig
 
@@ -59,13 +59,13 @@ class LensConfig(AbstractConfig):
 
         source = self.source
         if not LensMethodConfig.factory().get(self.method.type).reads_activations:
-            if ModelAxis.POSITION in source.location or any(
-                ModelAxis.POSITION in coordinate for coordinate in source.coordinates or []
-            ):
-                raise ValueError(
-                    f"'position' is not a location of '{self.method.type}': it reads the model's weights, "
-                    "which have no position axis"
-                )
+            named = {*source.location, *source.incremental, *(key for row in source.coordinates or [] for key in row)}
+            for axis in POSITION_AXES:
+                if axis in named:
+                    raise ValueError(
+                        f"'{axis.value}' is not a location of '{self.method.type}': it reads the model's weights, "
+                        "which have no position axis"
+                    )
             return
 
         if source.coordinates is not None:

@@ -128,8 +128,10 @@ def values_of(index_df: pd.DataFrame, location: ModelAxis) -> list:
         ("small_model", "mlp.post", "neuron", lambda model: model.cfg.d_mlp),
         ("small_model", "attn.q", "neuron", lambda model: model.cfg.d_head),
         ("small_model", "attn.pattern", "head", lambda model: model.cfg.n_heads),
-        # The position axis is the only one sized by the prompt rather than the model.
+        # The position axes are the only ones sized by the prompt rather than the model.
         ("small_model", "resid.post", "position", n_positions),
+        ("small_model", "attn.pattern", "dest_pos", n_positions),
+        ("small_model", "attn.pattern", "src_pos", n_positions),
     ],
 )
 def test_a_location_enumerates_the_model_dimension_it_names(
@@ -148,6 +150,23 @@ def test_locations_form_a_cartesian_product(small_model, planned):
     assert coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.NEURON) == [
         (layer, neuron) for layer in range(small_model.cfg.n_layers) for neuron in range(small_model.cfg.d_mlp)
     ]
+
+
+def test_a_pattern_is_located_entry_by_entry(small_model, planned):
+    # dest_pos is the query position attending and src_pos the key position attended to.
+    index_df = planned(
+        small_model,
+        {
+            "activation": "attn.pattern",
+            "location": ["layer", "head", "dest_pos", "src_pos"],
+            "filter": [{"layer": 0, "head": 1, "dest_pos": -1}],
+        },
+    )
+
+    last = n_positions(small_model) - 1
+    assert coordinates_of(
+        index_df, ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.DESTINATION_POSITION, ModelAxis.SOURCE_POSITION
+    ) == [(0, 1, last, key) for key in range(n_positions(small_model))]
 
 
 def test_the_configured_activation_is_stamped_on_every_row(small_model, planned):
@@ -456,6 +475,19 @@ def test_a_position_stays_symbolic_when_the_prompt_length_varies(
     assert values_of(index_df, ModelAxis.POSITION) == expected_positions
 
 
+def test_the_patterns_positions_stay_symbolic_when_the_prompt_length_varies(small_model, planned_symbolic):
+    index_df = planned_symbolic(
+        small_model,
+        {
+            "activation": "attn.pattern",
+            "location": ["layer", "head", "dest_pos", "src_pos"],
+            "filter": [{"layer": 0, "head": 0, "dest_pos": -1, "src_pos": [0, -2]}],
+        },
+    )
+
+    assert coordinates_of(index_df, ModelAxis.DESTINATION_POSITION, ModelAxis.SOURCE_POSITION) == [(-1, -2), (-1, 0)]
+
+
 def test_a_symbolic_position_keeps_the_other_locations(small_model, planned_symbolic):
     index_df = planned_symbolic(
         small_model, {"activation": "resid.post", "location": ["layer", "position"], "filter": [{"position": -1}]}
@@ -508,6 +540,8 @@ def test_a_transform_treats_a_symbolic_position_like_any_other_value(small_model
         ({"location": ["position"], "filter": [{"not": {"position": 0}}]}, "prompt length varies"),
         # a mixed-sign range has no length-independent meaning
         ({"location": ["position"], "filter": [{"position": {"range": [-1, 1]}}]}, "positions on the same side"),
+        # the attention pattern's positions are sized by the prompt too
+        ({"activation": "attn.pattern", "location": ["src_pos"]}, "Cannot build a grid over 'src_pos'"),
     ],
 )
 def test_a_position_grid_that_depends_on_the_prompt_length_raises(small_model, planned_symbolic, source, message):
@@ -556,6 +590,8 @@ def test_a_position_grid_that_depends_on_the_prompt_length_raises(small_model, p
         # an axis the activation's tensor does not have, which a run would silently read whole
         ({"activation": "attn.pattern", "location": ["layer", "head", "position"]}, "'attn.pattern' has no 'position'"),
         ({"activation": "attn.pattern", "location": ["layer", "neuron"]}, "'attn.pattern' has no 'neuron'"),
+        ({"location": ["layer", "dest_pos"]}, "'resid.post' has no 'dest_pos'"),
+        ({"activation": "attn.z", "location": ["layer", "src_pos"]}, "'attn.z' has no 'src_pos'"),
         ({"location": ["layer", "head"]}, "'resid.post' has no 'head'"),
         ({"location": ["layer"], "incremental": {"head": [0]}}, "'resid.post' has no 'head'"),
         ({"activation": "embed", "location": ["layer", "position"]}, "'embed' has no 'layer'"),
@@ -600,6 +636,10 @@ def test_a_malformed_locator_is_rejected_when_its_config_is_loaded(config_from_y
             "'neuron' 16 is out of range for an axis of 16",
         ),
         ({"location": ["position"], "filter": [{"position": 6}]}, "'position' 6 is out of range for an axis of 6"),
+        (
+            {"activation": "attn.pattern", "location": ["src_pos"], "filter": [{"src_pos": 6}]},
+            "'src_pos' 6 is out of range for an axis of 6",
+        ),
         ({"coordinates": [{"layer": 3}]}, "'layer' 3 is out of range"),
         ({"coordinates": [{"layer": 0, "position": [0, -7]}]}, "'position' -7 is out of range"),
         ({"activation": "attn.z", "location": ["head"], "group": {"head": [0, 4]}}, "'head' 4 is out of range"),

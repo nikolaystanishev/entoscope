@@ -1,4 +1,3 @@
-from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -9,22 +8,12 @@ from jaxtyping import Float
 from entoscope.lens.config import LensMethodConfig
 from entoscope.lens.method.lens import AbstractLensMethod
 from entoscope.lens.method.logit_lens import projection_layer
-from entoscope.model.config import ModelAxis, ModelLocatorConfig
+from entoscope.model.config import ModelLocatorConfig
 from entoscope.model.index import IndexElement
-from entoscope.model.slicer import ActivationSlicer
 from entoscope.model.weight import ACTIVATION_WEIGHT, ModelWeight, activation_weight, model_weight
 
 if TYPE_CHECKING:
     from entoscope.lens.input import LensInput
-
-
-def _selection(index: IndexElement[ModelLocatorConfig], location: ModelAxis) -> list[int] | slice:
-    # Always a list or a slice: a single advanced index per bracket keeps the axis and never pairs
-    # 'head' with 'neuron' the way two list indices in one bracket would.
-    value = index.get(location)
-    if value is None:
-        return slice(None)
-    return list(value) if isinstance(value, Sequence) else [value]
 
 
 class ProjectionSpace(StrEnum):
@@ -92,9 +81,7 @@ class ParameterLens(AbstractLensMethod[ParameterLensConfig]):
             )
 
         weight = activation_weight(self.model, activation, projection_layer(self.model, index))
-        for dim, location in enumerate(ActivationSlicer.get(activation).AXES[2:]):
-            weight = weight[(slice(None),) * dim + (_selection(index, location),)]
-        return weight.flatten(end_dim=-2).sum(0)
+        return index.read_unit_slices(weight).reshape(-1, weight.shape[-1]).sum(0)
 
     @torch.no_grad()
     def project(

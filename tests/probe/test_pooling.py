@@ -10,8 +10,12 @@ import torch
 
 from entoscope.model.config import Filter, Group, ModelAxis, ModelLayerLocation
 from entoscope.probe.config import PoolingType, ProbeConfig
+from entoscope.probe.input import ProbeInput
+from entoscope.probe.prober import Prober
 
+from ..conftest import forbid_model_runs
 from .conftest import (
+    NEGATIVE,
     POSITIVE,
     SHORT_POSITIVE,
     activation_caches,
@@ -108,9 +112,26 @@ def test_a_pooling_entry_that_matches_no_axis_is_ignored(small_model):
     assert_trained_alike(probe_of(pooled), probe_of(with_extra))
 
 
-def test_both_of_the_patterns_position_axes_are_pooled(small_model, small_caches):
-    # attn.pattern is [head, dest_pos, src_pos]: pooling 'position' reduces both, and the grid has
-    # already pinned the head, so a single feature is left.
+def test_both_of_the_patterns_positions_are_pooled_by_name(small_model, small_caches):
+    # attn.pattern is [head, dest_pos, src_pos]: pooling both positions, with the grid pinning the
+    # head, leaves a single feature.
+    collector = run_probe(
+        small_model,
+        probe_config(
+            activation=ModelLayerLocation.ATTENTION_PATTERN,
+            location=[ModelAxis.LAYER, ModelAxis.HEAD],
+            pool={ModelAxis.DESTINATION_POSITION: PoolingType.SUM, ModelAxis.SOURCE_POSITION: PoolingType.SUM},
+        ),
+    )
+
+    assert probe_of(collector, head=0).coef_.shape[1] == 1
+    expected = _stacked(small_caches, "blocks.0.attn.hook_pattern", lambda p: p[0].sum(dim=0).sum(dim=0).reshape(1))
+    assert_trained_alike(probe_of(collector, head=0), refit(expected))
+
+
+def test_position_is_no_axis_of_the_pattern_to_pool(small_model):
+    # The pattern's positions go by their own names, so a 'position' entry matches neither of them and
+    # is ignored like any entry that matches no axis: every query and key position stays a feature.
     collector = run_probe(
         small_model,
         probe_config(
@@ -118,11 +139,47 @@ def test_both_of_the_patterns_position_axes_are_pooled(small_model, small_caches
             location=[ModelAxis.LAYER, ModelAxis.HEAD],
             pool={ModelAxis.POSITION: PoolingType.SUM},
         ),
+        positive=EQUAL_POSITIVE,
+        negative=EQUAL_NEGATIVE,
     )
 
-    assert probe_of(collector, head=0).coef_.shape[1] == 1
-    expected = _stacked(small_caches, "blocks.0.attn.hook_pattern", lambda p: p[0].sum(dim=0).sum(dim=0).reshape(1))
-    assert_trained_alike(probe_of(collector, head=0), refit(expected))
+    positions = small_model.to_tokens(EQUAL_POSITIVE[0]).shape[1]
+    assert probe_of(collector, head=0).coef_.shape[1] == positions * positions
+
+
+def test_one_of_the_patterns_positions_is_pooled_while_the_other_is_pinned(small_model, small_caches):
+    # The last token's largest attention weight in each prompt: dest_pos -1 is read from each prompt's
+    # own end, and src_pos is reduced over however many keys that prompt has.
+    collector = run_probe(
+        small_model,
+        probe_config(
+            activation=ModelLayerLocation.ATTENTION_PATTERN,
+            location=[ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.DESTINATION_POSITION],
+            pool={ModelAxis.SOURCE_POSITION: PoolingType.MAX},
+            filter=Filter.from_config([{"dest_pos": -1}]),
+        ),
+    )
+
+    assert probe_of(collector, head=1).coef_.shape[1] == 1
+    expected = _stacked(small_caches, "blocks.0.attn.hook_pattern", lambda p: p[1, -1].amax().reshape(1))
+    assert_trained_alike(probe_of(collector, head=1), refit(expected))
+
+
+def test_an_entry_of_the_pattern_is_read_against_each_prompts_own_end(small_model, small_caches):
+    # How much the last token attends to the first, in prompts of different lengths.
+    collector = run_probe(
+        small_model,
+        probe_config(
+            activation=ModelLayerLocation.ATTENTION_PATTERN,
+            location=[ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.DESTINATION_POSITION, ModelAxis.SOURCE_POSITION],
+            pool={},
+            filter=Filter.from_config([{"dest_pos": -1, "src_pos": 0}]),
+        ),
+    )
+
+    assert probe_of(collector, head=2).coef_.shape[1] == 1
+    expected = _stacked(small_caches, "blocks.0.attn.hook_pattern", lambda p: p[2, -1, 0].reshape(1))
+    assert_trained_alike(probe_of(collector, head=2), refit(expected))
 
 
 def test_a_pooling_type_that_is_not_known_raises():
@@ -147,17 +204,41 @@ def test_a_single_value_becomes_a_single_feature(small_model, small_caches):
     assert_trained_alike(probe_of(collector), refit(expected))
 
 
-def test_two_grouped_axes_cannot_be_named(small_model):
-    # Grouping the head and the neuron axis leaves two list-indexed axes on one activation, which
-    # merge into a single axis whose name is no longer attributable.
-    config = probe_config(
-        activation=ModelLayerLocation.ATTENTION_Z,
-        location=[ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.NEURON],
-        group=Group({ModelAxis.HEAD: "all", ModelAxis.NEURON: "all"}),
+def test_two_grouped_axes_read_every_combination_of_their_values(small_model, small_caches):
+    # Grouping every head and every head dimension lists both axes in one row, which reads the whole
+    # block they span: every head's output, where pairing the two lists would keep only the diagonal.
+    collector = run_probe(
+        small_model,
+        probe_config(
+            activation=ModelLayerLocation.ATTENTION_Z,
+            location=[ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.NEURON],
+            group=Group({ModelAxis.HEAD: "all", ModelAxis.NEURON: "all"}),
+        ),
     )
 
-    with pytest.raises(ValueError, match="more than one axis is indexed with a list"):
-        run_probe(small_model, config)
+    assert _feature_size(collector) == small_model.cfg.n_heads * small_model.cfg.d_head
+    expected = _stacked(small_caches, "blocks.0.attn.hook_z", lambda z: z.mean(dim=0).flatten())
+    assert_trained_alike(probe_of(collector), refit(expected))
+
+
+def test_an_axis_read_whole_between_two_grouped_ones_is_read_at_each_prompts_own_length(small_model, small_caches):
+    # Two heads' weights on the last and the first key, averaged over however many queries each prompt has.
+    collector = run_probe(
+        small_model,
+        probe_config(
+            activation=ModelLayerLocation.ATTENTION_PATTERN,
+            location=[ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.SOURCE_POSITION],
+            pool={ModelAxis.DESTINATION_POSITION: PoolingType.MEAN},
+            filter=Filter.from_config([{"head": [0, 1], "src_pos": [-1, 0]}]),
+            group=Group({ModelAxis.HEAD: "all", ModelAxis.SOURCE_POSITION: "all"}),
+        ),
+    )
+
+    assert _feature_size(collector) == 4
+    expected = _stacked(
+        small_caches, "blocks.0.attn.hook_pattern", lambda p: p[[0, 1]][:, :, [-1, 0]].mean(dim=1).flatten()
+    )
+    assert_trained_alike(probe_of(collector), refit(expected))
 
 
 def test_an_unpooled_pattern_needs_prompts_of_equal_length(small_model):
@@ -215,6 +296,21 @@ def test_an_absolute_and_a_relative_position_stay_apart(small_model, small_cache
 def test_a_position_outside_the_shortest_prompt_raises(small_model, position):
     with pytest.raises(ValueError, match="out of range for the shortest prompt"):
         run_probe(small_model, _position_config(position))
+
+
+@pytest.mark.parametrize("position", [40, -40])
+def test_a_pattern_position_outside_the_shortest_prompt_raises(small_model, monkeypatch, position):
+    config = probe_config(
+        activation=ModelLayerLocation.ATTENTION_PATTERN,
+        location=[ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.DESTINATION_POSITION, ModelAxis.SOURCE_POSITION],
+        pool={},
+        filter=Filter.from_config([{"dest_pos": -1, "src_pos": position}]),
+    )
+    # Refused as the index is resolved, before the first prompt is run.
+    forbid_model_runs(monkeypatch, small_model)
+
+    with pytest.raises(ValueError, match=f"'src_pos' {position} is out of range for the shortest prompt"):
+        Prober(small_model).plan(ProbeInput(config, POSITIVE, NEGATIVE), verbose=False)
 
 
 def test_a_full_position_grid_is_built_for_prompts_of_equal_length(small_model):

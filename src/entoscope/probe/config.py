@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 class PoolingType(StrEnum):
-    """How ``ProbeConfig.pool`` reduces an axis. ``last`` keeps its final entry, the last token for ``position``."""
+    """How ``ProbeConfig.pool`` reduces an axis. ``last`` keeps its final entry, the last token for a position axis."""
 
     MEAN = "mean"
     MAX = "max"
@@ -62,9 +62,10 @@ class ProbeConfig(AbstractConfig):
         method: The probe trained at every location, its ``type`` naming it. In a YAML file it is the
             mapping read strictly into the probe's method config class, or just the probe's type for its
             defaults.
-        pool: Each axis to reduce, mapped to the pooling that reduces it. Axes left out are flattened into
-            the feature vector. ``layer`` is never a tensor axis and ``neuron`` is the feature axis, so
-            neither can be pooled.
+        pool: Each axis to reduce, mapped to the pooling that reduces it, matched by name: ``attn.pattern``'s
+            positions are pooled as ``dest_pos`` and ``src_pos``. Axes left out are flattened into the
+            feature vector. ``layer`` is never a tensor axis and ``neuron`` is the feature axis, so neither
+            can be pooled.
         metric: The scores to report for every probe.
         source: Where to read the features.
 
