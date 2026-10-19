@@ -7,13 +7,29 @@ from entoscope.patching.method.patching import AbstractPatchingMethod
 
 
 class PatchingMethodFactory(RegistryFactory[AbstractPatchingMethod]):
-    """The methods a config's ``method`` names, built in or registered with ``register``."""
+    """Resolves the patching method a config's ``method.type`` names and builds it for a run.
+
+    It holds ``exact``, ``attribution``, ``integrated_gradients`` and every method registered with
+    ``register``.
+    """
 
     kind = "patching method"
 
     @classmethod
-    def create(cls, config: PatchingConfig, model: Model, batch_size: int = 1) -> AbstractPatchingMethod:
-        return cls.get(config.method.type)(model, config, batch_size)
+    def create(cls, model: Model, config: PatchingConfig) -> AbstractPatchingMethod:
+        """Build the method a config names, once per run.
+
+        Args:
+            model: The model the method patches.
+            config: The run's config, whose ``method.type`` names the method.
+
+        Returns:
+            The method.
+
+        Raises:
+            ValueError: If no method is registered under the name, or the method rejects the config.
+        """
+        return cls.get(config.method.type)(model, config)
 
 
 PatchingMethodFactory.register("exact")(ExactPatchingMethod)

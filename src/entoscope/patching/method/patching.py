@@ -14,10 +14,14 @@ from entoscope.patching.metric import AbstractComparison
 
 @dataclass(frozen=True)
 class RowResult:
-    """What a method reports for one index row, filed by the collector under ``output``.
+    """What a method reports for one index row.
 
-    ``generation`` is the token the patched run predicts next. Only a method that actually runs the
-    patched model has one; the gradient methods estimate the metric without such a run and leave it unset.
+    Attributes:
+        output: The result row the collector files the report under.
+        metrics: The row's value in every result column, keyed by column.
+        generation: The token the patched run predicts next. Only a method that actually runs the patched
+            model has one, and the gradient methods, which estimate the metric without such a run, leave it
+            unset.
     """
 
     output: int
@@ -29,38 +33,84 @@ PatchingMethodConfigT = TypeVar("PatchingMethodConfigT", bound=PatchingMethodCon
 
 
 class AbstractPatchingMethod(abc.ABC, Generic[PatchingMethodConfigT]):
-    """How a run turns its index into one number per row.
+    """The base of every patching method: how a run turns its index into one number per row.
 
-    Every method produces the same primitive for each row - ``delta``, the metric of the patched
-    run minus the metric of the unpatched target run, one per metric - and ``_report`` fans it out
-    into the columns the config's comparisons ask for. What separates the methods is only how
-    ``delta`` is reached: by patching and running the model, or by estimating from gradients.
+    Every method produces the same primitive for each row, ``delta``, the metric of the patched run
+    minus the metric of the unpatched target run, one per metric, and ``_report`` fans it out into the
+    columns the config's comparisons ask for. What separates the methods is only how ``delta`` is
+    reached: by patching and running the model, or by estimating from gradients.
 
-    A method is built once per run. Its type argument names the dataclass of its method config, extending
-    ``PatchingMethodConfig``, which a config file's ``method`` is read into; a method naming none
-    takes ``PatchingMethodConfig`` itself, which no field fits. ``batched`` says whether it runs the patched
-    model ``batch_size`` rows at a time, so a plan reports its batches.
+    A method is built once per run. Its type argument names the dataclass of its method config,
+    extending ``PatchingMethodConfig``, which a config file's ``method`` is read into. A method naming
+    none takes ``PatchingMethodConfig`` itself, which no field fits.
+
+    Args:
+        model: The model the method patches.
+        config: The run's config.
+
+    Attributes:
+        batched: Whether the method runs the patched model ``batch_size`` rows at a time, so a plan
+            reports its batches.
+        method_config: The run's method config, typed by the method's type argument.
     """
 
     batched: ClassVar[bool] = False
 
-    def __init__(self, model: Model, config: PatchingConfig, batch_size: int = 1):
+    def __init__(self, model: Model, config: PatchingConfig):
         self.model = model
         self.config = config
-        self.batch_size = batch_size
         self.method_config = cast(PatchingMethodConfigT, config.method)
 
     @abc.abstractmethod
     def scores(self, patching_input: PatchingInput, verbose: bool = True) -> Iterator[RowResult]:
-        """One ``RowResult`` per index row, its metric values keyed by result column."""
+        """Score every patched run.
+
+        Args:
+            patching_input: The prepared input.
+            verbose: Whether to show a progress bar.
+
+        Yields:
+            One ``RowResult`` per patched run, its metric values keyed by result column.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def passes(self, runs: int, batches: int) -> tuple[int, int]:
-        """The (forward, backward) passes the sweep costs, over and above the input's cached runs."""
+    def passes(self, patching_input: PatchingInput, batches: int) -> tuple[int, int]:
+        """Count the passes the sweep costs, over and above the input's cached runs.
+
+        Args:
+            patching_input: The input, its index resolved: ``rows()`` lists the patched runs and
+                ``target_activation_names()`` the hooks a patch writes.
+            batches: The number of batches the patched runs fall into, for a batched method.
+
+        Returns:
+            The forward and the backward passes.
+        """
         raise NotImplementedError
 
+    def check(self, patching_input: PatchingInput) -> None:
+        """Reject an input the method cannot score, before either prompt is run.
+
+        Called once the input's index is resolved, by ``plan`` as well as by the run, so a plan never
+        promises a run the method would refuse. Nothing is rejected by default.
+
+        Args:
+            patching_input: The input, its index resolved and no forward pass made.
+
+        Raises:
+            ValueError: If the method cannot score the input.
+        """
+
     def _report(self, patching_input: PatchingInput, deltas: dict[PatchingMetric, torch.Tensor]) -> dict[str, float]:
+        """Fan one row's change in every metric out into the result columns.
+
+        Args:
+            patching_input: The prepared input.
+            deltas: Each metric's patched value minus its unpatched target value.
+
+        Returns:
+            The row's value in every result column, keyed by column.
+        """
         return {
             metric_column(metric, comparison): AbstractComparison.get(comparison)
             .apply(metric, patching_input, deltas[metric])

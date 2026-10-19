@@ -1,21 +1,23 @@
 import json
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from entoscope.dataset.config import DatasetConfig
 from entoscope.dataset.dataset import AbstractDataset, Row
 from entoscope.dataset.factory import DatasetFactory
 from entoscope.operation.config import ConfigFactory
+from entoscope.util.data import from_dict, read_yaml, to_dict
 
-from .conftest import ROWS, dataset_config
+from .conftest import ROWS, JsonlDatasetConfig, dataset_config
 
 
-def _load(path: str, **properties) -> AbstractDataset:
-    return DatasetFactory.create(dataset_config(path, **properties)).prepare()
+def _load(path: str, **settings) -> AbstractDataset:
+    return DatasetFactory.create(dataset_config(path, **settings)).prepare()
 
 
 def test_a_prepared_dataset_exposes_the_rows_of_its_file(jsonl_dataset_class, prompts_file):
@@ -48,17 +50,10 @@ def test_rows_are_unavailable_before_the_dataset_is_prepared(jsonl_dataset_class
         len(dataset)
 
 
-def test_an_implementation_reads_its_settings_off_the_dynamic_config(jsonl_dataset_class, prompts_file):
+def test_an_implementation_reads_its_settings_off_its_own_config(jsonl_dataset_class, prompts_file):
     dataset = _load(prompts_file(), limit=2)
 
     assert dataset.rows == ROWS[:2]
-
-
-def test_a_property_the_config_does_not_have_raises(jsonl_dataset_class, tmp_path):
-    dataset = DatasetFactory.create(DatasetConfig(type="jsonl"))
-
-    with pytest.raises(AttributeError, match="Dataset config 'jsonl' has no property 'path'"):
-        dataset.prepare()
 
 
 def test_a_class_without_a_load_cannot_be_registered():
@@ -72,24 +67,14 @@ def test_a_class_without_a_load_cannot_be_registered():
 
 
 # --------------------------------------------------------------------------------------------------
-# Configuration — 'type' is declared, everything else is a dynamic property of the implementation
+# Configuration - an entry is read into the config class its type's dataset names
 # --------------------------------------------------------------------------------------------------
-def test_a_yaml_config_becomes_type_plus_dynamic_properties(jsonl_dataset_class, config_from_yaml, prompts_file):
+def test_a_yaml_config_is_read_into_the_config_its_dataset_names(jsonl_dataset_class, config_from_yaml, prompts_file):
     path = prompts_file()
-    raw = {"type": "jsonl", "path": path, "limit": 2, "columns": {"prompt": "text"}, "tags": ["train", "clean"]}
 
-    config = config_from_yaml(DatasetConfig, "my_data", raw)
+    config = config_from_yaml(DatasetConfig, "my_data", {"type": "jsonl", "path": path, "limit": 2})
 
-    assert config.type == "jsonl"
-    assert config.config_id == "my_data"
-    assert config.properties == {"path": path, "limit": 2, "columns": {"prompt": "text"}, "tags": ["train", "clean"]}
-    # Nothing knows what a dataset's keys mean, so nested shapes arrive as plain dict/list.
-    assert config.columns == {"prompt": "text"}
-    assert config.tags == ["train", "clean"]
-    assert config.get("limit") == 2
-    assert config.get("missing", 5) == 5
-    assert "limit" in config and "missing" not in config
-
+    assert config == JsonlDatasetConfig(type="jsonl", config_id="my_data", path=path, limit=2)
     assert DatasetFactory.create(config).prepare().rows == ROWS[:2]
 
 
@@ -100,14 +85,23 @@ def test_a_yaml_config_and_a_code_built_one_load_the_same_rows(jsonl_dataset_cla
     assert DatasetFactory.create(from_file).prepare().rows == _load(path).rows
 
 
+def test_a_saved_config_reads_back_into_the_same_config(jsonl_dataset_class, prompts_file):
+    config = dataset_config(prompts_file(), limit=2)
+
+    assert from_dict(DatasetConfig, to_dict(config)) == config
+
+
 @pytest.mark.parametrize(
     ("raw", "message"),
     [
-        ({"path": "prompts.jsonl"}, "Missing required keys for DatasetConfig.*type"),
-        ("jsonl", "Expected a mapping for DatasetConfig"),
+        ({"path": "prompts.jsonl"}, r"Missing required keys for DatasetConfig: \['type'\]"),
+        ({"type": "csv", "path": "prompts.csv"}, "Unknown dataset type: csv"),
+        ({"type": "jsonl"}, r"Missing required keys for JsonlDatasetConfig: \['path'\]"),
+        ({"type": "jsonl", "path": "prompts.jsonl", "columns": ["text"]}, r"Unknown keys for JsonlDatasetConfig"),
+        (["jsonl"], "Expected a dataset type or a mapping for DatasetConfig"),
     ],
 )
-def test_a_malformed_dataset_config_is_rejected_when_it_is_loaded(config_from_yaml, raw, message):
+def test_a_malformed_dataset_config_is_rejected_when_it_is_loaded(jsonl_dataset_class, config_from_yaml, raw, message):
     with pytest.raises(ValueError, match=message):
         config_from_yaml(DatasetConfig, "broken", raw)
 
@@ -119,20 +113,21 @@ def test_an_already_built_config_passes_through(jsonl_dataset_class, prompts_fil
 
 
 # --------------------------------------------------------------------------------------------------
-# A config subclass — its own fields are typed, everything else stays a dynamic property
+# A config of typed settings - fields are read and checked like any other config's
 # --------------------------------------------------------------------------------------------------
-class Split(str, Enum):
+class Split(StrEnum):
     TRAIN = "train"
     TEST = "test"
 
 
 @dataclass(kw_only=True)
 class SplitDatasetConfig(DatasetConfig):
+    path: str = "prompts"
     split: Split = Split.TRAIN
     columns: dict[str, Any] = field(default_factory=dict)
 
 
-class SplitDataset(AbstractDataset):
+class SplitDataset(AbstractDataset[SplitDatasetConfig]):
     """Reads the rows of the file named after its split, e.g. ``prompts.test.jsonl``."""
 
     def load(self) -> list[Row]:
@@ -140,36 +135,40 @@ class SplitDataset(AbstractDataset):
             return [json.loads(line) for line in f if line.strip()]
 
 
-def test_a_subclass_field_is_typed_while_the_extras_stay_dynamic(config_from_yaml, prompts_file, tmp_path):
-    DatasetFactory.register("split")(SplitDataset)
+@pytest.fixture
+def split_dataset_class():
+    return DatasetFactory.register("split")(SplitDataset)
+
+
+def test_a_field_is_read_into_its_type(split_dataset_class, config_from_yaml, prompts_file, tmp_path):
     prompts_file(ROWS[:2], name="prompts.test.jsonl")
     raw = {"type": "split", "split": "test", "path": str(tmp_path / "prompts")}
 
-    config = config_from_yaml(SplitDatasetConfig, "my_data", raw)
+    config = config_from_yaml(DatasetConfig, "my_data", raw)
 
     assert isinstance(config, SplitDatasetConfig)
     assert config.split is Split.TEST
-    assert config.properties == {"path": str(tmp_path / "prompts")}
     assert DatasetFactory.create(config).prepare().rows == ROWS[:2]
 
 
-def test_a_subclass_field_falls_back_to_its_default(config_from_yaml):
-    config = config_from_yaml(SplitDatasetConfig, "my_data", {"type": "split"})
+def test_a_dataset_named_by_its_type_alone_takes_its_defaults(split_dataset_class, config_from_yaml):
+    config = config_from_yaml(DatasetConfig, "my_data", "split")
 
-    assert config.split is Split.TRAIN
-    assert config.columns == {}
+    assert config == SplitDatasetConfig(type="split", config_id="my_data")
 
 
-def test_a_declared_field_that_takes_anything_keeps_its_values_as_they_are(config_from_yaml):
+def test_a_declared_field_that_takes_anything_keeps_its_values_as_they_are(split_dataset_class, config_from_yaml):
     # 'columns' is typed as a mapping of anything, so its values arrive as the YAML wrote them.
     columns = {"prompt": "text", "labels": [1, 0], "meta": {"source": "hand"}}
 
-    config = config_from_yaml(SplitDatasetConfig, "my_data", {"type": "split", "columns": columns})
+    config = config_from_yaml(DatasetConfig, "my_data", {"type": "split", "columns": columns})
 
     assert config.columns == columns
-    assert config.properties == {}  # a declared field is not a dynamic property
 
 
+# --------------------------------------------------------------------------------------------------
+# Environment variables in a config file
+# --------------------------------------------------------------------------------------------------
 def test_a_config_file_may_name_environment_variables(monkeypatch, jsonl_dataset_class, config_from_yaml, prompts_file):
     # read_yaml resolves ${VAR} while loading: on its own it becomes the value (as an int when the
     # value is a number), and inside a longer string it is substituted in place.
@@ -199,7 +198,19 @@ def test_a_value_tagged_for_the_environment_without_naming_one_is_left_alone(
     assert DatasetFactory.create(config).prepare().rows == ROWS
 
 
-def test_an_environment_variable_that_is_not_set_stays_as_its_name(config_from_yaml):
+def test_an_environment_variable_that_is_not_set_stays_as_its_name(jsonl_dataset_class, config_from_yaml):
     config = config_from_yaml(DatasetConfig, "my_data", {"type": "jsonl", "path": "${ENTOSCOPE_UNSET}"}, "unset.yaml")
 
     assert config.path == "ENTOSCOPE_UNSET"
+
+
+def test_reading_a_config_file_leaves_other_yaml_loading_alone(monkeypatch, tmp_path):
+    monkeypatch.setenv("ENTOSCOPE_TEST_DIR", "/data")
+    config_yaml = tmp_path / "env.yaml"
+    config_yaml.write_text("path: ${ENTOSCOPE_TEST_DIR}\n")
+    resolvers = {key: list(value) for key, value in yaml.FullLoader.yaml_implicit_resolvers.items()}
+
+    assert read_yaml(str(config_yaml)) == read_yaml(str(config_yaml)) == {"path": "/data"}
+
+    assert yaml.FullLoader.yaml_implicit_resolvers == resolvers
+    assert yaml.full_load("path: ${ENTOSCOPE_TEST_DIR}") == {"path": "${ENTOSCOPE_TEST_DIR}"}

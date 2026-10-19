@@ -24,11 +24,11 @@ from entoscope.model import (
     Filter,
     Group,
     Incremental,
+    ModelAxis,
     ModelLayerLocation,
-    ModelLocation,
     ModelLocatorConfig,
 )
-from entoscope.operation import ConfigFactory, from_dict, to_dict
+from entoscope.operation import ConfigFactory
 from entoscope.patching import (
     IntegratedGradientsConfig,
     MetricComparison,
@@ -74,8 +74,8 @@ __all__ = [
     "LensMethodConfig",
     "LinearProbeConfig",
     "MetricComparison",
+    "ModelAxis",
     "ModelLayerLocation",
-    "ModelLocation",
     "ModelLocatorConfig",
     "ParameterLensConfig",
     "Patcher",
@@ -96,13 +96,8 @@ __all__ = [
     "TunedLensConfig",
     "__version__",
     "experiment",
-    "from_dict",
-    "to_dict",
 ]
 
-# entoscope owns its output instead of deferring to the root logger: dependencies configure root as a
-# side effect (transformer_lens logs through the module-level ``logging.info``, which runs
-# ``basicConfig``), and that would reformat entoscope's messages behind the user's back.
 _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.INFO)
 _logger.propagate = False

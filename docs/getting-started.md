@@ -2,7 +2,7 @@
 
 ## Install
 
-entoscope needs Python 3.10 to 3.14 and is published on PyPI:
+entoscope depends on Python 3.11 to 3.14 and is published on PyPI:
 
 ```bash
 pip install entoscope
@@ -12,12 +12,15 @@ uv add entoscope
 
 To work on entoscope itself, see [Development](development.md).
 
-entoscope depends on PyTorch and on transformer-lens 3 or later, which provides `TransformerBridge`, the
-wrapper these docs load models with. Intel macOS is the exception: PyTorch stopped publishing x86_64
-macOS wheels after 2.2, which pins that platform to PyTorch 2.2, transformer-lens 2.15, `numpy<2`,
-`transformers<5` and Python 3.12 or older, and the installer picks those versions there by itself.
-transformer-lens 2.15 has no `TransformerBridge`, so load models as `HookedTransformer` there (see
-[Models and caching](concepts/models.md)).
+Its main dependencies are PyTorch and transformer-lens 3 or later, which provides `TransformerBridge`,
+the wrapper these docs load models with.
+
+> [!NOTE]
+> Intel macOS is the exception. PyTorch stopped publishing x86_64 macOS wheels after 2.2, which pins
+> that platform to PyTorch 2.2, transformer-lens 2.15, `numpy<2`, `transformers<5` and Python 3.12 or
+> older, and the installer picks those versions there by itself. transformer-lens 2.15 has no
+> `TransformerBridge`, so load models as `HookedTransformer` there (see
+> [Models and caching](concepts/models.md)).
 
 ## Load a model
 
@@ -42,8 +45,8 @@ from entoscope import (
     LensConfig,
     LensInput,
     LensMethodConfig,
+    ModelAxis,
     ModelLayerLocation,
-    ModelLocation,
     ModelLocatorConfig,
 )
 
@@ -52,7 +55,7 @@ config = LensConfig(
     top_k=3,
     source=ModelLocatorConfig(
         activation=ModelLayerLocation.RESIDUAL_POST,
-        location=[ModelLocation.LAYER, ModelLocation.POSITION],
+        location=[ModelAxis.LAYER, ModelAxis.POSITION],
     ),
 )
 lens_input = LensInput(config, "The capital of France is")
@@ -96,6 +99,14 @@ print(result[result.source_position == 5][["source_layer", "str_token_0", "proba
 
 `keep_default_na=False` keeps tokens such as `"null"` or `"NA"` from being read as missing values.
 
+The same file from a shell: `less -S` pages through it without wrapping its long rows, and `awk`
+prints the header and the rows at position 5, the second column:
+
+```bash
+less -S runs/first_lens/result.csv
+awk -F, 'NR == 1 || $2 == 5' runs/first_lens/result.csv
+```
+
 To keep the results in memory instead, pass `return_collector=True`. The collector's `result` is the
 frame `result.csv` holds, and `save_dir` can be left out to write nothing at all:
 
@@ -138,6 +149,6 @@ The plan is logged as it is built and returned as an `OperationPlan` you can rea
 - [Locating activations](concepts/locating.md): reading other activations, heads, neurons and
   positions.
 - [Configuration files](concepts/configuration.md): the same run from a YAML file.
-- The operation pages: [Lens](operations/lens.md), [Probing](operations/probing.md),
-  [Activation patching](operations/patching.md), [Circuit discovery](operations/circuit-discovery.md).
+- The operation pages: [Lens](operations/lens.md), [Activation patching](operations/patching.md),
+  [Probing](operations/probing.md), [Circuit discovery](operations/circuit-discovery.md).
 - [Examples](examples.md): a runnable script and configs for every operation.

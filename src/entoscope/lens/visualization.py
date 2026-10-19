@@ -1,6 +1,6 @@
 """Interactive Plotly rendering of a lens run.
 
-The grid is the run's own index - layer down, position (or head, or neuron) across - coloured by a
+The grid is the run's own index, layer up and position (or head, or neuron) across, coloured by a
 rank's probability, with that rank's token printed in the cell and the whole top-k in hover. One
 grid is drawn per rank, so a run's second and third guesses are as visible as its first.
 """
@@ -15,6 +15,8 @@ from entoscope.operation.visualization import GridFigure, describe_row, format_v
 
 
 class LensFigure(GridFigure[LensInput, int]):
+    """The page of a lens run: one grid per top-k rank, each panel named by its rank from 0."""
+
     @property
     def title(self) -> str:
         return titled(f"Lens - {self.operation_input.config.method.type}", self.operation_input.config)
@@ -35,8 +37,6 @@ class LensFigure(GridFigure[LensInput, int]):
         return f"probability_{rank}"
 
     def value_title(self, rank: int) -> str:
-        # The rank is already on the plot's own title, and a shared colour bar keeps the ranks
-        # comparable to each other at a glance.
         return "probability"
 
     def bar_yaxis(self, rank: int) -> dict:
@@ -46,7 +46,6 @@ class LensFigure(GridFigure[LensInput, int]):
         return [format_value(token) for token in self.result[f"str_token_{rank}"]]
 
     def str_tokens(self) -> dict[str, list[str]]:
-        # The parameter lens reads the weights, so it has no prompt and no tokens to label an axis with.
         if self.operation_input.prompt is None:
             return {}
         return {"source_position": str_token_labels(self.model, self.operation_input.tokens)}
@@ -57,6 +56,6 @@ class LensFigure(GridFigure[LensInput, int]):
         for i in range(self.operation_input.config.top_k):
             token, probability = f"str_token_{i}", f"probability_{i}"
             if token in row.index and probability in row.index:
-                line = f"{i + 1}. {format_value(row[token])} — {format_value(row[probability])}"
+                line = f"{i + 1}. {format_value(row[token])} - {format_value(row[probability])}"
                 lines.append(f"<b>{line}</b>" if i == rank else line)
         return "<br>".join(line for line in lines if line)

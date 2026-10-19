@@ -66,7 +66,9 @@ cached.eval()
 ```
 
 With `cache_dir=None` the wrapper passes every call straight through, which lets a script make
-caching optional with a single argument.
+caching optional with a single argument. A method that returns the model itself, such as `to` or
+`eval`, returns the wrapper, so `cached = cached.to("cuda")` keeps the cache, and the wrapper is called
+as the model is.
 
 ### What gets cached
 
@@ -75,10 +77,11 @@ Only `run_with_cache` calls are cached, which are the runs an input makes before
 - the lens's prompt
 - every probing example
 - patching's source and target runs
-- every circuit-discovery prompt, with every activation
+- every circuit-discovery prompt, with the residual stream, MLP output, values and attention pattern
+  of every layer
 
 Patched runs and gradient passes go through `run_with_hooks` and are never cached. Circuit discovery
-caches the whole model's activations per prompt, which takes far more disk than an index-filtered
+caches those activations of every layer per prompt, which takes far more disk than an index-filtered
 run.
 
 ### What an entry is keyed by
@@ -88,12 +91,16 @@ An entry is stored at `<cache_dir>/<model name>/<digest>.pt`, written atomically
 - the tokens, the requested activation names in any order, and every other `run_with_cache` argument
   that changes the result;
 - a fingerprint of the model: its class, its config's dimensions and dtype, and the name, shape,
-  dtype and first 64 values of every parameter.
+  dtype and first 64 values of every parameter;
+- the version of the entry format, so an entry written by a release that stored it differently is
+  recomputed rather than misread.
 
 The weights in the fingerprint keep a fine-tune, a supplied `hf_model` or another revision from sharing
 entries with the base model. A bridge and a `HookedTransformer` of the same model never share entries
 either.
 
-The fingerprint is taken once, when the model is wrapped. If you edit the weights in place afterwards,
-wrap the model again to get a fresh fingerprint. Entries are never evicted; delete the directory to
-clear the cache.
+The fingerprint is taken on every call, so a change made after wrapping, such as
+`enable_compatibility_mode()`, a change of dtype or a training step, is a new entry rather than a stale
+one. Patching runs each prompt as wide as its patched runs, and a tensor whose rows come out alike bit
+for bit is stored as one row. A backend that rounds the copies apart, as some x86 CPUs do, has every
+row kept, so an entry always reads back exactly what the model computed. Entries are never evicted; delete the directory to clear the cache.

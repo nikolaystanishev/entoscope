@@ -53,7 +53,12 @@ ValueError: Unknown keys for LensConfig: ['top-k']
 ```
 
 The checks go into `method` too: a method nothing registered raises and lists the methods that are
-registered, and a field the method does not take is an unknown key of its method config.
+registered, and a field the method does not take is an unknown key of its method config. A value its
+field cannot take is refused as well, such as a quoted `"0.04"` for a float or `true` for a count; an
+int written for a float field is read as that float.
+
+A config built in code is read the same way, so it may hold a field's raw form, such as
+`method="exact"` or `metric={"logit_diff": ["normalized"]}`, and is refused what a file would be.
 
 ## The `method` field
 
@@ -87,8 +92,8 @@ a method names its config class.
 ## Environment variables
 
 A value may name environment variables as `${NAME}`. Each is replaced by the variable's value, or by
-`NAME` itself when the variable is unset. A value that is a single variable holding only digits
-becomes an int:
+`NAME` itself when the variable is unset. A value that is a single variable reads as the variable's
+value would written in its place, so `0.5` is a float, `-1` an int and `true` a bool:
 
 ```yaml
 my_data:
@@ -122,28 +127,3 @@ attribution:
     - source: *residual
       target: *residual
 ```
-
-## The config a run leaves behind
-
-Every run writes the config it was made under to `config.json` beside its results, with every field,
-defaults included. `from_dict` reads it back into the same config:
-
-```python
-import json
-from pathlib import Path
-
-from transformer_lens.model_bridge import TransformerBridge
-
-from entoscope import Lens, LensInput, from_dict
-
-model = TransformerBridge.boot_transformers("gpt2")
-model.eval()
-Lens(model).apply(LensInput(config, "The capital of France is"), save_dir="runs/logit_lens", verbose=False)
-
-saved = from_dict(LensConfig, json.loads(Path("runs/logit_lens/config.json").read_text()))
-print(saved == config)  # True
-```
-
-A config therefore holds only data: numbers, strings, enums and paths, and lists, tuples, sets,
-mappings and dataclasses of them. A field with no such form, such as a function or a tensor, cannot be
-written to `config.json`, and saving the run raises a `TypeError`.

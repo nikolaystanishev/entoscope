@@ -8,7 +8,6 @@ permissions:
   contents: read
 
 jobs:
-  # First, since a tag that does not name the version in pyproject.toml would publish it under another.
   version:
     runs-on: ubuntu-latest
     steps:
@@ -31,7 +30,6 @@ jobs:
       name: pypi
       url: https://pypi.org/project/entoscope/
     permissions:
-      # Trusted publishing: PyPI takes this job's OIDC token in place of an API token.
       id-token: write
     steps:
       - name: Download the distributions
@@ -40,11 +38,9 @@ jobs:
           name: dist
           path: dist/
 
-      # Also signs each file and uploads the attestations (PEP 740), which uv publish cannot make.
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@v1.14.2
 
-  # After the publish, so the site always documents the version PyPI serves.
   docs:
     needs: publish
     runs-on: ubuntu-latest

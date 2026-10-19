@@ -16,11 +16,13 @@ uv run pytest tests/lens/test_logit_lens.py::test_the_grid_covers_every_layer_an
 uv run pytest --cov --cov-report=html
 ```
 
-The tests are integration tests against real transformers. Most use tiny, randomly initialized models
-built in `tests/conftest.py`, and `model` is GPT-2, downloaded from the HuggingFace hub on first use.
-The tuned-lens tests also download GPT-2's pretrained translators. Every model fixture derives from
-the session-scoped `backend` fixture, so each test runs once per backend the installed transformer-lens
-has: with a `TransformerBridge`, and on transformer-lens 3 also with a `HookedTransformer`, which
+The tests are integration and end-to-end tests against real transformers: they run an operation the
+way a user does and check its results against values computed independently from the model. Most use
+tiny, randomly initialized models built in `tests/conftest.py`, and `model` is GPT-2, downloaded from
+the HuggingFace hub on first use. The tuned-lens tests also download GPT-2's pretrained translators.
+Every model fixture derives from the session-scoped `backend` fixture, so each test runs once per
+backend the installed transformer-lens has: with a `TransformerBridge`, with one in compatibility mode
+(`enable_compatibility_mode()`), and on transformer-lens 3 also with a `HookedTransformer`, which
 transformer-lens 4 removed.
 
 `tests/conftest.py` also provides:
@@ -28,6 +30,7 @@ transformer-lens 4 removed.
 | Fixture or helper | Use |
 |---|---|
 | `forbid_model_runs` | makes any forward pass fail, for asserting a `plan` never runs the model |
+| `record_runs` | records every forward pass a run makes, its batch width and what it cached |
 | `rendered_figure`, `rendered_figures` | parse the plotly figures back out of a written page |
 | `config_from_yaml` | load a config the way a run does, through a YAML file and `ConfigFactory` |
 | `registries` | undo the registrations a test makes |
@@ -52,7 +55,9 @@ uv run --group docs sphinx-build -W --keep-going docs docs/_build/html
 ```
 
 Open `docs/_build/html/index.html` to read the result. `-W` turns every warning into an error, which
-catches broken cross-references and docstrings that are not valid reStructuredText.
+catches broken cross-references and docstrings that are not valid reStructuredText. Docstrings are
+Google style (`Args:`, `Returns:`, `Raises:`, and `Attributes:` for a dataclass's fields), with the
+types left to the signature.
 
 The docs are tested along with the code, so they cannot drift from it unnoticed:
 
@@ -73,9 +78,10 @@ When you add an operation or a method, add or update its docs page, its referenc
 `.github/workflows/ci.yml` runs on every pull request and on pushes to `main`:
 
 - ruff's lint and format checks;
-- `pytest --cov` on Python 3.10 to 3.14, with a job that combines the coverage of all versions into
-  the job summary and a `coverage-html` artifact;
-- `lowest`, the tests on Python 3.10 with the lowest version of each dependency `pyproject.toml`
+- `pytest --cov` on Python 3.11 to 3.14, with a job that combines the coverage of all versions into
+  the job summary and a `coverage-html` artifact, and on Python 3.15, which may fail until torch
+  publishes wheels for it;
+- `lowest`, the tests on Python 3.11 with the lowest version of each dependency `pyproject.toml`
   allows, so the lower bounds published with the package are ones the tests pass on. `uv.lock` holds
   transformer-lens 4, which has no `HookedTransformer`, so this job's transformer-lens 3 is also where
   that backend and the bridge parity tests run;

@@ -1,8 +1,8 @@
-"""``CachedModel.run_with_cache`` — what it returns, what it writes, and when it recomputes.
+"""``CachedModel.run_with_cache`` - what it returns, what it writes, and when it recomputes.
 
-A cache hit is proven without a spy: the model's weights are changed between two calls, and the call
-served from disk keeps returning the first call's tensors while the unwrapped model follows the new
-weights. Which requests share an entry is read off the cache directory — one file per distinct key.
+A cache hit is a call that reaches the wrapped model's own ``run_with_cache`` no more, which
+``count_runs`` reads off the model itself. Which requests share an entry is read off the cache
+directory - one file per distinct key.
 """
 
 import pathlib
@@ -10,6 +10,7 @@ import pathlib
 import pytest
 import torch
 
+from entoscope.model import cache as cache_module
 from entoscope.model.cache import CachedModel
 
 from ..conftest import build_small_model
@@ -40,6 +41,19 @@ def bump_weights(model) -> None:
         model.blocks[0].mlp.b_out.add_(1.0)
 
 
+def count_runs(monkeypatch, model) -> list[int]:
+    """One entry per forward pass the wrapped model makes from here on: what a cache hit makes none of."""
+    runs: list[int] = []
+    run_with_cache = model.run_with_cache
+
+    def counted(*args, **kwargs):
+        runs.append(1)
+        return run_with_cache(*args, **kwargs)
+
+    monkeypatch.setattr(model, "run_with_cache", counted)
+    return runs
+
+
 def assert_same_cache(left, right, names=NAMES) -> None:
     assert set(left.keys()) == set(right.keys())
     for name in names:
@@ -68,20 +82,18 @@ def test_the_first_call_writes_one_entry_under_the_models_own_directory(wrapped,
     assert list(tmp_path.rglob("*.tmp*")) == []  # the write is atomic, nothing half-written is left
 
 
-def test_a_second_call_is_served_from_disk(wrapped, tmp_path):
+def test_a_second_call_is_served_from_disk(wrapped, tmp_path, monkeypatch):
     tokens = tokens_of(wrapped)
     logits, cache = wrapped.run_with_cache(tokens, names_filter=NAMES)
 
-    bump_weights(wrapped._model)
+    runs = count_runs(monkeypatch, wrapped._model)
     cached_logits, cached_cache = wrapped.run_with_cache(tokens, names_filter=NAMES)
-    recomputed_logits, _ = CachedModel(wrapped._model, cache_dir=None).run_with_cache(tokens, names_filter=NAMES)
 
-    # The stored activations answer the second call, and nothing new is written...
+    # The stored activations answer the second call, without running the model or writing anything new.
+    assert runs == []
     assert torch.equal(cached_logits, logits)
     assert_same_cache(cached_cache, cache)
     assert len(cache_files(tmp_path)) == 1
-    # ...while a call that recomputes them follows the changed weights.
-    assert not torch.equal(recomputed_logits, logits)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -117,7 +129,7 @@ def test_a_subset_of_the_names_is_its_own_entry(wrapped, tmp_path):
     assert len(cache_files(tmp_path)) == 2
 
 
-def test_an_unfiltered_call_caches_every_activation(wrapped, tmp_path):
+def test_an_unfiltered_call_caches_every_activation(wrapped, tmp_path, monkeypatch):
     tokens = tokens_of(wrapped)
     _, direct_cache = wrapped._model.run_with_cache(tokens)
 
@@ -125,18 +137,20 @@ def test_an_unfiltered_call_caches_every_activation(wrapped, tmp_path):
     assert set(cache.keys()) == set(direct_cache.keys())
     assert len(cache_files(tmp_path)) == 1
 
-    bump_weights(wrapped._model)
+    runs = count_runs(monkeypatch, wrapped._model)
     cached_logits, cached_cache = wrapped.run_with_cache(tokens)
+    assert runs == []
     assert torch.equal(cached_logits, logits)
     assert_same_cache(cached_cache, cache, names=sorted(cache.keys()))
     assert len(cache_files(tmp_path)) == 1
 
 
-def test_a_prompt_the_model_tokenizes_itself_is_keyed_as_the_string_it_was_given(wrapped, tmp_path):
+def test_a_prompt_the_model_tokenizes_itself_is_keyed_as_the_string_it_was_given(wrapped, tmp_path, monkeypatch):
     logits, cache = wrapped.run_with_cache(PROMPT, names_filter=NAMES)
 
-    bump_weights(wrapped._model)
+    runs = count_runs(monkeypatch, wrapped._model)
     cached_logits, cached_cache = wrapped.run_with_cache(PROMPT, names_filter=NAMES)
+    assert runs == []
     assert torch.equal(cached_logits, logits)
     assert_same_cache(cached_cache, cache)
     assert len(cache_files(tmp_path)) == 1
@@ -151,9 +165,9 @@ def test_a_prompt_and_its_tokens_are_separate_entries(wrapped, tmp_path):
     assert len(cache_files(tmp_path)) == 2
 
 
-def test_an_input_numpy_cannot_hold_is_keyed_by_its_raw_bytes(backend, tmp_path):
+def test_an_input_numpy_cannot_hold_is_keyed_by_its_raw_bytes(backend, tmp_path, monkeypatch):
     # A bfloat16 tensor has no NumPy equivalent, so the key reads its bytes through an integer view of
-    # the same width. (Only the two-byte side is reachable — no transformer_lens model runs in float8.)
+    # the same width. (Only the two-byte side is reachable - no transformer_lens model runs in float8.)
     model = build_small_model(backend, dtype=torch.bfloat16)
     wrapped = CachedModel(model, str(tmp_path))
     residual = model.embed(tokens_of(model))
@@ -164,8 +178,9 @@ def test_an_input_numpy_cannot_hold_is_keyed_by_its_raw_bytes(backend, tmp_path)
     except NotImplementedError:
         pytest.skip("this transformer-lens's bridge cannot run from a residual")
 
-    bump_weights(model)
+    runs = count_runs(monkeypatch, model)
     cached_logits, cached_cache = wrapped.run_with_cache(residual, start_at_layer=0, names_filter=NAMES)
+    assert runs == []
     assert torch.equal(cached_logits, logits)
     assert_same_cache(cached_cache, cache)
     assert len(cache_files(tmp_path)) == 1
@@ -174,6 +189,7 @@ def test_an_input_numpy_cannot_hold_is_keyed_by_its_raw_bytes(backend, tmp_path)
     nudged = residual.clone()
     nudged[0, -1] += 1
     other_logits, _ = wrapped.run_with_cache(nudged, start_at_layer=0, names_filter=NAMES)
+    assert runs == [1]
     assert len(cache_files(tmp_path)) == 2
     assert not torch.equal(other_logits, cached_logits)
 
@@ -187,7 +203,7 @@ def test_different_tokens_are_different_entries(wrapped, tmp_path):
 
 
 def test_two_models_are_kept_apart_by_name(backend, tmp_path):
-    # Same shape, same prompt, same activations — only the model differs, and its name becomes the
+    # Same shape, same prompt, same activations - only the model differs, and its name becomes the
     # directory (with anything a path cannot carry replaced).
     for name in ("org/tiny-a", "org/tiny-b"):
         model = build_small_model(backend, name=name)
@@ -199,8 +215,7 @@ def test_two_models_are_kept_apart_by_name(backend, tmp_path):
 
 def test_two_models_are_kept_apart_by_their_weights(backend, tmp_path):
     # A fine-tune reads back the config it was derived from, so the name and every shape match and
-    # only the weights tell the two apart. The wrapper takes their fingerprint as it is built, which
-    # is why the change here is made before the wrapping and not, as above, after it.
+    # only the weights tell the two apart.
     original, finetuned = build_small_model(backend), build_small_model(backend)
     bump_weights(finetuned)
 
@@ -208,6 +223,122 @@ def test_two_models_are_kept_apart_by_their_weights(backend, tmp_path):
         CachedModel(model, str(tmp_path)).run_with_cache(tokens_of(model), names_filter=NAMES)
 
     assert len(cache_files(tmp_path)) == 2
+
+
+def test_a_weight_edit_after_wrapping_is_a_new_entry(wrapped, tmp_path):
+    # The weights are read on every call, so an edit made in place - a training step, say - is never
+    # answered with what the model computed before it.
+    tokens = tokens_of(wrapped)
+    before, _ = wrapped.run_with_cache(tokens, names_filter=NAMES)
+
+    bump_weights(wrapped._model)
+    after, _ = wrapped.run_with_cache(tokens, names_filter=NAMES)
+    direct, _ = wrapped._model.run_with_cache(tokens, names_filter=NAMES)
+
+    assert not torch.equal(after, before)
+    assert torch.equal(after, direct)
+    assert len(cache_files(tmp_path)) == 2
+
+
+def test_compatibility_mode_switched_on_through_the_wrapper_is_a_new_entry(backend, tmp_path):
+    if backend != "bridge":
+        pytest.skip("only a bridge in its HuggingFace numerics can switch to compatibility mode")
+    wrapped = CachedModel(build_small_model(backend), str(tmp_path))
+    tokens = tokens_of(wrapped)
+    _, raw = wrapped.run_with_cache(tokens, names_filter=NAMES)
+
+    wrapped.enable_compatibility_mode(disable_warnings=True)
+    _, compatible = wrapped.run_with_cache(tokens, names_filter=NAMES)
+    _, direct = wrapped._model.run_with_cache(tokens, names_filter=NAMES)
+
+    assert not torch.allclose(compatible[NAMES[0]], raw[NAMES[0]], atol=1e-4)
+    assert_same_cache(compatible, direct)
+    assert len(cache_files(tmp_path)) == 2
+
+
+def test_a_dtype_change_through_the_wrapper_is_a_new_entry(wrapped, tmp_path):
+    tokens = tokens_of(wrapped)
+    wrapped.run_with_cache(tokens, names_filter=NAMES)
+
+    wrapped.to(torch.float64)
+    logits, cache = wrapped.run_with_cache(tokens, names_filter=NAMES)
+
+    assert logits.dtype is cache[NAMES[0]].dtype is torch.float64
+    assert len(cache_files(tmp_path)) == 2
+
+
+def test_an_entry_written_in_another_format_is_recomputed(wrapped, tmp_path, monkeypatch):
+    tokens = tokens_of(wrapped)
+    wrapped.run_with_cache(tokens, names_filter=NAMES)
+
+    monkeypatch.setattr(cache_module, "FORMAT_VERSION", cache_module.FORMAT_VERSION + 1)
+    runs = count_runs(monkeypatch, wrapped._model)
+    wrapped.run_with_cache(tokens, names_filter=NAMES)
+
+    assert runs == [1]
+    assert len(cache_files(tmp_path)) == 2
+
+
+def entry_sizes(model, tmp_path, rows: tuple[int, ...] = (1, 8), **kwargs) -> dict[int, int]:
+    """The size on disk of one call's entry, for a prompt repeated down each batch width."""
+    sizes = {}
+    for width in rows:
+        cache_dir = tmp_path / str(width)
+        CachedModel(model, str(cache_dir)).run_with_cache(torch.cat([tokens_of(model)] * width), **kwargs)
+        (entry,) = cache_files(cache_dir)
+        sizes[width] = entry.stat().st_size
+    return sizes
+
+
+def nudge_every_row(model) -> None:
+    """Make a prompt repeated down the batch compute a different value on every row.
+
+    Whether a backend computes the copies of one prompt alike bit for bit is its own business: the Linux
+    x86 runners CI uses round a batch's rows apart, Apple silicon does not. This makes them differ
+    everywhere.
+    """
+
+    def shift(activation, hook):
+        activation = activation.clone()
+        activation[:, :, 0] += 1e-7 * torch.arange(activation.shape[0])[:, None]
+        return activation
+
+    model.hook_dict["hook_embed"].add_hook(shift, dir="fwd", is_permanent=True)
+
+
+def test_batch_rows_alike_bit_for_bit_are_stored_once(backend, tmp_path, monkeypatch):
+    # Patching runs each prompt as wide as its patched runs, so the rows of such a call are copies of one
+    # another. An embedding is a lookup, so its copies are alike on every backend: the entry holds one of
+    # them, and reading it back gives every row again.
+    model = build_small_model(backend)
+    request = {"names_filter": ["hook_embed"], "return_type": None}
+
+    sizes = entry_sizes(model, tmp_path, **request)
+    runs = count_runs(monkeypatch, model)
+    _, cache = CachedModel(model, str(tmp_path / "8")).run_with_cache(torch.cat([tokens_of(model)] * 8), **request)
+    assert runs == []
+    _, direct = model.run_with_cache(torch.cat([tokens_of(model)] * 8), **request)
+
+    assert sizes[8] < 1.5 * sizes[1]
+    assert_same_cache(cache, direct, names=["hook_embed"])
+
+
+def test_batch_rows_that_differ_are_each_stored_and_read_back_exactly(backend, tmp_path, monkeypatch):
+    # An entry reads back exactly what the model computed, so rows a backend rounded apart are kept apart.
+    model = build_small_model(backend)
+    nudge_every_row(model)
+
+    sizes = entry_sizes(model, tmp_path, names_filter=NAMES)
+    runs = count_runs(monkeypatch, model)
+    logits, cache = CachedModel(model, str(tmp_path / "8")).run_with_cache(
+        torch.cat([tokens_of(model)] * 8), names_filter=NAMES
+    )
+    assert runs == []
+    direct_logits, direct_cache = model.run_with_cache(torch.cat([tokens_of(model)] * 8), names_filter=NAMES)
+
+    assert sizes[8] > 7 * sizes[1]
+    assert torch.equal(logits, direct_logits)
+    assert_same_cache(cache, direct_cache)
 
 
 def test_removing_the_batch_dimension_is_its_own_entry(wrapped, tmp_path):
@@ -294,6 +425,24 @@ def test_without_a_cache_dir_every_call_recomputes(backend, tmp_path):
     recomputed, _ = wrapped.run_with_cache(tokens, names_filter=NAMES)
     assert not torch.equal(recomputed, logits)
     assert cache_files(tmp_path) == []
+
+
+def test_a_method_that_returns_the_model_returns_the_wrapper(wrapped, tmp_path, monkeypatch):
+    # ``model = model.to(device)`` keeps the cache: a module method handing back the module itself
+    # hands back the wrapper, and the wrapper is called as the model is.
+    tokens = tokens_of(wrapped)
+
+    assert wrapped.to("cpu") is wrapped
+    assert wrapped.eval() is wrapped
+    assert wrapped.train(False) is wrapped
+    assert wrapped.requires_grad_(False) is wrapped
+    assert torch.equal(wrapped(tokens), wrapped._model(tokens))
+
+    model = wrapped.to("cpu")
+    model.run_with_cache(tokens, names_filter=NAMES)
+    runs = count_runs(monkeypatch, wrapped._model)
+    model.run_with_cache(tokens, names_filter=NAMES)
+    assert runs == []
 
 
 def test_every_other_attribute_is_the_models_own(model, tmp_path):

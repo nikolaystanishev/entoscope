@@ -7,7 +7,7 @@ import torch
 from jaxtyping import Float, Int
 
 from entoscope.model import Model
-from entoscope.model.config import ModelLocation, ModelLocatorConfig
+from entoscope.model.config import ModelAxis, ModelLocatorConfig
 from entoscope.model.index import Index
 from entoscope.operation.input import OperationInput
 from entoscope.probe.config import ProbeConfig
@@ -16,19 +16,22 @@ from entoscope.probe.pool import pool
 
 @dataclass
 class ProbeInput(OperationInput):
-    """Positive/negative example prompts whose pooled activations become probe training data.
+    """Positive and negative example prompts whose pooled activations become probe training data.
 
     The location grid is parsed once. When every prompt tokenizes to the same length the grid uses
     that length, so a filtered position resolves to a concrete index. When prompt lengths differ the
-    grid is parsed length-agnostically (``n_positions=None``): explicit positions stay symbolic -
-    non-negative counts from the start, negative from each prompt's own end (torch resolves it
-    against that prompt's cache at slice time) - and a grid that would enumerate every position (an
-    unfiltered ``position`` axis) is rejected because its size would depend on the prompt. Every
-    explicit position must be valid for the shortest prompt. Position axes left outside the grid
-    stay full slices and adapt to each prompt.
+    grid is parsed without one: explicit positions stay symbolic, a non-negative one counting from the
+    start and a negative one from each prompt's own end, and a grid that would enumerate every
+    position (an unfiltered ``position`` axis) is rejected because its size would depend on the
+    prompt. Position axes left outside the grid stay full slices and adapt to each prompt.
 
-    ``model.to_tokens`` prepends BOS, so mean/sum pooling over positions includes it while ``last``
+    ``model.to_tokens`` prepends BOS, so mean or sum pooling over positions includes it while ``last``
     pooling (or a ``-1`` position) reads the final content token.
+
+    Attributes:
+        config: The probing config.
+        positive_prompts: The examples labeled 1.
+        negative_prompts: The examples labeled 0.
     """
 
     config: ProbeConfig
@@ -40,28 +43,33 @@ class ProbeInput(OperationInput):
     _index: Index[ModelLocatorConfig] | None = field(init=False, default=None)
     _token_tensors: list[Int[torch.Tensor, "batch pos"]] | None = field(init=False, default=None)
 
-    def prepare_index(self, model: Model) -> "ProbeInput":
-        if self._index is not None:
-            return self
+    def prepare(self, model: Model, *, index_only: bool = False) -> "ProbeInput":
+        """Resolve the locations the probes read, then pool every prompt's activation at each into its features.
 
-        if not self.positive_prompts or not self.negative_prompts:
-            raise ValueError("Both positive and negative prompts are required to train a probe")
+        Args:
+            model: The model the run reads.
+            index_only: Whether to stop after the locations, before any forward pass.
 
-        self._token_tensors = [model.to_tokens(prompt) for prompt in self.positive_prompts + self.negative_prompts]
-        lengths = {tokens.shape[1] for tokens in self._token_tensors}
+        Returns:
+            The input itself, prepared in place.
 
-        n_positions = next(iter(lengths)) if len(lengths) == 1 else None
-        source = self.config.source.parse(model, n_positions)
-        self._validate_positions(source.df, min(lengths))
-        self._index = Index[ModelLocatorConfig](self.config.source, source)
+        Raises:
+            ValueError: If either set of prompts is empty, an explicit position is out of range for the
+                shortest prompt, or a location's feature size varies across prompts.
+        """
+        if self._index is None:
+            if not self.positive_prompts or not self.negative_prompts:
+                raise ValueError("Both positive and negative prompts are required to train a probe")
 
-        return self
+            self._token_tensors = [model.to_tokens(prompt) for prompt in self.positive_prompts + self.negative_prompts]
+            lengths = {tokens.shape[1] for tokens in self._token_tensors}
 
-    def prepare(self, model: Model) -> "ProbeInput":
-        self.prepare_index(model)
+            n_positions = next(iter(lengths)) if len(lengths) == 1 else None
+            source = self.config.source.parse(model, n_positions)
+            self._validate_positions(source.df, min(lengths))
+            self._index = Index[ModelLocatorConfig](self.config.source, source)
 
-        # Guarded on the features, not the index: a ``plan`` may have resolved the index already.
-        if self._features is None:
+        if not index_only and self._features is None:
             self._features = self._collect_features(model, self.token_tensors, self.index)
             self._labels = torch.cat(
                 [
@@ -78,9 +86,6 @@ class ProbeInput(OperationInput):
         token_tensors: list[Int[torch.Tensor, "batch pos"]],
         index: Index[ModelLocatorConfig],
     ) -> dict[int, Float[torch.Tensor, "examples features"]]:
-        # One prompt at a time keeps a single activation cache alive; features go to CPU
-        # immediately, so memory stays bounded regardless of the number of examples.
-        # Keyed by the index row's position, which is the same for a location on every prompt.
         vectors: dict[int, list[torch.Tensor]] = defaultdict(list)
         for tokens in token_tensors:
             with torch.no_grad():
@@ -105,10 +110,18 @@ class ProbeInput(OperationInput):
 
     @staticmethod
     def _validate_positions(index_df: pd.DataFrame, min_length: int) -> None:
-        """Every explicit position must land inside the shortest prompt (for both anchors)."""
-        if ModelLocation.POSITION not in index_df.columns:
+        """Check that every explicit position lands inside the shortest prompt, counted from either end.
+
+        Args:
+            index_df: The resolved locations.
+            min_length: The shortest prompt's token count.
+
+        Raises:
+            ValueError: If a position is out of range.
+        """
+        if ModelAxis.POSITION not in index_df.columns:
             return
-        for cell in index_df[ModelLocation.POSITION]:
+        for cell in index_df[ModelAxis.POSITION]:
             for position in cell if isinstance(cell, list) else [cell]:
                 if isinstance(position, (int, np.integer)) and not -min_length <= position < min_length:
                     raise ValueError(
@@ -117,21 +130,25 @@ class ProbeInput(OperationInput):
 
     @property
     def labels(self) -> Int[torch.Tensor, " examples"]:
+        """Every example's label, positives first, once the input is prepared."""
         assert self._labels is not None
         return self._labels
 
     @property
     def features(self) -> dict[int, Float[torch.Tensor, "examples features"]]:
+        """Each location's features, one row per example, keyed by result row, once the input is prepared."""
         assert self._features is not None
         return self._features
 
     @property
     def index(self) -> Index[ModelLocatorConfig]:
+        """The locations the probes read, once the index is prepared."""
         assert self._index is not None
         return self._index
 
     @property
     def token_tensors(self) -> list[Int[torch.Tensor, "batch pos"]]:
+        """Every example's tokens, positives first, once the index is prepared."""
         assert self._token_tensors is not None
         return self._token_tensors
 

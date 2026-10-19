@@ -21,8 +21,8 @@ from transformer_lens.model_bridge import TransformerBridge
 
 from entoscope import (
     MetricComparison,
+    ModelAxis,
     ModelLayerLocation,
-    ModelLocation,
     Patcher,
     PatchingConfig,
     PatchingElementConfig,
@@ -39,7 +39,7 @@ model.eval()
 residual = PatchingElementConfig(
     type=PatchingType.REPLACE,
     activation=ModelLayerLocation.RESIDUAL_PRE,
-    location=[ModelLocation.LAYER, ModelLocation.POSITION],
+    location=[ModelAxis.LAYER, ModelAxis.POSITION],
 )
 config = PatchingConfig(
     metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.NORMALIZED]},
@@ -142,7 +142,8 @@ effect, a logit difference as a fraction of the gap between the two runs. A metr
 `patch` lists the elements to patch. An element is a `SinglePatchingConfig` with a `source` and a
 `target`, each a `PatchingElementConfig`, which is a [locator](../concepts/locating.md) plus `type`
 and `value`. Row `i` of the source index is read and written at row `i` of the target index. A side
-with a single row pairs with every row of the other, and the two sides may name different locations,
+with a single row pairs with every row of the other; otherwise the two need as many rows, and a pair
+that does not line up is rejected before anything runs. The two sides may name different locations,
 such as reading layer 10 and writing layer 11, as long as the slices fit.
 
 The source's `type` says what gets written:
@@ -157,15 +158,16 @@ The source's `type` says what gets written:
 The noise's standard deviation is three times the target run's own standard deviation over the whole
 activation, as in causal tracing (Meng et al., 2022). It is drawn from a fixed seed, so every row is
 corrupted by the same draw and a rerun repeats the sweep exactly. The target's `type` is always
-`replace`.
+`replace`. A type that cannot run, such as another target type or a source that reads a source run
+the input has no prompt for, is rejected as the `PatchingInput` is built.
 
 ### Several elements at once
 
 With more than one element, patched run `i` applies row `i` of every element together, so their
 indices must have the same number of rows, or one. An element with one row is applied on every run.
-The result is laid out along the first element's index, so put the element that varies first. A
-one-row element listed first collapses every run into a single result row. On the result page, a
-one-row element is named in the subtitle and a varying one in every cell's hover.
+The result is laid out along the element with the most rows, the first of them when several tie, so
+every patched run has a row of its own. On the result page, a one-row element is named in the subtitle
+and a varying one in every cell's hover.
 
 ```yaml
 patch:
@@ -212,10 +214,14 @@ patching several elements sums their contributions.
 
 `integrated_gradients` averages that gradient over `interpolation_steps` points on the straight path
 from the source run's activation to the target run's (Marks et al., 2024, Eq. 4), which recovers
-effects a single gradient at the clean point hides. It costs one forward pass and one backward pass
-per metric for every step, still flat in the size of the index. The path runs between the two runs,
-so it needs a source prompt of the same token length as the target. It is meant for `replace`
-sources: a value or noise is written off that path, and `attribution` is the estimate to use there.
+effects a single gradient at the clean point hides. As there, each hook the index patches, such as
+each layer of a sweep, is interpolated on passes of its own, so a row's score does not depend on what
+else the index holds. That costs one forward pass and one backward pass per metric for every step and
+hook, except at the clean point, where one pass serves every hook. The cost grows with the hooks but
+not with the rows: every position, head and neuron of a hook comes from the same passes. The path
+runs between the two runs, so it needs a source prompt of the same token length as the target, which
+`plan()` checks too. It is meant for `replace` sources: a value or noise is written off that path,
+and `attribution` is the estimate to use there.
 
 The gradient methods make no patched run, so their results have no `generation`. A common workflow
 is to estimate a large sweep with `attribution`, then confirm its strongest rows with `exact`.
@@ -226,7 +232,7 @@ Zero ablation writes a value, so it reads no source run. The source names only i
 that pairs with every target row:
 
 ```python
-from entoscope import from_dict
+from entoscope.util.data import from_dict
 
 zero_mlp = from_dict(
     PatchingConfig,
@@ -248,11 +254,19 @@ Patcher(model).apply(ablation, save_dir="runs/zero_mlp")
 Reported as an indirect effect, each row is $m(x \mid do(a = 0)) - m(x)$. Without a source run there
 is no `normalized` and no `kl_divergence`, and the correct token has to be named.
 
+A source that reads no source run counts its positions in the target prompt: a value is written into
+the target run, and `gaussian_noise` corrupts the target run's own activation, so `position: -1` on
+such a source is the target's last token, with or without a source prompt.
+
+A `normalized` metric divides by the gap between the source and target runs, so two runs that score
+the same, such as one prompt on both sides, are refused once they are cached and before any patched run.
+
 ## Output
 
 `result.csv` has one row per patched run:
 
-- the first element's index, as `source_*` and `target_*` columns;
+- the index of the element the result is laid out along, as `source_*` and `target_*` columns, a
+  one-row source or target repeated on every row it pairs with;
 - a column per metric and comparison pair, in the order the config names them: the metric's name for
   `absolute`, otherwise the comparison then the metric, as in `normalized_logit_diff`;
 - `generation` and `str_generation`, the token the patched run predicts next, for `exact`.

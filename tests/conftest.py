@@ -36,7 +36,13 @@ except ImportError:  # transformer-lens 2.x (Intel macOS fallback)
 
 # Every model fixture runs its tests once per backend the installed transformer-lens has: 2.x (Intel macOS)
 # has only HookedTransformer, 3.x both, and 4.x only the bridge, which is what entoscope is built around.
-BACKENDS = [name for name, cls in (("bridge", TransformerBridge), ("hooked", HookedTransformer)) if cls is not None]
+# "compat" is a bridge after ``enable_compatibility_mode()``: transformer_lens's folded-LayerNorm weights
+# instead of HuggingFace's, a convention entoscope supports alongside the raw one.
+BACKENDS = [
+    name
+    for name, cls in (("bridge", TransformerBridge), ("compat", TransformerBridge), ("hooked", HookedTransformer))
+    if cls is not None
+]
 
 # Shared by both backends' tiny models, so an index means the same thing whichever one is under test.
 # ``d_model`` is ``n_heads * d_head`` because a HuggingFace config derives the head size from the
@@ -53,7 +59,7 @@ def _tokenizer():
 def build_tiny_model(**overrides) -> HookedTransformer:
     """A real transformer with random weights, small enough to enumerate a whole location axis.
 
-    GPT-2 answers "what does this compute", these answer "what does the config index" — and they
+    GPT-2 answers "what does this compute", these answer "what does the config index" - and they
     reach architectures GPT-2 does not have (grouped-query attention, a gated MLP, parallel
     attention/MLP). The tokenizer is GPT-2's, so prompts tokenize the same way.
     """
@@ -63,8 +69,8 @@ def build_tiny_model(**overrides) -> HookedTransformer:
     return model
 
 
-def build_tiny_bridge(hf_model, name: str = "tiny"):
-    """The bridge counterpart of ``build_tiny_model``, named ``name``.
+def build_tiny_bridge(hf_model, name: str = "tiny", compatible: bool = False):
+    """The bridge counterpart of ``build_tiny_model``, named ``name``, in compatibility mode if ``compatible``.
 
     A bridge wraps a HuggingFace model instead of a ``HookedTransformerConfig``, so the architecture
     variants come from choosing the HF class rather than from setting a flag. The wrapped model is
@@ -77,6 +83,12 @@ def build_tiny_bridge(hf_model, name: str = "tiny"):
     model = TransformerBridge.boot_transformers(
         name, hf_model=hf_model, tokenizer=_tokenizer(), device="cpu", dtype=dtype
     )
+    return _ready(model, compatible)
+
+
+def _ready(model, compatible: bool):
+    if compatible:
+        model.enable_compatibility_mode(disable_warnings=True)
     model.eval()
     return model
 
@@ -85,7 +97,7 @@ def build_small_model(backend: str, name: str | None = None, dtype: torch.dtype 
     """The model ``small_model`` holds, built afresh: for a test that changes it, or needs it named or typed."""
     if backend == "hooked":
         return build_tiny_model(dtype=dtype, **({"model_name": name} if name else {}))
-    return build_tiny_bridge(_tiny_gpt2().to(dtype), name=name or "tiny")
+    return build_tiny_bridge(_tiny_gpt2().to(dtype), name=name or "tiny", compatible=backend == "compat")
 
 
 def _tiny_hf(factory, config_class, **settings):
@@ -117,10 +129,8 @@ def _tiny_gpt2():
     )
 
 
-def _gpt2_bridge():
-    model = TransformerBridge.boot_transformers("gpt2", device="cpu")
-    model.eval()
-    return model
+def _gpt2_bridge(compatible: bool = False):
+    return _ready(TransformerBridge.boot_transformers("gpt2", device="cpu"), compatible)
 
 
 def _gpt2_hooked():
@@ -141,9 +151,11 @@ def backend(request) -> str:
 
 
 def _backend_fixture(bridge, hooked):
+    """A session model built by ``hooked()`` or by ``bridge(compatible)``, as the backend asks."""
+
     @pytest.fixture(scope="session")
     def fixture(backend):
-        return bridge() if backend == "bridge" else hooked()
+        return hooked() if backend == "hooked" else bridge(backend == "compat")
 
     return fixture
 
@@ -158,23 +170,29 @@ def small_model(backend):
 
 # Llama is gated as well as grouped-query; the tests using this fixture only read head counts.
 gqa_model = _backend_fixture(
-    lambda: build_tiny_bridge(_tiny_hf(LlamaForCausalLM, LlamaConfig, num_key_value_heads=2)),
+    lambda compatible: build_tiny_bridge(
+        _tiny_hf(LlamaForCausalLM, LlamaConfig, num_key_value_heads=2), compatible=compatible
+    ),
     lambda: build_tiny_model(n_key_value_heads=2),
 )
 
 gated_model = _backend_fixture(
-    lambda: build_tiny_bridge(_tiny_hf(LlamaForCausalLM, LlamaConfig, num_key_value_heads=TINY["n_heads"])),
+    lambda compatible: build_tiny_bridge(
+        _tiny_hf(LlamaForCausalLM, LlamaConfig, num_key_value_heads=TINY["n_heads"]), compatible=compatible
+    ),
     lambda: build_tiny_model(gated_mlp=True, act_fn="silu"),
 )
 
 parallel_model = _backend_fixture(
-    lambda: build_tiny_bridge(_tiny_hf(GPTNeoXForCausalLM, GPTNeoXConfig, use_parallel_residual=True)),
+    lambda compatible: build_tiny_bridge(
+        _tiny_hf(GPTNeoXForCausalLM, GPTNeoXConfig, use_parallel_residual=True), compatible=compatible
+    ),
     lambda: build_tiny_model(parallel_attn_mlp=True),
 )
 
 
 def forbid_model_runs(monkeypatch, model) -> None:
-    """Make every forward pass through ``model`` fail — what an operation's plan must never need.
+    """Make every forward pass through ``model`` fail - what an operation's plan must never need.
 
     Patched on the instance, so the session-scoped model is restored when the test's monkeypatch
     unwinds. Tokenization and ``cfg`` stay untouched: resolving an index is allowed to read those.
@@ -185,6 +203,41 @@ def forbid_model_runs(monkeypatch, model) -> None:
 
     for name in ("run_with_cache", "run_with_hooks", "forward"):
         monkeypatch.setattr(model, name, fail, raising=False)
+
+
+@dataclass(frozen=True)
+class RecordedRun:
+    """One forward pass a run made through ``model``: its entry point, its batch rows and what it cached."""
+
+    entry: str
+    width: int
+    cache: dict | None
+
+
+def record_runs(monkeypatch, model) -> list[RecordedRun]:
+    """Every forward pass through ``model`` from here on, recorded as it goes through - nothing is stubbed.
+
+    What a run caches and how wide it batches are not in its results, so this is how a test reads them
+    off the run itself instead of off the input's internals.
+    """
+    runs: list[RecordedRun] = []
+    run_with_cache, run_with_hooks = model.run_with_cache, model.run_with_hooks
+
+    def width(args) -> int:
+        return args[0].shape[0] if args and isinstance(args[0], torch.Tensor) else 1
+
+    def cached(*args, **kwargs):
+        logits, cache = run_with_cache(*args, **kwargs)
+        runs.append(RecordedRun("run_with_cache", width(args), dict(cache.items())))
+        return logits, cache
+
+    def hooked(*args, **kwargs):
+        runs.append(RecordedRun("run_with_hooks", width(args), None))
+        return run_with_hooks(*args, **kwargs)
+
+    monkeypatch.setattr(model, "run_with_cache", cached)
+    monkeypatch.setattr(model, "run_with_hooks", hooked)
+    return runs
 
 
 @dataclass(frozen=True)
@@ -243,7 +296,7 @@ def rendered_figures(save_dir, name: str = "result.html") -> list[RenderedFigure
 
 
 def rendered_figure(save_dir, name: str = "result.html") -> RenderedFigure:
-    """The first plot on the page — what a run drawing a single one wrote."""
+    """The first plot on the page - what a run drawing a single one wrote."""
     return rendered_figures(save_dir, name)[0]
 
 

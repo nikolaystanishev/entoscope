@@ -12,7 +12,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 
 from entoscope.model.cache import CachedModel
-from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation
+from entoscope.model.config import Filter, ModelAxis, ModelLayerLocation
 from entoscope.probe.config import PoolingType, ProbeConfig, ProbeMetric
 from entoscope.probe.input import ProbeInput
 from entoscope.probe.prober import Prober
@@ -36,7 +36,7 @@ def _single_neuron_config(**overrides) -> ProbeConfig:
     """One feature per example, so the probe cannot separate any four points it likes."""
     return probe_config(
         activation=ModelLayerLocation.MLP_POST,
-        location=[ModelLocation.LAYER, ModelLocation.NEURON],
+        location=[ModelAxis.LAYER, ModelAxis.NEURON],
         filter=Filter.from_config([{"neuron": NEURON}]),
         metric=list(METRICS),
         **overrides,
@@ -88,8 +88,8 @@ def test_the_metrics_score_the_probes_own_predictions(model, caches):
         assert row["recall"] == pytest.approx(recall_score(labels, predictions, zero_division=0))
         assert row["auroc"] == pytest.approx(roc_auc_score(labels, probabilities))
 
-    # A single neuron is no sentiment detector: the scores have to be imperfect, and auroc — scored on
-    # the probabilities rather than the predictions — has to part company with accuracy somewhere.
+    # A single neuron is no sentiment detector: the scores have to be imperfect, and auroc - scored on
+    # the probabilities rather than the predictions - has to part company with accuracy somewhere.
     assert result["accuracy"].min() < 1.0
     assert (result["auroc"] != result["accuracy"]).any()
 
@@ -201,7 +201,7 @@ def test_artifacts_are_saved_to_disk(model, config_from_yaml, tmp_path):
 def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model, config_from_yaml):
     from_file = config_from_yaml(ProbeConfig, "my_probe", PROBE_YAML)
 
-    assert from_file.pool == {ModelLocation.POSITION: PoolingType.MEAN}
+    assert from_file.pool == {ModelAxis.POSITION: PoolingType.MEAN}
     assert from_file.metric == list(METRICS)
     assert run_probe(model, from_file).result.equals(run_probe(model, probe_config(metric=list(METRICS))).result)
 
@@ -238,10 +238,10 @@ def test_pooling_defaults_to_nothing_pooled(config_from_yaml):
     assert config_from_yaml(ProbeConfig, "my_probe", raw).pool == {}
 
 
-def test_a_probe_metric_that_is_not_known_raises(model):
-    # A config built in code can hold a metric the dispatch has no implementation for.
-    with pytest.raises(ValueError, match="Unknown probe metric"):
-        Prober(model).apply(ProbeInput(replace(probe_config(), metric=["mse"]), POSITIVE, NEGATIVE), verbose=False)
+def test_a_probe_metric_that_is_not_known_raises():
+    # A config built in code is read as a file's is, so a metric nothing implements is refused as it is built.
+    with pytest.raises(ValueError, match="'mse' is not a valid ProbeMetric"):
+        replace(probe_config(), metric=["mse"])
 
 
 def test_both_classes_are_required(model):
@@ -269,6 +269,23 @@ def test_a_plan_counts_one_probe_per_location_and_one_pass_per_example(model, mo
         *(("negative", prompt) for prompt in NEGATIVE),
     ]
     assert plan.activations == sorted(f"blocks.{layer}.hook_resid_post" for layer in range(model.cfg.n_layers))
+
+
+def test_a_plan_lists_a_long_list_of_prompts_in_part(model):
+    # One line per prompt up to a limit, then a count of the rest: a dry run over a dataset stays readable.
+    positive = [f"Example {number} was wonderful" for number in range(8)]
+    negative = [f"Example {number} was dreadful" for number in range(8)]
+
+    lines = str(Prober(model).plan(ProbeInput(probe_config(), positive, negative), verbose=False)).splitlines()
+
+    def listing(label: str, prompt: str) -> str:
+        return f'  {label}: "{prompt}" ({model.to_tokens(prompt).shape[1]} tokens)'
+
+    listed = [line for line in lines if line.startswith(("  positive: ", "  negative: "))]
+    assert listed == [listing("positive", prompt) for prompt in positive] + [
+        listing("negative", p) for p in negative[:2]
+    ]
+    assert "  +6 more prompts" in lines
 
 
 def test_a_plan_describes_the_run_that_follows_it(model, tmp_path):

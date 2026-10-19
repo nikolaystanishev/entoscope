@@ -18,11 +18,12 @@ from entoscope import (
     LensConfig,
     LensInput,
     LensMethodConfig,
+    ModelAxis,
     ModelLayerLocation,
-    ModelLocation,
     ModelLocatorConfig,
 )
-from entoscope.lens import LensMethodFactory, LogitLens
+from entoscope.lens import LensMethodFactory
+from entoscope.lens.method.logit_lens import LogitLens
 
 
 # 1. The method's settings, as a dataclass extending the operation's method config.
@@ -45,7 +46,7 @@ config = LensConfig(
     method=TemperatureLensConfig(type="temperature_lens", temperature=2.0),
     top_k=5,
     source=ModelLocatorConfig(
-        activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelLocation.LAYER, ModelLocation.POSITION]
+        activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelAxis.LAYER, ModelAxis.POSITION]
     ),
 )
 Lens(model).apply(LensInput(config, "The capital of France is"), save_dir="runs/warm")
@@ -84,8 +85,9 @@ is this lens as an experiment script, run from a config file.
 
 The factories, the method bases and the settings bases are importable from the operation's package,
 `entoscope.lens`, `entoscope.probe`, `entoscope.patching` or `entoscope.circuit`, and the settings bases
-from `entoscope` too. A method is built from `(model, config)` (patching adds `batch_size`) and finds its
-own settings in `self.method_config`.
+from `entoscope` too; the built-in methods themselves are in their own modules, such as
+`entoscope.lens.method.logit_lens`. A method is built from `(model, config)` and finds its own settings
+in `self.method_config`.
 
 - **Lens.** One instance reads every row of the run, so a lens that handles several kinds of
   activation tells them apart with `index.activation()`. `extract(lens_input, index)` returns the
@@ -99,14 +101,19 @@ own settings in `self.method_config`.
   numpy arrays. `probe` is the fitted estimator the collector pickles into `probes.pkl`, so it must
   pickle.
 - **Activation patching.** `scores(patching_input, verbose)` yields a `RowResult` per patched run
-  (`patching_input.rows()` lists them). Each one is built from the change the run made to every metric,
+  (`patching_input.rows()` lists them, the `i`-th filling result row `i`). Each one is built from the change the run made to every metric,
   the patched run's value minus the unpatched target run's, which `self._report` turns into the columns
-  the config's comparisons ask for. `passes(runs, batches)` returns the `(forward, backward)` passes
-  the method adds, for `plan`. Set `batched = True` if it runs the model `batch_size` rows at a time.
+  the config's comparisons ask for. `passes(patching_input, batches)` returns the `(forward, backward)`
+  passes the method adds, for `plan`, reading what it needs off the index-resolved input, such as
+  `rows()` or `target_activation_names()`. Override `check(patching_input)` to refuse an input the
+  method cannot score: it runs before either prompt is, in `plan` as in the run. Set `batched = True`
+  if it runs the model `batch_size` rows at a time.
   The test suite's
   [`test_custom_patching_method.py`](https://github.com/nikolaystanishev/entoscope/blob/main/tests/patching/test_custom_patching_method.py)
   is a minimal worked example.
-- **Circuit discovery.** `build(prompt, tokens)` returns the prompt's `PromptCircuit`. The result page
+- **Circuit discovery.** `build(prompt, tokens)` returns the prompt's `PromptCircuit`, and
+  `activation_names()` the hooks it caches, which a plan reports; left unset, a plan reports the full
+  activation cache. The result page
   reads the node and edge attributes Information Flow Routes writes (see
   [The graph](../operations/circuit-discovery.md#the-graph)); a method writing other attributes runs
   with `collector_class=CircuitCollector`.

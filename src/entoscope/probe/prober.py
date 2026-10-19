@@ -14,10 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 class Prober(Operator):
-    """Trains one probe per location and scores it on the training examples (no held-out split).
+    """Trains one probe per location and scores it on the training examples, with no held-out split.
 
-    Each example prompt is run once, caching only what the index reads. The probing collector draws no
-    page: its result is a table of scores and the fitted probes.
+    Each example prompt is run once, caching only what the index reads.
+
+    Args:
+        model: The model to read.
+        collector_class: The collector to write the results with. Probing draws no page: its result is a
+            table of scores and the fitted probes.
     """
 
     def __init__(self, model: Model, collector_class: type[ProbeCollector] = ProbeCollector):
@@ -31,16 +35,31 @@ class Prober(Operator):
         return_collector: bool = False,
         verbose: bool = True,
     ) -> ProbeCollector | None:
-        # Built as every location builds its own, so a probe that cannot be built fails before the forward passes.
-        ProbeMethodFactory.create(probe_input.config, self.model)
+        """Train and score a probe at every row of the input's index.
+
+        The method is built before any forward pass, so a config that names something the run cannot do
+        fails before the model is touched. Where the results were saved is logged through the
+        ``entoscope`` logger.
+
+        Args:
+            probe_input: The config and example prompts to run, prepared in place.
+            save_dir: The directory to write ``result.csv``, ``index.csv``, ``config.json`` and
+                ``probes.pkl`` into, created if missing. ``None`` writes nothing.
+            return_collector: Whether to return the collector.
+            verbose: Whether to show a progress bar.
+
+        Returns:
+            The collector, whose ``result`` holds every location's scores and whose ``probes`` the fitted
+            probes, if ``return_collector`` is set, and ``None`` otherwise.
+        """
+        ProbeMethodFactory.create(self.model, probe_input.config)
         probe_input.prepare(self.model)
         collector = self.collector_class(probe_input, self.model, save_dir)
-        collector.prepare()
         labels = probe_input.labels.detach().cpu().numpy()
 
         for single_index in tqdm(probe_input.index, total=len(probe_input.index), disable=not verbose):
             features = probe_input.features[single_index.output]
-            probe = ProbeMethodFactory.create(probe_input.config, self.model)
+            probe = ProbeMethodFactory.create(self.model, probe_input.config)
             probe.fit(features, probe_input.labels)
             predictions = probe.predict(features)
             probabilities = probe.predict_proba(features)
@@ -57,9 +76,20 @@ class Prober(Operator):
         return None
 
     def plan(self, probe_input: ProbeInput, save_dir: str | None = None, verbose: bool = True) -> OperationPlan:
-        # Built as the run builds them, so a plan fails wherever its run would.
-        ProbeMethodFactory.create(probe_input.config, self.model)
-        probe_input.prepare_index(self.model)
+        """Describe the run ``apply`` would make, without a forward pass and without touching ``save_dir``.
+
+        The input's index is resolved exactly as the run resolves it, and kept for ``apply``.
+
+        Args:
+            probe_input: The config and example prompts the run would use.
+            save_dir: The directory the run would write into.
+            verbose: Whether to also log the plan.
+
+        Returns:
+            The plan: one probe per index row and one forward pass per example prompt.
+        """
+        ProbeMethodFactory.create(self.model, probe_input.config)
+        probe_input.prepare(self.model, index_only=True)
 
         prompts = [("positive", prompt) for prompt in probe_input.positive_prompts]
         prompts += [("negative", prompt) for prompt in probe_input.negative_prompts]
@@ -70,7 +100,6 @@ class Prober(Operator):
             config=probe_input.config,
             steps=len(probe_input.index),
             steps_label="probe",
-            # One cached pass per example: features are collected a prompt at a time.
             forward_passes=len(prompts),
             index=[probe_input.index.to_df()],
             prompts=[

@@ -12,13 +12,25 @@ from entoscope.probe.method.probe import AbstractProbeMethod
 
 @dataclass(kw_only=True)
 class LinearProbeConfig(ProbeMethodConfig):
-    """A logistic regression: ``max_iter`` bounds its solver and ``seed`` fixes its randomness."""
+    """The method config of ``linear``, a logistic regression.
+
+    Attributes:
+        max_iter: The most iterations its solver runs.
+        seed: The seed of its randomness.
+    """
 
     max_iter: int = 1000
     seed: int = 42
 
 
 class LinearProbe(AbstractProbeMethod[LinearProbeConfig]):
+    """A scikit-learn logistic regression.
+
+    Args:
+        model: The model the features are read from.
+        config: The run's config.
+    """
+
     def __init__(self, model: Model, config: ProbeConfig):
         super().__init__(model, config)
         self._probe = LogisticRegression(max_iter=self.method_config.max_iter, random_state=self.method_config.seed)

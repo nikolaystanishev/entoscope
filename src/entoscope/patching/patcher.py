@@ -14,10 +14,15 @@ logger = logging.getLogger(__name__)
 class Patcher(Operator):
     """Patches the source run into the target run and reports how the metrics moved, one row per patched run.
 
-    ``batch_size`` is how many rows one forward pass of ``exact`` patches; the gradient methods score the
-    whole index from a pass per interpolation step and ignore it. Backends round differently at different
-    batch shapes, so the cached source and target runs are made at the same width as the patched runs.
-    The default collector also draws ``result.html``; ``PatchingCollector`` writes the CSVs alone.
+    Backends round differently at different batch shapes, so the cached source and target runs are made
+    at the same width as the patched runs.
+
+    Args:
+        model: The model to patch.
+        collector_class: The collector to write the results with. The default also draws
+            ``result.html``, and ``PatchingCollector`` writes the CSV files alone.
+        batch_size: How many patched runs one forward pass of ``exact`` holds. The gradient methods score
+            the whole index from passes of their own and ignore it.
     """
 
     def __init__(
@@ -37,6 +42,23 @@ class Patcher(Operator):
         return_collector: bool = False,
         verbose: bool = True,
     ) -> PatchingCollector | None:
+        """Patch every row of the input's index and read the metrics off each patched run.
+
+        The method is built before any forward pass, so a config that names something the run cannot do
+        fails before the model is touched. Where the results were saved is logged through the
+        ``entoscope`` logger.
+
+        Args:
+            patching_input: The config, prompts and answer tokens to run, prepared in place.
+            save_dir: The directory to write ``result.csv``, one ``index-{i}.csv`` per patch element,
+                ``config.json`` and the page into, created if missing. ``None`` writes nothing.
+            return_collector: Whether to return the collector.
+            verbose: Whether to show a progress bar.
+
+        Returns:
+            The collector, whose ``result`` holds every patched run's metric columns, if
+            ``return_collector`` is set, and ``None`` otherwise.
+        """
         collector = self._patch(patching_input, save_dir, verbose)
         collector.save()
 
@@ -45,13 +67,26 @@ class Patcher(Operator):
         return None
 
     def plan(self, patching_input: PatchingInput, save_dir: str | None = None, verbose: bool = True) -> OperationPlan:
-        # Built as the run builds it, so a plan fails wherever its run would.
-        method = PatchingMethodFactory.create(patching_input.config, self.model, self.batch_size)
-        patching_input.prepare_index(self.model)
+        """Describe the run ``apply`` would make, without a forward pass and without touching ``save_dir``.
+
+        The input's index is resolved exactly as the run resolves it, and kept for ``apply``.
+
+        Args:
+            patching_input: The config, prompts and answer tokens the run would use.
+            save_dir: The directory the run would write into.
+            verbose: Whether to also log the plan.
+
+        Returns:
+            The plan: one step per patched run, and the forward and backward passes the method makes on
+            top of one cached run per prompt.
+        """
+        method = PatchingMethodFactory.create(self.model, patching_input.config)
+        patching_input.prepare(self.model, index_only=True)
+        method.check(patching_input)
 
         steps = len(patching_input.rows())
         batches = len(list(batch_generator(list(range(steps)), self.batch_size)))
-        forward_passes, backward_passes = method.passes(steps, batches)
+        forward_passes, backward_passes = method.passes(patching_input, batches)
 
         prompts = [("target", patching_input.target_prompt, patching_input.target_tokens.shape[1])]
         if patching_input.source_prompt is not None:
@@ -63,7 +98,6 @@ class Patcher(Operator):
             config=patching_input.config,
             steps=steps,
             steps_label="patch run",
-            # The method's own passes, on top of the cached run the input prepares per prompt.
             forward_passes=forward_passes + len(prompts),
             backward_passes=backward_passes,
             batches=batches if method.batched else None,
@@ -79,11 +113,11 @@ class Patcher(Operator):
         return plan
 
     def _patch(self, patching_input: PatchingInput, save_dir: str | None, verbose: bool = True) -> PatchingCollector:
-        # Built before the cached runs, so a method that cannot be built fails before the run does any work.
-        method = PatchingMethodFactory.create(patching_input.config, self.model, self.batch_size)
+        method = PatchingMethodFactory.create(self.model, patching_input.config)
+        patching_input.prepare(self.model, index_only=True)
+        method.check(patching_input)
         patching_input.prepare(self.model, self.batch_size if method.batched else 1)
         collector = self.collector_class(patching_input, self.model, save_dir)
-        collector.prepare()
 
         for row in method.scores(patching_input, verbose):
             collector.collect(row)

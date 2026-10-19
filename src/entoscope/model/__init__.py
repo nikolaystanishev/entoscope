@@ -1,4 +1,4 @@
-from entoscope.model.base import Model, is_bridge
+from entoscope.model.base import Model
 from entoscope.model.cache import CachedModel
 from entoscope.model.config import (
     Combination,
@@ -6,11 +6,10 @@ from entoscope.model.config import (
     Filter,
     Group,
     Incremental,
+    ModelAxis,
     ModelLayerLocation,
-    ModelLocation,
     ModelLocatorConfig,
 )
-from entoscope.model.index import Index, IndexElement, SingleIndex
 
 __all__ = [
     "CachedModel",
@@ -19,12 +18,8 @@ __all__ = [
     "Filter",
     "Group",
     "Incremental",
-    "Index",
-    "IndexElement",
     "Model",
+    "ModelAxis",
     "ModelLayerLocation",
-    "ModelLocation",
     "ModelLocatorConfig",
-    "SingleIndex",
-    "is_bridge",
 ]

@@ -1,75 +1,84 @@
 # Locating activations
 
-Lens, probing and patching read activations at locations a **locator** names: the `source` of a
-lens or probe config, and the `source` and `target` of every patch element. A locator is a
-`ModelLocatorConfig`. Resolving it against the model and the prompt gives the run's **index**: one
+Lens, patching and probing read activations at locations a **locator** names: the `source` of a
+lens config, the `source` and `target` of every patch element, and the `source` of a probe config. A
+locator is a `ModelLocatorConfig`. Resolving it against the model and the prompt gives the run's **index**: one
 row per location, which is also one row of the result.
 
-The examples on this page resolve locators against GPT-2 and print the rows they give. They write
-each locator as a config file does, a mapping that `from_dict` reads into a `ModelLocatorConfig`:
+The examples on this page build locators in code, resolve them against GPT-2 and print the rows they
+give. A config file writes the same locators with the enums' values, as the YAML blocks show:
 
 ```python
 from transformer_lens.model_bridge import TransformerBridge
 
-from entoscope import ModelLocatorConfig, from_dict
-from entoscope.model import Index
+from entoscope import ModelAxis, ModelLayerLocation, ModelLocatorConfig
+from entoscope.model.index import Index
 
 model = TransformerBridge.boot_transformers("gpt2")
 model.eval()
 
 
-def rows(locator: dict, n_positions: int = 6):
+def rows(locator: ModelLocatorConfig, n_positions: int = 6):
     """The rows a locator resolves to for a prompt of n_positions tokens, as index.csv holds them."""
-    config = from_dict(ModelLocatorConfig, locator)
-    return Index(config, config.parse(model, n_positions)).to_df()
+    return Index(locator, locator.parse(model, n_positions)).to_df()
 
 
-print(rows({"activation": "resid.post", "location": ["layer", "position"]}))  # 72 rows: 12 layers x 6 positions
+locator = ModelLocatorConfig(
+    activation=ModelLayerLocation.RESIDUAL_POST,
+    location=[ModelAxis.LAYER, ModelAxis.POSITION],
+)
+print(rows(locator))  # 72 rows: 12 layers x 6 positions
 ```
 
 ## Activations
 
-`activation` names the activation a row reads. Each one is a `transformer_lens` hook:
+`activation` names the activation a row reads, a [`ModelLayerLocation`](#entoscope.model.config.ModelLayerLocation) member. Each one is a
+`transformer_lens` hook:
 
-| `activation` | Axes of the tensor | Hook (in layer 0) | Size of `neuron` |
-|---|---|---|---|
-| `embed` | batch, position, neuron | `hook_embed` | `d_model` |
-| `resid.pre` | batch, position, neuron | `blocks.0.hook_resid_pre` | `d_model` |
-| `resid.mid` | batch, position, neuron | `blocks.0.hook_resid_mid` | `d_model` |
-| `resid.post` | batch, position, neuron | `blocks.0.hook_resid_post` | `d_model` |
-| `attn.q` | batch, position, head, neuron | `blocks.0.attn.hook_q` | `d_head` |
-| `attn.k` | batch, position, head, neuron | `blocks.0.attn.hook_k` | `d_head` |
-| `attn.v` | batch, position, head, neuron | `blocks.0.attn.hook_v` | `d_head` |
-| `attn.pattern` | batch, head, query position, key position | `blocks.0.attn.hook_pattern` | none |
-| `attn.z` | batch, position, head, neuron | `blocks.0.attn.hook_z` | `d_head` |
-| `attn.out` | batch, position, neuron | `blocks.0.hook_attn_out` | `d_model` |
-| `mlp.pre` | batch, position, neuron | `blocks.0.mlp.hook_pre` | `d_mlp` |
-| `mlp.pre_linear` | batch, position, neuron | `blocks.0.mlp.hook_pre_linear` | `d_mlp` |
-| `mlp.post` | batch, position, neuron | `blocks.0.mlp.hook_post` | `d_mlp` |
-| `mlp.out` | batch, position, neuron | `blocks.0.hook_mlp_out` | `d_model` |
+| `activation` | `ModelLayerLocation` | Axes of the tensor | Hook (in layer 0) | Size of `neuron` |
+|---|---|---|---|---|
+| `embed` | `EMBEDDING` | batch, position, neuron | `hook_embed` | `d_model` |
+| `resid.pre` | `RESIDUAL_PRE` | batch, position, neuron | `blocks.0.hook_resid_pre` | `d_model` |
+| `resid.mid` | `RESIDUAL_MID` | batch, position, neuron | `blocks.0.hook_resid_mid` | `d_model` |
+| `resid.post` | `RESIDUAL_POST` | batch, position, neuron | `blocks.0.hook_resid_post` | `d_model` |
+| `attn.q` | `ATTENTION_Q` | batch, position, head, neuron | `blocks.0.attn.hook_q` | `d_head` |
+| `attn.k` | `ATTENTION_K` | batch, position, head, neuron | `blocks.0.attn.hook_k` | `d_head` |
+| `attn.v` | `ATTENTION_V` | batch, position, head, neuron | `blocks.0.attn.hook_v` | `d_head` |
+| `attn.pattern` | `ATTENTION_PATTERN` | batch, head, query position, key position | `blocks.0.attn.hook_pattern` | none |
+| `attn.z` | `ATTENTION_Z` | batch, position, head, neuron | `blocks.0.attn.hook_z` | `d_head` |
+| `attn.out` | `ATTENTION_OUT` | batch, position, neuron | `blocks.0.hook_attn_out` | `d_model` |
+| `mlp.pre` | `MLP_PRE` | batch, position, neuron | `blocks.0.mlp.hook_pre` | `d_mlp` |
+| `mlp.pre_linear` | `MLP_PRE_LINEAR` | batch, position, neuron | `blocks.0.mlp.hook_pre_linear` | `d_mlp` |
+| `mlp.post` | `MLP_POST` | batch, position, neuron | `blocks.0.mlp.hook_post` | `d_mlp` |
+| `mlp.out` | `MLP_OUT` | batch, position, neuron | `blocks.0.hook_mlp_out` | `d_model` |
 
 A few of them have quirks:
 
-- `embed` sits before the first block, so its locator names no `layer`. With a layer it would name a
-  hook that does not exist.
+- `embed` sits before the first block, so its locator names no `layer`, and one that does is refused.
 - `attn.pattern` is located by `layer` and `head` only. Its two position axes are always read whole,
-  and it has no `neuron` axis.
+  and it has no `neuron` axis, so a locator naming `position` or `neuron` for it is refused rather
+  than reading the same whole pattern on every row.
 - `attn.k` and `attn.v` have `n_key_value_heads` heads on a model with grouped-query attention.
 - `mlp.pre_linear` exists only on a gated MLP, where it is the linear branch and `mlp.pre` the gate.
 
 ## Axes
 
-A row names a value on some of four axes:
+A row names a value on some of four axes, the members of [`ModelAxis`](#entoscope.model.config.ModelAxis):
 
-- `layer`: `0` to `n_layers - 1`.
-- `head`: `0` to `n_heads - 1`.
-- `neuron`: the activation's last axis, sized as in the table above.
-- `position`: `0` to the prompt's token count minus one. `model.to_tokens` prepends a BOS token, so
+- `layer` (`ModelAxis.LAYER`): `0` to `n_layers - 1`.
+- `head` (`ModelAxis.HEAD`): `0` to `n_heads - 1`.
+- `neuron` (`ModelAxis.NEURON`): the activation's last axis, sized as in the table above.
+- `position` (`ModelAxis.POSITION`): `0` to the prompt's token count minus one. `model.to_tokens` prepends a BOS token, so
   position 0 is BOS and a prompt's first word is at position 1.
 
 A negative value counts from the end of its axis: `position: -1` is the last token and `layer: -1` the
-last layer. An axis a row does not name is read whole: every row of
-`{activation: resid.post, location: [layer]}` spans every position.
+last layer. A value past either end of its axis is refused when the index is resolved, by `plan()` as
+by a run, so `layer: 12` on GPT-2's twelve layers fails before any forward pass. An axis a row does not
+name is read whole: every row of `{activation: resid.post, location: [layer]}` spans every position.
+
+A locator that names any axis needs an `activation` to read it in, set on the locator or on every
+coordinate, and may name only the axes of that activation's tensor, plus `layer` for every activation
+but `embed`: `head` on `resid.post`, say, is refused as the config is read.
 
 ## Two ways to name locations
 
@@ -87,15 +96,19 @@ its terms. Within a term every key must match, and a term `{not: ...}` drops the
 instead. A constraint is an int, `{range: [start, end]}` with both ends included, or a list of these:
 
 ```python
-locator = {
-    "activation": "attn.z",
-    "location": ["layer", "head", "position"],
-    "filter": [
-        {"layer": {"range": [0, 5]}, "position": -1},  # layers 0-5, last position only
-        {"layer": 11},  # or layer 11, every position
-        {"not": {"head": 0}},  # minus every row of head 0
-    ],
-}
+from entoscope import Filter
+
+locator = ModelLocatorConfig(
+    activation=ModelLayerLocation.ATTENTION_Z,
+    location=[ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.POSITION],
+    filter=Filter.from_config(
+        [
+            {ModelAxis.LAYER: {"range": [0, 5]}, ModelAxis.POSITION: -1},  # layers 0-5, last position only
+            {ModelAxis.LAYER: 11},  # or layer 11, every position
+            {"not": {ModelAxis.HEAD: 0}},  # minus every row of head 0
+        ]
+    ),
+)
 print(len(rows(locator)))  # 132: (6 layers x 1 position + 1 layer x 6 positions) x 11 heads
 ```
 
@@ -119,28 +132,42 @@ heads or neurons into one direction, a patch writes the whole group in one run, 
 every one of them as features. Three transforms build such rows, applied after the filter in this
 order:
 
-- `group` merges the listed values of an axis into one row; `all` merges every value.
-- `incremental` follows every row with rows that add growing prefixes of the listed values.
+- `group` merges the listed values of an axis into one row; `all` merges every value. The axis has to
+  be one `location` enumerates.
+- `incremental` follows every row with rows that add growing prefixes of the listed values, adding the
+  axis when `location` does not name it.
 - `combination` expands every row into one row per combination of the values it holds on the listed
-  axes, from one value up to `max_elements`.
+  axes, from one value up to `max_elements`. Each axis has to be one `location` or `incremental` names.
 
 ```python
-heads = {"activation": "attn.z", "location": ["layer", "head"]}
+from dataclasses import replace
 
-print(rows({**heads, "filter": [{"layer": 9}], "group": {"head": [6, 9]}}))
+from entoscope import Combination, Group, Incremental
+
+heads = ModelLocatorConfig(activation=ModelLayerLocation.ATTENTION_Z, location=[ModelAxis.LAYER, ModelAxis.HEAD])
+
+print(rows(replace(heads, filter=Filter.from_config([{ModelAxis.LAYER: 9}]), group=Group({ModelAxis.HEAD: [6, 9]}))))
 # 11 rows: one reading heads 6 and 9 together, and one for each other head of layer 9
 
-print(rows({**heads, "filter": [{"layer": 9, "head": 0}], "incremental": {"head": [6, 9]}}))
+print(
+    rows(
+        replace(
+            heads,
+            filter=Filter.from_config([{ModelAxis.LAYER: 9, ModelAxis.HEAD: 0}]),
+            incremental=Incremental({ModelAxis.HEAD: [6, 9]}),
+        )
+    )
+)
 # 3 rows: heads [0], [0, 6] and [0, 6, 9]
 
 print(
     rows(
-        {
-            **heads,
-            "filter": [{"layer": 9, "head": [6, 9, 10]}],
-            "group": {"head": "all"},
-            "combination": {"location": ["head"], "max_elements": 2},
-        }
+        replace(
+            heads,
+            filter=Filter.from_config([{ModelAxis.LAYER: 9, ModelAxis.HEAD: [6, 9, 10]}]),
+            group=Group({ModelAxis.HEAD: "all"}),
+            combination=Combination(location=[ModelAxis.HEAD], max_elements=2),
+        )
     )
 )
 # 6 rows: (6,), (9,), (10,), (6, 9), (6, 10), (9, 10)
@@ -157,16 +184,17 @@ the end. A coordinate may name its own `activation`, and then every coordinate m
 locator's `activation` stays unset:
 
 ```python
-print(
-    rows(
-        {
-            "coordinates": [
-                {"activation": "resid.post", "layer": -2, "position": -1},
-                {"activation": "mlp.out", "layer": -1, "position": -1},
-            ]
-        }
+from entoscope import Coordinates
+
+locator = ModelLocatorConfig(
+    coordinates=Coordinates(
+        [
+            {ModelAxis.ACTIVATION: ModelLayerLocation.RESIDUAL_POST, ModelAxis.LAYER: -2, ModelAxis.POSITION: -1},
+            {ModelAxis.ACTIVATION: ModelLayerLocation.MLP_OUT, ModelAxis.LAYER: -1, ModelAxis.POSITION: -1},
+        ]
     )
 )
+print(rows(locator))
 # 2 rows, in the order listed: resid.post at layer 10 and mlp.out at layer 11, both at position 5
 ```
 

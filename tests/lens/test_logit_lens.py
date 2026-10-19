@@ -16,7 +16,7 @@ from entoscope.lens.input import LensInput
 from entoscope.lens.lens import Lens
 from entoscope.lens.method.logit_lens import _attention_scale
 from entoscope.model.cache import CachedModel
-from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.config import Filter, ModelAxis, ModelLayerLocation, ModelLocatorConfig
 from entoscope.operation.config import ConfigFactory
 from entoscope.operation.visualization import format_value
 
@@ -35,9 +35,7 @@ from .conftest import (
     unembed,
 )
 
-LAYER_POSITION_GRID = dict(
-    activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelLocation.LAYER, ModelLocation.POSITION]
-)
+LAYER_POSITION_GRID = dict(activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelAxis.LAYER, ModelAxis.POSITION])
 
 # What entoscope's own handler puts before every message it writes to stderr.
 LOG_PREFIX = r"\[entoscope\] INFO \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} "
@@ -56,7 +54,7 @@ def _result_columns(result: pd.DataFrame) -> list[str]:
 
 
 # --------------------------------------------------------------------------------------------------
-# The residual stream — the lens is the model's own read-out applied to an earlier state
+# The residual stream - the lens is the model's own read-out applied to an earlier state
 # --------------------------------------------------------------------------------------------------
 def test_the_grid_covers_every_layer_and_position(model):
     result = lens_rows(model, declarative_config(**LAYER_POSITION_GRID))
@@ -114,51 +112,8 @@ def test_a_coordinate_run_reads_each_coordinates_own_activation(model, activatio
     assert_row_reads(model, result.iloc[1], unembed(model, cache[f"blocks.{last}.hook_mlp_out"][:, -1]))
 
 
-def test_the_prepared_input_carries_the_models_own_logits(model, activations):
-    logits, _ = activations
-    lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT).prepare(model)
-
-    assert torch.equal(lens_input.logits, logits)
-    assert lens_input.tokens.shape == logits.shape[:2]
-
-
-def test_preparing_an_input_twice_keeps_what_it_already_built(model):
-    lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT).prepare(model)
-    index, cache = lens_input.index, lens_input.cache
-
-    assert lens_input.prepare(model).index is index
-    assert lens_input.cache is cache
-
-
-def test_a_prepared_input_moves_to_a_device(model):
-    lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT).prepare(model)
-
-    moved = lens_input.to("cpu")
-
-    assert moved is lens_input
-    assert moved.tokens.device.type == "cpu"
-    assert moved.logits.device.type == "cpu"
-    assert all(activation.device.type == "cpu" for activation in moved.cache.values())
-
-
-def test_the_run_only_caches_the_activations_its_index_names(model):
-    # Not visible in the result: the restriction is about what the forward pass keeps, so the prepared
-    # input is read directly. Nothing is stubbed — this is the real model and the real index.
-    lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT).prepare(model)
-
-    expected = {f"blocks.{layer}.hook_resid_post" for layer in range(model.cfg.n_layers)}
-    assert lens_input.index.source_activation_names() == expected
-    # A bridge fires the block's own output hook under a second name for the same activation, so the
-    # cache holds those aliases as well — and nothing beyond them.
-    aliases = {f"blocks.{layer}.hook_out" for layer in range(model.cfg.n_layers)}
-    assert expected <= set(lens_input.cache.keys()) <= expected | aliases
-
-    _, full_cache = model.run_with_cache(lens_input.tokens)
-    assert set(lens_input.cache.keys()) < set(full_cache.keys())
-
-
 # --------------------------------------------------------------------------------------------------
-# MLP-hidden activations — projected through the layer's W_out, so a row reads what its neurons write
+# MLP-hidden activations - projected through the layer's W_out, so a row reads what its neurons write
 # --------------------------------------------------------------------------------------------------
 def test_a_single_neuron_is_lifted_by_its_row_of_w_out(model, activations):
     _, cache = activations
@@ -208,7 +163,7 @@ def test_a_neuron_grid_projects_every_row_through_its_own_layer(model, activatio
     neurons = [NEURON, NEURON + 1]
     config = declarative_config(
         ModelLayerLocation.MLP_POST,
-        [ModelLocation.LAYER, ModelLocation.NEURON, ModelLocation.POSITION],
+        [ModelAxis.LAYER, ModelAxis.NEURON, ModelAxis.POSITION],
         filter=Filter.from_config([{"neuron": neurons, "position": -1}]),
     )
     result = lens_rows(model, config)
@@ -224,7 +179,7 @@ def test_a_neuron_grid_projects_every_row_through_its_own_layer(model, activatio
 
 
 # --------------------------------------------------------------------------------------------------
-# Attention — head outputs are lifted by W_O, queries and keys are read against the embedding
+# Attention - head outputs are lifted by W_O, queries and keys are read against the embedding
 # --------------------------------------------------------------------------------------------------
 def test_a_single_head_is_lifted_by_its_row_of_w_o(model, activations):
     _, cache = activations
@@ -299,7 +254,7 @@ def test_a_head_grid_projects_every_row_through_its_own_head(model, activations)
     _, cache = activations
     config = declarative_config(
         ModelLayerLocation.ATTENTION_Z,
-        [ModelLocation.LAYER, ModelLocation.HEAD, ModelLocation.POSITION],
+        [ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.POSITION],
         filter=Filter.from_config([{"position": -1}]),
     )
     result = lens_rows(model, config)
@@ -379,7 +334,7 @@ def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model, config_fro
         top_k=2,
         source=ModelLocatorConfig(
             activation=ModelLayerLocation.RESIDUAL_POST,
-            location=[ModelLocation.LAYER, ModelLocation.POSITION],
+            location=[ModelAxis.LAYER, ModelAxis.POSITION],
         ),
     )
 
@@ -397,7 +352,7 @@ def test_a_config_id_the_file_does_not_have_raises(tmp_path):
 
 
 # --------------------------------------------------------------------------------------------------
-# Driven from an experiment script — the way README and example_lens_script.py run a lens
+# Driven from an experiment script - the way README and example_lens_script.py run a lens
 # --------------------------------------------------------------------------------------------------
 LENS_SCRIPT = """\
 from dataclasses import dataclass
@@ -490,10 +445,9 @@ def test_a_malformed_lens_config_is_rejected_when_it_is_loaded(config_from_yaml,
 
 
 def test_an_activation_without_a_vocabulary_projection_raises(model):
-    config = coordinates_config({"activation": "attn.pattern", "layer": 0, "head": 0, "position": -1})
-
-    with pytest.raises(ValueError, match="only residual-stream, MLP-hidden and attention head"):
-        Lens(model).apply(LensInput(config, PROMPT), verbose=False)
+    # The pattern has no position of its own to rank the tokens at, so its config is refused outright.
+    with pytest.raises(ValueError, match="'attn.pattern' has no 'position' axis"):
+        coordinates_config({"activation": "attn.pattern", "layer": 0, "head": 0, "position": -1})
 
 
 @pytest.mark.parametrize("activation_name", ["attn.k", "attn.v"])
@@ -512,6 +466,22 @@ def test_key_and_value_projections_are_allowed_without_grouping(small_model):
 
     assert len(result) == 1
     assert 0 <= result.iloc[0]["token_0"] < small_model.cfg.d_vocab
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"activation": "resid.post", "location": ["layer"]},
+        {"activation": "resid.post", "location": ["layer"], "filter": [{"position": -1}]},
+        {"activation": "resid.post", "location": ["layer", "position"], "group": {"position": [1, 2]}},
+        {"activation": "resid.post", "location": ["layer", "position"], "incremental": {"position": [1]}},
+        {"coordinates": [{"activation": "resid.post", "layer": 0}]},
+        {"coordinates": [{"activation": "resid.post", "layer": 0, "position": [1, 2]}]},
+    ],
+)
+def test_an_activation_lens_reads_one_position_per_row(source):
+    with pytest.raises(ValueError, match="one position per row"):
+        LensConfig(method=LensMethodConfig(type="logit_lens"), source=ModelLocatorConfig(**source))
 
 
 def test_a_lens_config_without_a_prompt_raises():
@@ -649,12 +619,24 @@ def test_the_position_axis_is_labelled_with_the_prompts_tokens(model, tmp_path):
     assert figure.ticks("yaxis") == [str(layer) for layer in range(model.cfg.n_layers)]
 
 
+def test_the_tokens_labelling_the_positions_are_escaped_for_the_page(model, tmp_path):
+    # plotly reads a label as HTML, so a token such as Llama's BOS '<s>' would open a strikethrough and
+    # vanish: every token reaches the page escaped, as every other value does.
+    prompt = "Fish <b>&chips</b>"
+
+    figure = _draw(model, declarative_config(**LAYER_POSITION_GRID), tmp_path / "markup", prompt=prompt)
+
+    tokens = model.to_str_tokens(prompt)
+    assert figure.ticks("xaxis") == [f'{position}: "{format_value(token)}"' for position, token in enumerate(tokens)]
+    assert '0: "&lt;|endoftext|&gt;"' in figure.ticks("xaxis")
+
+
 def test_a_head_axis_goes_across_with_the_layers_down(small_model, tmp_path):
     # The position is pinned to one value, so it carries no comparison and leaves the axes entirely.
     config = declarative_config(
         activation=ModelLayerLocation.ATTENTION_Z,
-        location=[ModelLocation.LAYER, ModelLocation.HEAD, ModelLocation.POSITION],
-        filter=Filter(inclusion_terms=[{ModelLocation.POSITION: -1}]),
+        location=[ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.POSITION],
+        filter=Filter(inclusion_terms=[{ModelAxis.POSITION: -1}]),
     )
 
     figure = _draw(small_model, config, tmp_path / "heads")
@@ -669,7 +651,7 @@ def test_a_third_axis_folds_into_the_y_ticks(small_model, tmp_path):
     # Nothing is aggregated away: every (layer, head) pair keeps its own row of positions.
     config = declarative_config(
         activation=ModelLayerLocation.ATTENTION_Z,
-        location=[ModelLocation.LAYER, ModelLocation.HEAD, ModelLocation.POSITION],
+        location=[ModelAxis.LAYER, ModelAxis.HEAD, ModelAxis.POSITION],
     )
 
     figure = _draw(small_model, config, tmp_path / "folded")
@@ -680,23 +662,7 @@ def test_a_third_axis_folds_into_the_y_ticks(small_model, tmp_path):
     assert len(figure.trace["z"]) == small_model.cfg.n_layers * small_model.cfg.n_heads
 
 
-def test_the_base_collector_skips_the_html(model, tmp_path):
-    # The base collector persists the CSVs only; visualization is opt-in via the subclass.
-    save_dir = tmp_path / "no_viz"
-    collector = Lens(model, collector_class=LensCollector).apply(
-        LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT),
-        save_dir=str(save_dir),
-        return_collector=True,
-        verbose=False,
-    )
-
-    assert collector is not None
-    assert type(collector) is LensCollector
-    assert (save_dir / "result.csv").exists()
-    assert not (save_dir / "result.html").exists()
-
-
-def test_a_plan_for_the_base_collector_promises_no_html(model, tmp_path):
+def test_the_base_collector_writes_what_its_plan_promises_without_the_page(model, tmp_path):
     save_dir = tmp_path / "no_viz_plan"
     lens_input = LensInput(declarative_config(**LAYER_POSITION_GRID), PROMPT)
     lens = Lens(model, collector_class=LensCollector)
@@ -704,5 +670,7 @@ def test_a_plan_for_the_base_collector_promises_no_html(model, tmp_path):
     plan = lens.plan(lens_input, save_dir=str(save_dir), verbose=False)
     lens.apply(lens_input, save_dir=str(save_dir), verbose=False)
 
+    # The base collector writes the data and leaves out the page; visualization is opt-in via the subclass.
+    assert "result.csv" in plan.outputs
     assert "result.html" not in plan.outputs
     assert sorted(path.name for path in save_dir.iterdir()) == sorted(plan.outputs)

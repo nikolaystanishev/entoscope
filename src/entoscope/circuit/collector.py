@@ -1,48 +1,50 @@
 import os
 
-import networkx as nx
-
 from entoscope.circuit.input import CircuitInput
 from entoscope.circuit.method.circuit import PromptCircuit
 from entoscope.circuit.visualization import CircuitFigure
+from entoscope.model import Model
 from entoscope.operation.collector import AbstractCollector, FigureMixin
 from entoscope.operation.config import CONFIG_FILE
-from entoscope.util.data import write_json
-
-
-def _write_graph(graph: nx.MultiDiGraph, save_dir: str, name: str) -> None:
-    """Persist a graph as both GraphML (portable) and node-link JSON (readable / round-trippable)."""
-    nx.write_graphml(graph, os.path.join(save_dir, f"{name}.graphml"))
-    write_json(os.path.join(save_dir, f"{name}.json"), nx.node_link_data(graph, edges="links"))
+from entoscope.util.data import write_graph, write_json
 
 
 class CircuitCollector(AbstractCollector[CircuitInput]):
-    """Persists the discovered graphs (GraphML + node-link JSON) and a ``prompts.json`` index.
+    """Writes every prompt's graphs, as GraphML and node-link JSON, and a ``prompts.json`` summary.
 
-    This base collector writes graph data only. Use ``CircuitVisualizationCollector`` to also render
-    an interactive HTML per prompt.
+    This base collector writes graph data only, and ``CircuitVisualizationCollector`` also draws a page
+    per prompt.
+
+    Args:
+        operation_input: The input the run iterates.
+        model: The model the run reads.
+        save_dir: The directory ``save`` writes into, or ``None`` to write nothing.
     """
 
-    _circuits: list[PromptCircuit] | None = None
+    def __init__(self, operation_input: CircuitInput, model: Model, save_dir: str | None = None):
+        super().__init__(operation_input, model, save_dir)
+        self._circuits: list[PromptCircuit] = []
 
     @property
     def result(self) -> list[PromptCircuit]:
-        assert self._circuits is not None
+        """One circuit per prompt collected so far, in prompt order."""
         return self._circuits
 
-    def prepare(self) -> None:
-        self._circuits = []
-
     def collect(self, circuit: PromptCircuit, index: int) -> None:
-        assert self._circuits is not None
+        """Take one prompt's circuit.
+
+        Args:
+            circuit: The circuit.
+            index: The prompt's position among the input's prompts, collected in order.
+        """
         assert index == len(self._circuits)
         self._circuits.append(circuit)
 
     def _save_result(self, save_dir: str) -> None:
         summary = []
         for i, circuit in enumerate(self.result):
-            _write_graph(circuit.graph, save_dir, f"graph_{i}")
-            _write_graph(circuit.routes, save_dir, f"routes_{i}")
+            write_graph(circuit.graph, save_dir, f"graph_{i}")
+            write_graph(circuit.routes, save_dir, f"routes_{i}")
             summary.append(
                 {
                     "index": i,

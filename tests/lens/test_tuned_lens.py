@@ -2,8 +2,11 @@
 
 Two sources of translators are used: the pretrained GPT-2 ones from the tuned-lens hub space (the
 path a run takes in practice), and translators saved into a local directory with weights chosen so
-the translated residual stays hand-checkable — the documented ``translators: <directory>`` form.
+the translated residual stays hand-checkable - the documented ``translators: <directory>`` form.
 """
+
+import gc
+import weakref
 
 import pytest
 import torch
@@ -15,7 +18,7 @@ from entoscope.lens.input import LensInput
 from entoscope.lens.lens import Lens
 from entoscope.lens.method import tuned_lens
 from entoscope.lens.method.tuned_lens import TunedLensConfig
-from entoscope.model.config import Filter, ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.config import Filter, ModelAxis, ModelLayerLocation, ModelLocatorConfig
 from entoscope.model.unembed import build_unembed
 
 from ..conftest import build_small_model, forbid_model_runs
@@ -70,7 +73,7 @@ def tuned_config(*coordinates: dict, resource: str | None = None, top_k: int = 1
 
 
 # --------------------------------------------------------------------------------------------------
-# Translators that do nothing — the tuned lens falls back to the logit lens
+# Translators that do nothing - the tuned lens falls back to the logit lens
 # --------------------------------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "coordinate",
@@ -110,6 +113,19 @@ def test_a_residual_state_is_translated_by_the_translator_of_its_state(
 
     residual = cache[hook][:, -1]
     assert_row_reads(model, row, unembed(model, (1 + translator_index * SCALE) * residual))
+
+
+def test_a_declarative_residual_state_is_translated_by_the_translator_of_its_state(model, translators):
+    method = TunedLensConfig(type="tuned_lens", translators=translators["scaled"])
+    declarative = declarative_config(
+        ModelLayerLocation.RESIDUAL_PRE,
+        [ModelAxis.LAYER, ModelAxis.POSITION],
+        method=method,
+        filter=Filter.from_config([{"layer": 3, "position": -1}]),
+    )
+    coordinate = coordinates_config({"activation": "resid.pre", "layer": 3, "position": -1}, method=method)
+
+    assert single_row(model, declarative)["probability_0"] == single_row(model, coordinate)["probability_0"]
 
 
 def test_a_residual_state_is_translated_with_the_bias(model, activations, translators):
@@ -179,7 +195,7 @@ def test_a_declarative_run_reads_every_layer_through_its_own_translator(model, a
     logits, _ = activations
     config = declarative_config(
         ModelLayerLocation.RESIDUAL_POST,
-        [ModelLocation.LAYER, ModelLocation.POSITION],
+        [ModelAxis.LAYER, ModelAxis.POSITION],
         method=TunedLensConfig(type="tuned_lens", translators="gpt2"),
         filter=Filter.from_config([{"position": -1}]),
     )
@@ -235,12 +251,11 @@ def test_queries_and_keys_have_no_tuned_projection(model, translators, activatio
 
 
 def test_an_activation_without_a_vocabulary_projection_raises(model, translators):
-    config = tuned_config(
-        {"activation": "attn.pattern", "layer": 0, "head": 0, "position": -1}, resource=translators["zero"]
-    )
-
-    with pytest.raises(ValueError, match="TunedLens cannot project.*map onto the vocabulary"):
-        Lens(model).apply(LensInput(config, PROMPT), verbose=False)
+    # The pattern has no position of its own to rank the tokens at, so its config is refused outright.
+    with pytest.raises(ValueError, match="'attn.pattern' has no 'position' axis"):
+        tuned_config(
+            {"activation": "attn.pattern", "layer": 0, "head": 0, "position": -1}, resource=translators["zero"]
+        )
 
 
 def test_translators_on_another_lens_are_an_unknown_field(config_from_yaml):
@@ -267,9 +282,9 @@ def test_a_yaml_tuned_lens_config_runs(model, config_from_yaml):
         source=ModelLocatorConfig(
             coordinates=[
                 {
-                    ModelLocation.ACTIVATION: ModelLayerLocation.RESIDUAL_POST,
-                    ModelLocation.LAYER: -1,
-                    ModelLocation.POSITION: -1,
+                    ModelAxis.ACTIVATION: ModelLayerLocation.RESIDUAL_POST,
+                    ModelAxis.LAYER: -1,
+                    ModelAxis.POSITION: -1,
                 }
             ]
         ),
@@ -279,12 +294,25 @@ def test_a_yaml_tuned_lens_config_runs(model, config_from_yaml):
 
 
 def test_translators_default_to_none(config_from_yaml):
-    raw = {"method": "tuned_lens", "source": {"activation": "resid.post", "location": ["layer"]}}
+    raw = {"method": "tuned_lens", "source": {"activation": "resid.post", "location": ["layer", "position"]}}
 
     # Named by its type alone, the tuned lens takes its defaults.
     assert config_from_yaml(LensConfig, "my_tuned_lens", raw).method == TunedLensConfig(
         type="tuned_lens", translators=None
     )
+
+
+def test_a_run_keeps_no_hold_on_its_model(backend, tmp_path):
+    model = build_small_model(backend, name="tiny")
+    directory = _write_translators(model, tmp_path / "translators", scale=SCALE)
+    config = tuned_config({"activation": "resid.post", "layer": 0, "position": -1}, resource=directory)
+    single_row(model, config)
+
+    collected = weakref.ref(model)
+    del model
+    gc.collect()
+
+    assert collected() is None
 
 
 def test_a_plan_reads_no_translators(model, monkeypatch):

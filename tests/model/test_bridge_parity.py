@@ -3,7 +3,7 @@
 The rest of the suite runs every test against a bridge and a ``HookedTransformer`` separately, which
 says each one works but not that they agree. A bridge in compatibility mode is processed the way
 ``HookedTransformer.from_pretrained`` processes its weights, so on the same model the two are the
-same numbers — and that is what makes a result portable between them.
+same numbers - and that is what makes a result portable between them.
 """
 
 import pytest
@@ -13,10 +13,10 @@ from entoscope.lens.config import LensConfig, LensMethodConfig
 from entoscope.lens.input import LensInput
 from entoscope.lens.lens import Lens
 from entoscope.lens.method.logit_lens import _attention_scale
-from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
-from entoscope.model.weight import attention_out_weight, mlp_weight
+from entoscope.model.config import ModelAxis, ModelLayerLocation, ModelLocatorConfig
+from entoscope.model.weight import ModelWeight, model_weight
 
-from ..conftest import HookedTransformer, TransformerBridge, _gpt2_hooked
+from ..conftest import HookedTransformer, TransformerBridge, _gpt2_bridge, _gpt2_hooked
 
 pytestmark = pytest.mark.skipif(
     TransformerBridge is None or HookedTransformer is None, reason="transformer_lens has only one of the backends"
@@ -25,8 +25,8 @@ pytestmark = pytest.mark.skipif(
 PROMPT = "The capital of France is"
 
 # What "the same numbers" can mean for a forward pass. The two backends run the same arithmetic on
-# the same weights, but not through the same kernels — the matmuls are issued differently, and a
-# folded ``ln_final`` is HuggingFace's LayerNorm on one side and ``LayerNormPre`` on the other — so
+# the same weights, but not through the same kernels - the matmuls are issued differently, and a
+# folded ``ln_final`` is HuggingFace's LayerNorm on one side and ``LayerNormPre`` on the other - so
 # the last places of a float32 value are the build's to decide, and CI has seen two runners disagree
 # with three on a single logit. A parity break worth catching is orders of magnitude wider.
 TO_FLOAT32 = {"rtol": 1e-4, "atol": 1e-3}
@@ -34,10 +34,7 @@ TO_FLOAT32 = {"rtol": 1e-4, "atol": 1e-3}
 
 @pytest.fixture(scope="module")
 def compatible_bridge():
-    model = TransformerBridge.boot_transformers("gpt2", device="cpu")
-    model.enable_compatibility_mode(disable_warnings=True)
-    model.eval()
-    return model
+    return _gpt2_bridge(compatible=True)
 
 
 @pytest.fixture(scope="module")
@@ -46,17 +43,17 @@ def hooked():
 
 
 def test_the_weights_a_lens_reads_are_the_same(compatible_bridge, hooked):
-    assert torch.equal(compatible_bridge.W_U, hooked.W_U)
     assert torch.equal(compatible_bridge.b_U, hooked.b_U)
-    assert torch.equal(compatible_bridge.W_E, hooked.W_E)
+    for name in (ModelWeight.EMBED, ModelWeight.UNEMBED):
+        assert torch.equal(model_weight(compatible_bridge, name), model_weight(hooked, name))
 
+    # GPT-2's MLP has no gate.
+    block_weights = [
+        name for name in ModelWeight if name not in (ModelWeight.EMBED, ModelWeight.UNEMBED, ModelWeight.MLP_GATE)
+    ]
     for layer in range(hooked.cfg.n_layers):
-        assert torch.equal(mlp_weight(compatible_bridge, layer, "W_in"), mlp_weight(hooked, layer, "W_in"))
-        assert torch.equal(mlp_weight(compatible_bridge, layer, "W_out"), mlp_weight(hooked, layer, "W_out"))
-        assert torch.equal(attention_out_weight(compatible_bridge, layer), attention_out_weight(hooked, layer))
-        for name in ("W_Q", "W_K", "W_V"):
-            bridge_attention = getattr(compatible_bridge.blocks[layer].attn, name)
-            assert torch.equal(bridge_attention, getattr(hooked.blocks[layer].attn, name))
+        for name in block_weights:
+            assert torch.equal(model_weight(compatible_bridge, name, layer), model_weight(hooked, name, layer)), name
 
 
 def test_the_attention_scale_resolves_the_same(compatible_bridge, hooked):
@@ -87,7 +84,7 @@ def test_a_lens_run_reads_the_same_tokens_from_either_backend(compatible_bridge,
     config = LensConfig(
         method=LensMethodConfig(type="logit_lens"),
         top_k=3,
-        source=ModelLocatorConfig(activation=activation, location=[ModelLocation.LAYER, ModelLocation.POSITION]),
+        source=ModelLocatorConfig(activation=activation, location=[ModelAxis.LAYER, ModelAxis.POSITION]),
     )
 
     def run(model):

@@ -3,7 +3,7 @@ import pytest
 import torch
 from sklearn.linear_model import LogisticRegression
 
-from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.model.config import ModelAxis, ModelLayerLocation, ModelLocatorConfig
 from entoscope.probe.collector import ProbeCollector
 from entoscope.probe.config import PoolingType, ProbeConfig, ProbeMetric
 from entoscope.probe.input import ProbeInput
@@ -17,12 +17,12 @@ NEGATIVE = ["The movie was dreadful and boring", "I hated every minute of it"]
 SHORT_POSITIVE = ["I loved it", "It was great"]
 SHORT_NEGATIVE = ["I hated it", "It was awful"]
 
-MEAN_OVER_POSITION = {ModelLocation.POSITION: PoolingType.MEAN}
+MEAN_OVER_POSITION = {ModelAxis.POSITION: PoolingType.MEAN}
 
 
 def probe_config(
     activation: ModelLayerLocation = ModelLayerLocation.RESIDUAL_POST,
-    location: list[ModelLocation] | None = None,
+    location: list[ModelAxis] | None = None,
     pool: dict | None = None,
     metric: list[ProbeMetric] | None = None,
     max_iter: int = 1000,
@@ -33,7 +33,7 @@ def probe_config(
         method=LinearProbeConfig(type="linear", max_iter=max_iter, seed=seed),
         pool=MEAN_OVER_POSITION if pool is None else pool,
         metric=metric or [ProbeMetric.ACCURACY],
-        source=ModelLocatorConfig(activation=activation, location=location or [ModelLocation.LAYER], **source),
+        source=ModelLocatorConfig(activation=activation, location=location or [ModelAxis.LAYER], **source),
     )
 
 
@@ -52,7 +52,7 @@ def probe_of(collector: ProbeCollector, layer: int = 0, **coordinates) -> Logist
         single.output
         for single in collector.operation_input.index
         if single.source.layer() == layer
-        and all(single.source.get(ModelLocation(name)) == value for name, value in coordinates.items())
+        and all(single.source.get(ModelAxis(name)) == value for name, value in coordinates.items())
     )
     return collector.probes[output]
 
@@ -71,10 +71,10 @@ def assert_trained_alike(trained: LogisticRegression, expected: LogisticRegressi
     assert trained.intercept_ == pytest.approx(expected.intercept_, rel=1e-4, abs=1e-6)
 
 
-def activation_caches(model) -> list:
+def activation_caches(model, prompts: list[str] | None = None) -> list:
     """Every prompt's activations from a plain forward pass, in the order the labels are built."""
     caches = []
-    for prompt in POSITIVE + NEGATIVE:
+    for prompt in POSITIVE + NEGATIVE if prompts is None else prompts:
         with torch.no_grad():
             _, cache = model.run_with_cache(model.to_tokens(prompt))
         caches.append(cache)

@@ -16,9 +16,6 @@ except ModuleNotFoundError as error:  # transformer-lens 2.x (Intel macOS fallba
         raise
     TransformerBridge = None
 
-# Anything operations accept in place of a raw model: a transformer, or the transparent
-# disk-caching wrapper around one. CachedModel forwards every attribute to the wrapped model via
-# __getattr__, so it is a runtime drop-in; this alias makes it a static drop-in too.
 if TransformerBridge is None:
     Model: TypeAlias = HookedTransformer | CachedModel
 elif HookedTransformer is None:
@@ -28,9 +25,24 @@ else:
 
 
 def unwrap(model: Model) -> Any:
-    """The transformer itself, with any ``CachedModel`` wrapper removed."""
+    """Remove a ``CachedModel`` wrapper.
+
+    Args:
+        model: A model, wrapped or not.
+
+    Returns:
+        The transformer itself.
+    """
     return getattr(model, "_model", model)
 
 
 def is_bridge(model: Model) -> bool:
+    """Tell a ``TransformerBridge`` from a ``HookedTransformer``.
+
+    Args:
+        model: A model, wrapped in a ``CachedModel`` or not.
+
+    Returns:
+        Whether the transformer is a ``TransformerBridge``.
+    """
     return TransformerBridge is not None and isinstance(unwrap(model), TransformerBridge)

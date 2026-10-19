@@ -3,8 +3,8 @@
 An ``Index`` lays its rows out as dense per-axis codes and the result frame carries the original
 ``source_*``/``target_*`` values, so laying one out is the same problem for every operation and only
 the cell payload differs. Everything produced here ends up inside plotly HTML, so values are escaped
-once, in ``format_value``, rather than at each call site. ``Figure`` - the page every operation's
-HTML is written through, grid-drawn or not - lives here too.
+once, in ``format_value``, rather than at each call site. ``Figure``, the page every operation's
+HTML is written through, grid-drawn or not, lives here too.
 
 A run rarely reads one number off itself: patching names several metrics and the lens keeps a whole
 top-k. A page is therefore a list of panels, each drawn as its own plot from the same result, and an
@@ -14,6 +14,7 @@ operation says only what its panels are.
 from __future__ import annotations
 
 import abc
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -24,34 +25,37 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from entoscope.model import Model
-from entoscope.model.config import ModelLocation
+from entoscope.model.config import ModelAxis
 from entoscope.model.index import Index
 from entoscope.operation.config import AbstractConfig
 from entoscope.operation.input import OperationInput
 
 InputT = TypeVar("InputT", bound=OperationInput)
-# Whatever names one plot to the operation that draws it - a metric and its comparison, a top-k rank.
 PanelT = TypeVar("PanelT")
 
-# x takes the last of these a run varies over and y the rest, so an activation-patching grid comes
-# out position-across / layer-down and a layer x head or layer x neuron grid keeps layer down too.
-AXIS_ORDER: tuple[ModelLocation, ...] = (
-    ModelLocation.LAYER,
-    ModelLocation.HEAD,
-    ModelLocation.NEURON,
-    ModelLocation.POSITION,
+AXIS_ORDER: tuple[ModelAxis, ...] = (
+    ModelAxis.LAYER,
+    ModelAxis.HEAD,
+    ModelAxis.NEURON,
+    ModelAxis.POSITION,
 )
 
 DIVERGING = [(0.0, "#2166ac"), (0.5, "#f7f7f7"), (1.0, "#b2182b")]
-# Stops well short of navy: a heatmap's cell text takes a single colour for the whole trace, so the
-# top of the scale has to stay light enough to read the lens's top-1 token against.
 SEQUENTIAL = [(0.0, "#f7fbff"), (1.0, "#4292c6")]
 
-# Past this a per-cell label is unreadable anyway, and printing it only bloats the page.
 MAX_ANNOTATED_CELLS = 600
 
 
 def format_value(value: Any) -> str:
+    """Format a result cell for a page, HTML-escaped.
+
+    Args:
+        value: An enum, a list or tuple, a float, ``None`` or anything ``str`` can print.
+
+    Returns:
+        An enum's value, a list in brackets, a float to four significant digits, ``"-"`` for a missing
+        value, or ``str(value)``.
+    """
     if isinstance(value, Enum):
         return escape(str(value.value))
     if isinstance(value, list | tuple):
@@ -64,11 +68,18 @@ def format_value(value: Any) -> str:
 
 
 def label_column(frame: pd.DataFrame, axis: str, prefixes: Sequence[str]) -> str | None:
-    """The ``source_*``/``target_*`` column holding the real values behind ``axis``'s dense codes.
+    """Find the ``source_*`` or ``target_*`` column holding the real values behind ``axis``'s dense codes.
 
-    Prefixes are tried in the caller's order of preference, and a column that is not fully populated
-    is rejected: concatenating a shorter source index onto a longer target one leaves NaN behind, and
-    a half-filled axis labels nothing.
+    A column that is not fully populated is rejected: concatenating a shorter source index onto a
+    longer target one leaves NaN behind, and a half-filled axis labels nothing.
+
+    Args:
+        frame: A result frame.
+        axis: An axis of the index, such as ``"layer"``.
+        prefixes: The column prefixes to try, in order of preference.
+
+    Returns:
+        The first fully populated column, or ``None`` when there is none.
     """
     for prefix in prefixes:
         candidate = f"{prefix}{axis}"
@@ -80,6 +91,20 @@ def label_column(frame: pd.DataFrame, axis: str, prefixes: Sequence[str]) -> str
 def tick_text(
     frame: pd.DataFrame, grid: IndexGrid, axis: str, prefixes: Sequence[str], tokens: dict[str, list[str]]
 ) -> dict[int, str]:
+    """Label every code of one axis of the grid.
+
+    A position is labeled with its token, a row without a value on the axis with its full coordinates.
+
+    Args:
+        frame: The result frame the grid lays out.
+        grid: The grid.
+        axis: The axis to label.
+        prefixes: The column prefixes to read values from, in order of preference.
+        tokens: The prompt's token strings, keyed by the position column they label.
+
+    Returns:
+        The label of each of the axis's codes.
+    """
     labels: dict[int, str] = {}
     source = label_column(frame, axis, prefixes)
     column_tokens = tokens.get(source, []) if source is not None else []
@@ -92,7 +117,7 @@ def tick_text(
             continue
         value = frame[source].iloc[position]
         if pd.api.types.is_integer(value) and 0 <= value < len(column_tokens):
-            labels[code] = f'{value}: "{column_tokens[value]}"'
+            labels[code] = f'{value}: "{format_value(column_tokens[value])}"'
         else:
             labels[code] = format_value(value)
 
@@ -100,8 +125,17 @@ def tick_text(
 
 
 def describe_row(row: pd.Series, prefix: str) -> str:
+    """Describe the location of one result row on one side of the index.
+
+    Args:
+        row: A result row.
+        prefix: The side to describe, ``"source_"`` or ``"target_"``.
+
+    Returns:
+        The activation followed by every axis the row names, such as ``attn.z · layer 3 · head 5``.
+    """
     columns = [column for column in row.index if column.startswith(prefix)]
-    activation = f"{prefix}{ModelLocation.ACTIVATION.value}"
+    activation = f"{prefix}{ModelAxis.ACTIVATION.value}"
     ordered = [activation] if activation in columns else []
     ordered += sorted(
         (column for column in columns if column != activation),
@@ -121,12 +155,29 @@ def describe_row(row: pd.Series, prefix: str) -> str:
 
 
 def diverging_range(values: Sequence[float], midpoint: float) -> tuple[float, float]:
-    spread = max((abs(value - midpoint) for value in values if not pd.isna(value)), default=0.0) or 1.0
+    """Centre a colour range on ``midpoint`` wide enough for every value.
+
+    Args:
+        values: The values to colour, NaN and infinities ignored, as no finite range holds them.
+        midpoint: The value drawn in the middle colour.
+
+    Returns:
+        The range's low and high ends, one unit either side of ``midpoint`` when every value equals it.
+    """
+    spread = max((abs(value - midpoint) for value in values if math.isfinite(value)), default=0.0) or 1.0
     return midpoint - spread, midpoint + spread
 
 
 def write_html(path: str, title: str, *figures: go.Figure) -> None:
-    # plotly.js is embedded by the first figure and shared by the rest of the page.
+    """Write figures one under the other into a self-contained HTML page.
+
+    plotly.js is embedded once, with the first figure, so the page opens with no network.
+
+    Args:
+        path: The file to write.
+        title: The page's title.
+        *figures: The figures, in page order.
+    """
     body = "<hr/>".join(figure.to_html(full_html=False, include_plotlyjs=(i == 0)) for i, figure in enumerate(figures))
     with open(path, "w", encoding="utf-8") as f:
         f.write(
@@ -140,26 +191,50 @@ def write_html(path: str, title: str, *figures: go.Figure) -> None:
 class Figure(abc.ABC, Generic[PanelT]):
     """A self-contained interactive HTML page, one plotly figure per panel.
 
-    ``title`` names the page; each panel titles its own plot, so the two do not have to repeat.
+    ``title`` names the page, and each panel titles its own plot, so the two do not have to repeat.
     """
 
     @property
     @abc.abstractmethod
     def title(self) -> str:
+        """The page's title."""
         raise NotImplementedError
 
     @abc.abstractmethod
     def panels(self) -> list[PanelT]:
+        """Name the page's panels.
+
+        Returns:
+            The panels, in page order, each drawn as its own plot.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def figure(self, panel: PanelT) -> go.Figure:
+        """Draw one panel.
+
+        Args:
+            panel: One of ``panels()``.
+
+        Returns:
+            The panel's plot.
+        """
         raise NotImplementedError
 
     def figures(self) -> list[go.Figure]:
+        """Draw every panel.
+
+        Returns:
+            One figure per panel, in page order.
+        """
         return [self.figure(panel) for panel in self.panels()]
 
     def render(self, path: str) -> None:
+        """Write the page.
+
+        Args:
+            path: The HTML file to write.
+        """
         write_html(path, self.title, *self.figures())
 
 
@@ -168,10 +243,18 @@ class IndexGrid:
     """Where each result row sits once the axes a run varies over are laid out.
 
     Built from the index's own layout codes rather than from the result frame, so the axis rule can be
-    read - and tested - without a run behind it. An axis the run does not vary over is dropped: it
+    read, and tested, without a run behind it. An axis the run does not vary over is dropped: it
     offers no comparison and belongs in the subtitle. Axes beyond the first two fold into composite y
-    keys rather than being aggregated away, so nothing is hidden; ``y_keys`` ascends and plotly draws
+    keys rather than being aggregated away, so nothing is hidden. ``y_keys`` ascends and plotly draws
     the first at the bottom, putting layer 0 there as the circuit figures do.
+
+    Attributes:
+        x_axis: The axis across, the last varying one in ``AXIS_ORDER``, or ``None`` when nothing varies.
+        y_axes: The other varying axes, folded together into the rows.
+        codes: Every axis's code for every result row.
+        x_codes: The distinct codes across, ascending.
+        y_keys: The distinct row keys, one code per ``y_axes`` entry, ascending.
+        rows: The result row at each ``(y_key, x_code)`` cell.
     """
 
     x_axis: str | None
@@ -183,7 +266,15 @@ class IndexGrid:
 
     @classmethod
     def of(cls, layout: pd.DataFrame) -> IndexGrid:
-        axes = [_axis_name(column) for column in layout.columns]
+        """Lay out an index.
+
+        Args:
+            layout: The index's layout codes, one column per axis, as ``Index.layout_df`` holds them.
+
+        Returns:
+            The grid.
+        """
+        axes = [str(column) for column in layout.columns]
         codes = {
             axis: [int(code) for code in layout[column]] for axis, column in zip(axes, layout.columns, strict=True)
         }
@@ -207,9 +298,19 @@ class IndexGrid:
 
     @property
     def is_bar(self) -> bool:
+        """Whether at most one axis varies, so the grid is drawn as a bar chart."""
         return not self.y_axes
 
     def lay_out(self, values: Sequence[Any], fill: Any = None) -> list[list[Any]]:
+        """Place one value per result row onto the grid.
+
+        Args:
+            values: One value per result row.
+            fill: The value of a cell no row lands on.
+
+        Returns:
+            One list per row key, each holding one value per x code.
+        """
         return [
             [values[self.rows[(key, code)]] if (key, code) in self.rows else fill for code in self.x_codes]
             for key in self.y_keys
@@ -217,6 +318,17 @@ class IndexGrid:
 
 
 def x_labels(frame: pd.DataFrame, grid: IndexGrid, prefixes: Sequence[str], tokens: dict[str, list[str]]) -> list[str]:
+    """Label the grid's columns.
+
+    Args:
+        frame: The result frame the grid lays out.
+        grid: The grid.
+        prefixes: The column prefixes to read values from, in order of preference.
+        tokens: The prompt's token strings, keyed by the position column they label.
+
+    Returns:
+        One label per x code, or the single row's location when no axis varies.
+    """
     if grid.x_axis is None:
         return [describe_row(frame.iloc[0], prefixes[0])] if len(frame) else []
     labels = tick_text(frame, grid, grid.x_axis, prefixes, tokens)
@@ -224,6 +336,17 @@ def x_labels(frame: pd.DataFrame, grid: IndexGrid, prefixes: Sequence[str], toke
 
 
 def y_labels(frame: pd.DataFrame, grid: IndexGrid, prefixes: Sequence[str], tokens: dict[str, list[str]]) -> list[str]:
+    """Label the grid's rows.
+
+    Args:
+        frame: The result frame the grid lays out.
+        grid: The grid.
+        prefixes: The column prefixes to read values from, in order of preference.
+        tokens: The prompt's token strings, keyed by the position column they label.
+
+    Returns:
+        One label per row key, each axis named when several fold into the rows.
+    """
     per_axis = [tick_text(frame, grid, axis, prefixes, tokens) for axis in grid.y_axes]
     named = len(grid.y_axes) > 1
     return [
@@ -238,6 +361,17 @@ def y_labels(frame: pd.DataFrame, grid: IndexGrid, prefixes: Sequence[str], toke
 def cell_labels(
     frame: pd.DataFrame, grid: IndexGrid, prefixes: Sequence[str], tokens: dict[str, list[str]]
 ) -> list[str]:
+    """Give every result row the coordinates of its cell.
+
+    Args:
+        frame: The result frame the grid lays out.
+        grid: The grid.
+        prefixes: The column prefixes to read values from, in order of preference.
+        tokens: The prompt's token strings, keyed by the position column they label.
+
+    Returns:
+        One label per result row, such as ``layer 3 · position 4: " France"``.
+    """
     axes = [*grid.y_axes, *([grid.x_axis] if grid.x_axis is not None else [])]
     per_axis = [tick_text(frame, grid, axis, prefixes, tokens) for axis in axes]
 
@@ -257,6 +391,15 @@ def axis_title(axes: Sequence[str]) -> str:
 
 
 def titled(kind: str, config: AbstractConfig) -> str:
+    """Title a page after the operation and, when it has one, the config's id.
+
+    Args:
+        kind: What the page shows, such as ``"Logit lens"``.
+        config: The config the run was made under.
+
+    Returns:
+        ``kind``, followed by the config's id in parentheses when it has one.
+    """
     return f"{kind} (config: {config.config_id})" if config.config_id else kind
 
 
@@ -264,76 +407,155 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
     """An operation's result frame drawn as the grid its index describes, once per panel.
 
     Choosing the axes, pivoting the rows onto them and falling back to a bar when only one of them
-    varies is the same work whatever was run, so it lives here; a subclass says only what its own
-    result means - which column a panel holds its value in, how to colour it, and what a cell reads
-    on hover. Those answers are read off the run's input, which comes along for that reason - and
-    because it lets a collector name a figure class and construct it without knowing what produced
-    the frame. Every panel shares one grid and one set of axis labels, so those are resolved once, at
-    construction. ``index`` is the one that laid the result out; its layout codes build the grid.
+    varies is the same work whatever was run, so it lives here. A subclass says only what its own
+    result means: which column a panel holds its value in, how to colour it, and what a cell reads on
+    hover. Those answers are read off the run's input, which comes along for that reason, and because
+    it lets a collector name a figure class and construct it without knowing what produced the frame.
+    Every panel shares one grid and one set of axis labels, so those are resolved once, at
+    construction.
+
+    Args:
+        result: The run's result frame.
+        operation_input: The input the run iterated.
+        model: The model the run read.
+        index: The index that laid the result out, whose layout codes build the grid.
+
+    Attributes:
+        prefixes: The column prefixes axis values are read from, in order of preference: the index's own
+            ``layout_prefixes``, so the axes are labelled by the side the grid was laid out along.
+        colorscale: The plotly colour scale cells are drawn with.
     """
 
-    prefixes: tuple[str, ...] = ("source_",)
     colorscale = SEQUENTIAL
 
     def __init__(self, result: pd.DataFrame, operation_input: InputT, model: Model, index: Index) -> None:
         self.result = result
         self.operation_input = operation_input
         self.model = model
+        self.prefixes = index.layout_prefixes
         self.tokens = self.str_tokens()
         self.grid = IndexGrid.of(index.layout_df)
 
     @abc.abstractmethod
     def heading(self, panel: PanelT) -> str:
-        """What this panel's own plot is called, above the page's shared subtitle line."""
+        """Name one panel's plot.
+
+        Args:
+            panel: One of ``panels()``.
+
+        Returns:
+            The plot's heading, shown above the subtitle line.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def subtitle(self, panel: PanelT) -> str:
+        """Describe what one panel's plot holds, under its heading.
+
+        Args:
+            panel: One of ``panels()``.
+
+        Returns:
+            The subtitle, as HTML.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def value_column(self, panel: PanelT) -> str:
+        """Name the result column one panel colours its cells by.
+
+        Args:
+            panel: One of ``panels()``.
+
+        Returns:
+            A column of the result frame.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def hover(self, panel: PanelT, position: int, coordinate: str) -> str:
-        """What the cell built from result row ``position`` reads, given its laid-out coordinate."""
+        """Write what one cell shows on hover.
+
+        Args:
+            panel: One of ``panels()``.
+            position: The result row the cell is built from.
+            coordinate: The cell's laid-out coordinates, from ``cell_labels``.
+
+        Returns:
+            The hover text, as HTML.
+        """
         raise NotImplementedError
 
     def value_title(self, panel: PanelT) -> str:
+        """Title one panel's colour bar.
+
+        Args:
+            panel: One of ``panels()``.
+
+        Returns:
+            The title, by default the value column's name.
+        """
         return self.value_column(panel)
 
     def value_range(self, panel: PanelT, values: Sequence[float]) -> tuple[float, float]:
+        """Choose the range one panel's colours span.
+
+        Args:
+            panel: One of ``panels()``.
+            values: The panel's values, one per result row.
+
+        Returns:
+            The low and high ends of the colour range, by default 0 and 1.
+        """
         return 0.0, 1.0
 
     def bar_yaxis(self, panel: PanelT) -> dict:
+        """Lay out the value axis of one panel drawn as a bar chart.
+
+        Args:
+            panel: One of ``panels()``.
+
+        Returns:
+            plotly ``yaxis`` settings, by default only the axis title.
+        """
         return dict(title=self.value_title(panel))
 
     def cell_text(self, panel: PanelT) -> list[str] | None:
-        """One label per result row to print inside its cell, or ``None`` to leave the cells bare.
+        """Choose the label printed inside each cell of one panel.
 
         The size cap is applied by ``figure``, so a subclass answers for its own result alone.
+
+        Args:
+            panel: One of ``panels()``.
+
+        Returns:
+            One label per result row, or ``None`` to leave the cells bare, the default.
         """
         return None
 
     def str_tokens(self) -> dict[str, list[str]]:
-        """The prompt's token strings for each position column of the result, keyed by that column.
+        """Read the prompt's token strings, to label the position axes with.
 
-        Read once at construction to label the axes; a figure whose index carries no position - or a
-        run with no prompt to read one from - labels its ticks with the coordinates alone.
+        Read once at construction. A figure whose index carries no position, or a run with no prompt to
+        read one from, labels its ticks with the coordinates alone.
+
+        Returns:
+            The token strings for each position column of the result, keyed by that column. Empty by
+            default.
         """
         return {}
 
     def figures(self) -> list[go.Figure]:
-        # An empty index carries no value column at all, so every panel would draw the same empty
-        # plot; one says it once for the whole run.
+        """Draw every panel, or a single empty plot when the index has no rows.
+
+        Returns:
+            One figure per panel, in page order.
+        """
         panels = self.panels()
         if self.result.empty:
             return [self.figure(panels[0])] if panels else []
         return super().figures()
 
-    # Both axes are drawn against dense positions with the real values as tick text, so a duplicate
-    # or non-printable label cannot merge two cells the way a categorical axis would.
     @property
     def _x_positions(self) -> list[int]:
         return list(range(len(self.grid.x_codes)))
@@ -343,13 +565,20 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
         return list(range(len(self.grid.y_keys)))
 
     def figure(self, panel: PanelT) -> go.Figure:
+        """Draw one panel as a heatmap over the grid, or a bar chart when at most one axis varies.
+
+        Args:
+            panel: One of ``panels()``.
+
+        Returns:
+            The panel's plot.
+        """
         layout = dict(
             title=f"{escape(self.heading(panel))}<br><sub>{self.subtitle(panel)}</sub>",
             template="plotly_white",
             margin=dict(l=90, r=40, t=100, b=80),
         )
 
-        # An empty index drops the value column entirely rather than leaving it empty.
         if self.result.empty or self.value_column(panel) not in self.result.columns:
             figure = go.Figure()
             figure.add_annotation(text="No rows in the index", showarrow=False, font=dict(size=16))
@@ -447,20 +676,14 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
         return figure
 
 
-def _location(name: str) -> ModelLocation | None:
+def _location(name: str) -> ModelAxis | None:
     try:
-        return ModelLocation(name)
+        return ModelAxis(name)
     except ValueError:
         return None
 
 
-def _axis_name(column: Any) -> str:
-    # A layout frame is keyed by ``ModelLocation`` members, whose ``str`` is the member name, not the
-    # location - everything downstream matches on the location, so take the value.
-    return column.value if isinstance(column, Enum) else str(column)
-
-
-def _axis_rank(location: ModelLocation | None) -> int:
+def _axis_rank(location: ModelAxis | None) -> int:
     return AXIS_ORDER.index(location) if location in AXIS_ORDER else len(AXIS_ORDER)
 
 

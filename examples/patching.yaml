@@ -120,9 +120,9 @@ explicit_coordinates:
           - {activation: mlp.out, layer: -1, position: -1}
         type: replace
 
-# Two elements patched together: each patched run applies one row of every element. The first element
-# lays the result out, so the one that varies comes first; an element with a single row is applied on
-# every run, and the result page names it in its subtitle.
+# Two elements patched together: each patched run applies one row of every element. The element with
+# the most rows lays the result out; an element with a single row is applied on every run, and the result
+# page names it in its subtitle.
 heads_with_fixed_mlp:
   metric:
     logit_diff: [normalized]

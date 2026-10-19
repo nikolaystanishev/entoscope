@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 
 import pytest
 
@@ -19,13 +20,19 @@ def _registries(registries):
     """Every dataset test registers its own types, so each one's registrations are undone after it."""
 
 
-class JsonlDataset(AbstractDataset):
+@dataclass(kw_only=True)
+class JsonlDatasetConfig(DatasetConfig):
+    path: str
+    limit: int | None = None
+
+
+class JsonlDataset(AbstractDataset[JsonlDatasetConfig]):
     """Reads its rows from the JSONL file the config names, keeping at most ``limit`` of them."""
 
     def load(self) -> list[Row]:
         with open(self.config.path, encoding="utf-8") as f:
             rows = [json.loads(line) for line in f if line.strip()]
-        return rows[: self.config.get("limit")]
+        return rows[: self.config.limit]
 
 
 @pytest.fixture
@@ -45,5 +52,5 @@ def prompts_file(tmp_path):
     return write
 
 
-def dataset_config(path: str, **properties) -> DatasetConfig:
-    return DatasetConfig(type="jsonl", path=path, **properties)
+def dataset_config(path: str, **settings) -> JsonlDatasetConfig:
+    return JsonlDatasetConfig(type="jsonl", path=path, **settings)

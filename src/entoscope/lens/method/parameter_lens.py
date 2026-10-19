@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import torch
@@ -8,22 +8,17 @@ from jaxtyping import Float
 
 from entoscope.lens.config import LensMethodConfig
 from entoscope.lens.method.lens import AbstractLensMethod
-from entoscope.lens.method.logit_lens import _attention_layer, _layer
-from entoscope.model.config import ModelLayerLocation, ModelLocation, ModelLocatorConfig
+from entoscope.lens.method.logit_lens import projection_layer
+from entoscope.model.config import ModelAxis, ModelLocatorConfig
 from entoscope.model.index import IndexElement
-from entoscope.model.weight import attention_out_weight, mlp_weight
+from entoscope.model.slicer import ActivationSlicer
+from entoscope.model.weight import ACTIVATION_WEIGHT, ModelWeight, activation_weight, model_weight
 
-if TYPE_CHECKING:  # ``entoscope.lens.input`` looks the lens up through the factory, which imports this module.
+if TYPE_CHECKING:
     from entoscope.lens.input import LensInput
 
-_ATTENTION_READ_WEIGHT = {
-    ModelLayerLocation.ATTENTION_Q: "W_Q",
-    ModelLayerLocation.ATTENTION_K: "W_K",
-    ModelLayerLocation.ATTENTION_V: "W_V",
-}
 
-
-def _selection(index: IndexElement[ModelLocatorConfig], location: ModelLocation) -> list[int] | slice:
+def _selection(index: IndexElement[ModelLocatorConfig], location: ModelAxis) -> list[int] | slice:
     # Always a list or a slice: a single advanced index per bracket keeps the axis and never pairs
     # 'head' with 'neuron' the way two list indices in one bracket would.
     value = index.get(location)
@@ -32,7 +27,7 @@ def _selection(index: IndexElement[ModelLocatorConfig], location: ModelLocation)
     return list(value) if isinstance(value, Sequence) else [value]
 
 
-class ProjectionSpace(str, Enum):
+class ProjectionSpace(StrEnum):
     """The vocabulary space a weight is read in: ``W_U`` for ``unembedding``, ``W_E`` transposed for ``embedding``.
 
     The two coincide on a model that ties its embedding and unembedding, as GPT-2 does with HuggingFace's
@@ -43,10 +38,18 @@ class ProjectionSpace(str, Enum):
     UNEMBEDDING = "unembedding"
 
 
+_PROJECTION_WEIGHT = {ProjectionSpace.EMBEDDING: ModelWeight.EMBED, ProjectionSpace.UNEMBEDDING: ModelWeight.UNEMBED}
+
+
 @dataclass(kw_only=True)
 class ParameterLensConfig(LensMethodConfig):
-    """``projection`` picks the vocabulary space a weight is read in, and ``scale`` multiplies the weight
-    first: a negative scale reads it against its own direction, and the magnitude acts as a temperature."""
+    """The method config of ``parameter_lens``.
+
+    Attributes:
+        projection: The vocabulary space a weight is read in.
+        scale: What the weight is multiplied by first. A negative scale reads it against its own direction,
+            and the magnitude acts as a temperature.
+    """
 
     projection: ProjectionSpace = ProjectionSpace.UNEMBEDDING
     scale: float = 1.0
@@ -55,7 +58,9 @@ class ParameterLensConfig(LensMethodConfig):
 class ParameterLens(AbstractLensMethod[ParameterLensConfig]):
     """Reads a weight vector onto the vocabulary: what a neuron or a head dimension reads or writes.
 
-    It reads the model's weights rather than a prompt's activations, so a run takes no prompt.
+    A unit is read through the weight ``ACTIVATION_WEIGHT`` names for its activation: the one computing it
+    off the residual stream, or, for one no weight computes (``mlp.post``, ``attn.z``), the one writing it
+    back. It reads the model's weights rather than a prompt's activations, so a run takes no prompt.
     """
 
     reads_activations = False
@@ -65,60 +70,46 @@ class ParameterLens(AbstractLensMethod[ParameterLensConfig]):
         lens_input: "LensInput",
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, " d_model"]:
-        match index.activation():
-            case ModelLayerLocation.MLP_PRE | ModelLayerLocation.MLP_PRE_LINEAR:
-                return self._mlp_key(index)
-            case ModelLayerLocation.MLP_POST:
-                return self._mlp_value(index)
-            case ModelLayerLocation.ATTENTION_Q | ModelLayerLocation.ATTENTION_K | ModelLayerLocation.ATTENTION_V:
-                return self._attention_read(index)
-            case ModelLayerLocation.ATTENTION_Z:
-                return self._attention_write(index)
-            case unprojectable:
-                raise ValueError(
-                    f"{type(self).__name__} cannot project {unprojectable.value}: only MLP-hidden and attention head "
-                    "locations name a weight vector, one per neuron or head dimension. Residual-stream locations "
-                    "('embed', 'resid.*', 'attn.out', 'mlp.out') index the residual basis instead of a weight"
-                )
+        """Read the weight vectors of the units an element names, summed into one direction.
 
+        Args:
+            lens_input: The input, whose prompt is unused.
+            index: The element.
+
+        Returns:
+            The summed weight vector.
+
+        Raises:
+            ValueError: If the activation names no weight vector, as a residual-stream one does not, or the
+                element names no single layer.
+        """
+        activation = index.activation()
+        if activation not in ACTIVATION_WEIGHT:
+            raise ValueError(
+                f"{type(self).__name__} cannot project {activation.value}: only MLP-hidden and attention head "
+                "locations name a weight vector, one per neuron or head dimension. Residual-stream locations "
+                "('embed', 'resid.*', 'attn.out', 'mlp.out') index the residual basis instead of a weight"
+            )
+
+        weight = activation_weight(self.model, activation, projection_layer(self.model, index))
+        for dim, location in enumerate(ActivationSlicer.get(activation).AXES[2:]):
+            weight = weight[(slice(None),) * dim + (_selection(index, location),)]
+        return weight.flatten(end_dim=-2).sum(0)
+
+    @torch.no_grad()
     def project(
         self,
         weight: Float[torch.Tensor, " d_model"],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, " d_vocab"]:
-        with torch.no_grad():
-            return (self.method_config.scale * weight) @ self._projection()
+        """Read a weight vector in the configured vocabulary space, scaled first.
 
-    def _projection(self) -> Float[torch.Tensor, "d_model d_vocab"]:
-        if self.method_config.projection is ProjectionSpace.EMBEDDING:
-            return self.model.W_E.T
-        return self.model.W_U
+        Args:
+            weight: The element's summed weight vector.
+            index: The element.
 
-    def _mlp_key(self, index: IndexElement[ModelLocatorConfig]) -> Float[torch.Tensor, " d_model"]:
-        gated = bool(self.model.cfg.gated_mlp)
-        if index.activation() is ModelLayerLocation.MLP_PRE_LINEAR and not gated:
-            raise ValueError(
-                "'mlp.pre_linear' is the linear branch of a gated MLP, which this model does not have; "
-                "read its input weights through 'mlp.pre'"
-            )
-        layer, neuron = _layer(index), _selection(index, ModelLocation.NEURON)
-
-        model_attribute = "W_gate" if gated and index.activation() is ModelLayerLocation.MLP_PRE else "W_in"
-        return mlp_weight(self.model, layer, model_attribute)[:, neuron].sum(-1)
-
-    def _mlp_value(self, index: IndexElement[ModelLocatorConfig]) -> Float[torch.Tensor, " d_model"]:
-        layer, neuron = _layer(index), _selection(index, ModelLocation.NEURON)
-        return mlp_weight(self.model, layer, "W_out")[neuron].sum(0)
-
-    def _attention_read(self, index: IndexElement[ModelLocatorConfig]) -> Float[torch.Tensor, " d_model"]:
-        layer = _attention_layer(self.model, index)
-        head, neuron = _selection(index, ModelLocation.HEAD), _selection(index, ModelLocation.NEURON)
-
-        weight = getattr(self.model.blocks[layer].attn, _ATTENTION_READ_WEIGHT[index.activation()])
-        return weight[head][..., neuron].sum((0, -1))
-
-    def _attention_write(self, index: IndexElement[ModelLocatorConfig]) -> Float[torch.Tensor, " d_model"]:
-        layer = _attention_layer(self.model, index)
-        head, neuron = _selection(index, ModelLocation.HEAD), _selection(index, ModelLocation.NEURON)
-
-        return attention_out_weight(self.model, layer)[head][:, neuron].sum((0, 1))
+        Returns:
+            The element's logits over the vocabulary.
+        """
+        vocabulary = model_weight(self.model, _PROJECTION_WEIGHT[self.method_config.projection])
+        return (self.method_config.scale * weight) @ vocabulary.T

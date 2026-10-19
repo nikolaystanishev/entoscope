@@ -10,23 +10,28 @@ from entoscope.model import Model
 from entoscope.model.config import ModelLocatorConfig
 from entoscope.model.index import IndexElement
 
-if TYPE_CHECKING:  # ``entoscope.lens.input`` looks the lens up through the factory, which imports this module.
+if TYPE_CHECKING:
     from entoscope.lens.input import LensInput
 
 LensMethodConfigT = TypeVar("LensMethodConfigT", bound=LensMethodConfig, default=LensMethodConfig)
 
 
 class AbstractLensMethod(abc.ABC, Generic[LensMethodConfigT]):
-    """Reads each index element out onto the vocabulary.
+    """The base of every lens: reads each index element out onto the vocabulary.
 
     A lens is built once per run, from the run's config alone, so a lens that handles several kinds of
     activation tells them apart through ``index.activation()`` itself. Its type argument names the
-    dataclass of its method config, extending ``LensMethodConfig``, which a config file's ``method`` is read
-    into; a lens naming none takes ``LensMethodConfig`` itself, which no field fits. ``extract``
-    returns the tensor an element names and ``project`` maps it onto the vocabulary; the collector ranks
-    the tokens of a single slice, so an element projects to a single ``d_vocab`` vector. Either raises for
-    an element the lens cannot read. ``reads_activations`` is ``False`` for a lens that reads only the
-    model's weights: it takes no prompt and has no ``position`` axis.
+    dataclass of its method config, extending ``LensMethodConfig``, which a config file's ``method`` is
+    read into. A lens naming none takes ``LensMethodConfig`` itself, which no field fits.
+
+    Args:
+        model: The model the lens reads.
+        config: The run's config.
+
+    Attributes:
+        reads_activations: ``False`` for a lens that reads only the model's weights, which takes no
+            prompt and has no ``position`` axis.
+        method_config: The run's method config, typed by the lens's type argument.
     """
 
     reads_activations: ClassVar[bool] = True
@@ -42,7 +47,18 @@ class AbstractLensMethod(abc.ABC, Generic[LensMethodConfigT]):
         lens_input: "LensInput",
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "..."]:
-        """The tensor one element names."""
+        """Read the tensor one element names.
+
+        Args:
+            lens_input: The prepared input, whose cache holds the activations the index reads.
+            index: The element.
+
+        Returns:
+            The element's activation, or the weight it names.
+
+        Raises:
+            ValueError: If the lens cannot read the element.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -51,5 +67,19 @@ class AbstractLensMethod(abc.ABC, Generic[LensMethodConfigT]):
         source: Float[torch.Tensor, "..."],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_vocab"]:
-        """Map one element's tensor to vocabulary logits."""
+        """Map one element's tensor onto the vocabulary.
+
+        The collector ranks the tokens of a single slice, so an element projects to a single ``d_vocab``
+        vector.
+
+        Args:
+            source: What ``extract`` returned for the element.
+            index: The element.
+
+        Returns:
+            The element's logits over the vocabulary.
+
+        Raises:
+            ValueError: If the lens cannot read the element.
+        """
         raise NotImplementedError
