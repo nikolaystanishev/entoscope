@@ -98,12 +98,11 @@ of tensor slices for that activation, via `ActivationSlicer` (`model/slicer.py`)
 axis order per activation kind (`[batch, pos, neuron]`, `[batch, pos, head, neuron]`,
 `[batch, head, dest_pos, src_pos]`). The tuple holds one value per axis and is applied to a tensor
 with `IndexElement.read_slices` / `write_slices` (`read_unit_slices` for a weight laid out per unit),
-one axis at a time, so lists on several axes
-read every combination of their values and every axis keeps its place; indexing with the tuple
-directly would pair the lists. `transformer_activation()` maps
-entoscope's dotted `ModelLayerLocation` values onto `transformer_lens` hook names. pandas 3 stores a
-frame's enum cells as plain `str`, so a row's activation is read through `IndexElement.activation()`,
-which returns the member.
+which index every axis with a tensor laid along its own axis of the block, so lists on several axes
+read and write every combination of their values; indexing with the tuple directly would pair the
+lists. `transformer_activation()` maps entoscope's dotted `ModelLayerLocation` values onto
+`transformer_lens` hook names. pandas 3 stores a frame's enum cells as plain `str`, so a row's
+activation is read through `IndexElement.activation()`, which returns the member.
 
 Adding a location or activation therefore means touching `ModelLayerLocation`,
 `MODEL_LOCATION_MAPPER`, `TRANSFORMER_ACT_NAME` and `ActivationSlicer` together; a new axis also goes

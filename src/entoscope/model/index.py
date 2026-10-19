@@ -14,6 +14,7 @@ except ImportError:  # transformer-lens 2.x (Intel macOS fallback)
     from transformer_lens.utils import get_act_name
 
 from entoscope.model.config import (
+    POSITION_AXES,
     ModelAxis,
     ModelLayerLocation,
     ModelLocationIndex,
@@ -76,8 +77,8 @@ class IndexElement(Generic[T]):
 
         The batch row is an argument rather than state on the element: ``zip_broadcast`` hands the same
         element to every row a one-row index is paired with, so a row stored on it would be shared.
-        The slices are read and written with ``read_slices`` and ``write_slices``, one axis at a time:
-        indexing a tensor with all of them at once would pair the lists of several axes.
+        The slices are read and written with ``read_slices`` and ``write_slices``: indexing a tensor with
+        them directly would pair the lists of several axes.
 
         Args:
             batch: The batch rows to read.
@@ -98,13 +99,13 @@ class IndexElement(Generic[T]):
             The block of every combination of the element's values, every axis an int does not drop kept
             where the tensor holds it.
         """
-        return self._read(tensor, self.slices(batch))
+        return tensor[self._block(tensor, self.slices(batch))]
 
     def read_unit_slices(self, weight: torch.Tensor) -> torch.Tensor:
         """Read the element's units off a weight that holds one ``d_model`` vector per unit of its activation.
 
-        The weight's leading axes are the activation's after ``batch`` and ``position``, as ``model_weight``
-        lays it out.
+        The weight's leading axes are the activation's other than ``batch`` and its positions, as
+        ``model_weight`` lays it out.
 
         Args:
             weight: The weight.
@@ -112,32 +113,61 @@ class IndexElement(Generic[T]):
         Returns:
             The block of the units the element names, ``d_model`` last.
         """
-        return self._read(weight, self.slices()[2:])
+        axes = ActivationSlicer.get(self.activation()).AXES
+        units = [
+            value
+            for axis, value in zip(axes, self.slices(), strict=True)
+            if axis != "batch" and axis not in POSITION_AXES
+        ]
+        return weight[self._block(weight, units)]
 
     def write_slices(self, tensor: torch.Tensor, value: torch.Tensor, batch: int | slice = slice(None)) -> None:
         """Write into the block ``read_slices`` reads, in place.
 
-        Indexing a list copies, so the block cannot be written through what ``read_slices`` returns. The
-        write goes through where each entry of the block sits instead: the tensor's own positions, read
-        the same way.
+        The value is cast to the tensor's dtype and device first, as assigning into a slice would: a write
+        through index tensors takes only an exact match, and a constant such as ``value_replace``'s is
+        float32 whatever the model's dtype.
 
         Args:
             tensor: The activation to write into.
             value: The block, or anything that broadcasts to it.
             batch: The batch rows to write.
         """
-        positions = self._read(
-            torch.arange(tensor.numel(), device=tensor.device).view(tensor.shape), self.slices(batch)
+        tensor[self._block(tensor, self.slices(batch))] = torch.as_tensor(
+            value, dtype=tensor.dtype, device=tensor.device
         )
-        tensor[torch.unravel_index(positions, tensor.shape)] = value
 
     @staticmethod
-    def _read(tensor: torch.Tensor, slices: Sequence[slice | int | list[int]]) -> torch.Tensor:
-        # One axis per bracket: torch would pair the lists of several axes indexed together, and move them
-        # in front of a slice between them. Back to front, an int dropping its axis shifts none still to read.
-        for dim, value in reversed(list(enumerate(slices))):
-            tensor = tensor[(slice(None),) * dim + (value,)]
-        return tensor
+    def _block(tensor: torch.Tensor, slices: Sequence[slice | int | list[int]]) -> tuple[int | torch.Tensor, ...]:
+        """Index the block of every combination of the values on each of the tensor's leading axes.
+
+        torch pairs the lists of several axes indexed together, so every axis an int does not drop is
+        indexed by a tensor laid along its own axis of the block instead, and the tensors broadcast to every
+        combination. An axis left after ``slices`` is kept whole, after the block's.
+
+        Args:
+            tensor: The tensor to index.
+            slices: One value per leading axis of the tensor.
+
+        Returns:
+            The index, which reads and writes the block alike.
+        """
+        kept = sum(not isinstance(value, int) for value in slices)
+        index: list[int | torch.Tensor] = []
+        block_axis = 0
+        for dim, value in enumerate(slices):
+            if isinstance(value, int):
+                index.append(value)
+                continue
+            if isinstance(value, slice):
+                values = torch.arange(tensor.shape[dim], device=tensor.device)[value]
+            else:
+                values = torch.tensor(value, dtype=torch.long, device=tensor.device)
+            shape = [1] * kept
+            shape[block_axis] = -1
+            index.append(values.view(shape))
+            block_axis += 1
+        return tuple(index)
 
     def remaining_axes(self) -> list[ModelAxis | str]:
         """Name the activation axes that survive ``slices()``, batch excluded.

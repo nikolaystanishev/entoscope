@@ -96,9 +96,7 @@ MODEL_LOCATION_MAPPER: dict[ModelAxis, Callable] = {
             ModelLayerLocation.MLP_OUT: model.cfg.d_model,
         }[layer_location]
     ),
-    ModelAxis.POSITION: lambda _1, _2, prompt_size: prompt_size,
-    ModelAxis.DESTINATION_POSITION: lambda _1, _2, prompt_size: prompt_size,
-    ModelAxis.SOURCE_POSITION: lambda _1, _2, prompt_size: prompt_size,
+    **dict.fromkeys(POSITION_AXES, lambda _1, _2, prompt_size: prompt_size),
 }
 
 
@@ -661,6 +659,17 @@ class ModelLocatorConfig:
                     f"'combination' expands '{axis.value}', which neither 'location' nor 'incremental' names"
                 )
         _check_axes(self.activation, {*self.location, *self.incremental})
+
+    def activations(self) -> set[ModelLayerLocation]:
+        """Name the activations the locator's rows read.
+
+        Returns:
+            The locator's ``activation``, or the one each coordinate names, empty when none is named.
+        """
+        if self.coordinates is None:
+            return set() if self.activation is None else {self.activation}
+        named = (coordinate.get(ModelAxis.ACTIVATION, self.activation) for coordinate in self.coordinates)
+        return {activation for activation in named if activation is not None}
 
     @property
     def _transforms(self) -> list[IndexTransform]:

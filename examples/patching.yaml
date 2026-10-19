@@ -43,10 +43,11 @@ head_sweep:
         type: replace
       target: *heads
 
-# One head's attention pattern, entry by entry: row `dest_pos` is the token attending and column
-# `src_pos` the token it attends to. A patch writes the source run's attention weight alone, the head
-# still mixing the target run's values, and the page draws the grid as the pattern itself, src_pos across
-# and dest_pos up. Entries with src_pos past dest_pos are masked to 0 in both runs, so they score nothing.
+# One head's attention pattern, entry by entry: `dest_pos` is the token attending and `src_pos` the
+# token it attends to. A patch writes the source run's attention weight alone, the head still mixing
+# the target run's values. This sweeps the last token's weight on every key; without the `dest_pos`
+# filter it sweeps the whole pattern, drawn as the pattern itself (src_pos across, dest_pos up), but the
+# entries with src_pos past dest_pos are masked to 0 in both runs, so about half its runs score nothing.
 pattern_entries:
   metric:
     logit_diff: [normalized]
@@ -58,6 +59,7 @@ pattern_entries:
         filter:
           - layer: 9
             head: 8
+            dest_pos: -1
         type: replace
       target: *pattern
 

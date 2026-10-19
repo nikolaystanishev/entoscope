@@ -1218,6 +1218,52 @@ def test_attribution_scores_a_block_of_the_pattern_as_the_sum_of_its_entries(mod
     assert singles[1] + singles[2] != pytest.approx(0.0, abs=1e-6)
 
 
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float64])
+@pytest.mark.parametrize(
+    ("target", "writes"),
+    [
+        (
+            {"activation": "mlp.out", "location": ["layer"]},
+            [("blocks.0.hook_mlp_out", ()), ("blocks.1.hook_mlp_out", ()), ("blocks.2.hook_mlp_out", ())],
+        ),
+        (
+            {"coordinates": [{"activation": "attn.z", "layer": 1, "position": -1, "head": [0, 1], "neuron": [0, 3]}]},
+            [("blocks.1.attn.hook_z", (-1, slice(0, 2), [0, 3]))],
+        ),
+    ],
+    ids=["whole_activation", "two_listed_axes"],
+)
+def test_a_constant_is_written_in_the_models_own_dtype(backend: str, dtype: torch.dtype, target: dict, writes) -> None:
+    # value_replace's constant is float32 whatever the model holds, so the write has to cast it.
+    model = build_small_model(backend, dtype=dtype)
+    config = PatchingConfig(
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]},
+        method=EXACT,
+        patch=[
+            SinglePatchingConfig(
+                source=PatchingElementConfig(type=PatchingType.VALUE_REPLACE, value=1.0),
+                target=PatchingElementConfig(**target, type=PatchingType.REPLACE),
+            )
+        ],
+    )
+    answers = (model.to_single_token(" Paris"), model.to_single_token(" Madrid"))
+
+    effects = _run(model, config, correct_token=" Paris", distractor_token=" Madrid").tolist()
+
+    def constant(at: tuple):
+        def write(activation: torch.Tensor, hook) -> torch.Tensor:
+            activation[(slice(None), *at)] = 1.0
+            return activation
+
+        return write
+
+    unpatched = float(_expected_logit_diff(model, [], answers))
+    for effect, (name, at) in zip(effects, writes, strict=True):
+        expected = float(_expected_logit_diff(model, [(name, constant(at))], answers)) - unpatched
+        assert effect == pytest.approx(expected, abs=1e-6), name
+        assert effect != 0.0, name
+
+
 # --------------------------------------------------------------------------------------------------
 # Explicit coordinates
 # --------------------------------------------------------------------------------------------------

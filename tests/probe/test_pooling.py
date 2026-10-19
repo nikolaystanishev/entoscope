@@ -8,7 +8,7 @@ run's coefficients exactly when - and only when - the run pooled the same way.
 import pytest
 import torch
 
-from entoscope.model.config import Filter, Group, ModelAxis, ModelLayerLocation
+from entoscope.model.config import Filter, Group, ModelAxis, ModelLayerLocation, ModelLocatorConfig
 from entoscope.probe.config import PoolingType, ProbeConfig
 from entoscope.probe.input import ProbeInput
 from entoscope.probe.prober import Prober
@@ -102,14 +102,47 @@ def test_axes_are_pooled_in_their_own_order_not_the_configs(small_model):
     assert_trained_alike(probe_of(position_first), probe_of(head_first))
 
 
-def test_a_pooling_entry_that_matches_no_axis_is_ignored(small_model):
-    # The residual stream has no head axis, and the grid already pinned the layer.
-    pooled = run_probe(small_model, probe_config(pool={ModelAxis.POSITION: PoolingType.MEAN}))
-    with_extra = run_probe(
-        small_model, probe_config(pool={ModelAxis.POSITION: PoolingType.MEAN, ModelAxis.HEAD: PoolingType.MAX})
+def test_a_pooling_entry_for_an_axis_the_grid_pins_is_ignored(small_model):
+    # The grid reads one head per row, so there is no head axis left to pool.
+    def collector_for(pool: dict):
+        config = probe_config(
+            activation=ModelLayerLocation.ATTENTION_Z, location=[ModelAxis.LAYER, ModelAxis.HEAD], pool=pool
+        )
+        return run_probe(small_model, config)
+
+    pooled = collector_for({ModelAxis.POSITION: PoolingType.MEAN})
+    with_extra = collector_for({ModelAxis.POSITION: PoolingType.MEAN, ModelAxis.HEAD: PoolingType.MAX})
+
+    assert_trained_alike(probe_of(pooled, head=1), probe_of(with_extra, head=1))
+
+
+@pytest.mark.parametrize(
+    ("activation", "axis"),
+    [
+        (ModelLayerLocation.RESIDUAL_POST, ModelAxis.HEAD),
+        # The pattern's positions go by their own names, so 'position' would pool neither of them.
+        (ModelLayerLocation.ATTENTION_PATTERN, ModelAxis.POSITION),
+    ],
+)
+def test_a_pooling_entry_for_an_axis_the_activation_lacks_raises(activation, axis):
+    # It would reduce nothing and leave the axis meant in the features, so it is refused as the config is built.
+    with pytest.raises(ValueError, match=f"'{axis.value}' is not an axis of '{activation.value}' to pool"):
+        probe_config(activation=activation, location=[ModelAxis.LAYER], pool={axis: PoolingType.SUM})
+
+
+def test_a_pooling_entry_for_an_axis_one_of_the_coordinates_activations_has_is_accepted():
+    coordinates = [
+        {ModelAxis.ACTIVATION: ModelLayerLocation.RESIDUAL_POST, ModelAxis.LAYER: 0},
+        {ModelAxis.ACTIVATION: ModelLayerLocation.ATTENTION_Z, ModelAxis.LAYER: 0},
+    ]
+    config = ProbeConfig(
+        method="linear",
+        pool={ModelAxis.POSITION: PoolingType.MEAN, ModelAxis.HEAD: PoolingType.MAX},
+        metric=["accuracy"],
+        source=ModelLocatorConfig(coordinates=coordinates),
     )
 
-    assert_trained_alike(probe_of(pooled), probe_of(with_extra))
+    assert config.pool[ModelAxis.HEAD] is PoolingType.MAX
 
 
 def test_both_of_the_patterns_positions_are_pooled_by_name(small_model, small_caches):
@@ -127,24 +160,6 @@ def test_both_of_the_patterns_positions_are_pooled_by_name(small_model, small_ca
     assert probe_of(collector, head=0).coef_.shape[1] == 1
     expected = _stacked(small_caches, "blocks.0.attn.hook_pattern", lambda p: p[0].sum(dim=0).sum(dim=0).reshape(1))
     assert_trained_alike(probe_of(collector, head=0), refit(expected))
-
-
-def test_position_is_no_axis_of_the_pattern_to_pool(small_model):
-    # The pattern's positions go by their own names, so a 'position' entry matches neither of them and
-    # is ignored like any entry that matches no axis: every query and key position stays a feature.
-    collector = run_probe(
-        small_model,
-        probe_config(
-            activation=ModelLayerLocation.ATTENTION_PATTERN,
-            location=[ModelAxis.LAYER, ModelAxis.HEAD],
-            pool={ModelAxis.POSITION: PoolingType.SUM},
-        ),
-        positive=EQUAL_POSITIVE,
-        negative=EQUAL_NEGATIVE,
-    )
-
-    positions = small_model.to_tokens(EQUAL_POSITIVE[0]).shape[1]
-    assert probe_of(collector, head=0).coef_.shape[1] == positions * positions
 
 
 def test_one_of_the_patterns_positions_is_pooled_while_the_other_is_pinned(small_model, small_caches):

@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from entoscope.model.config import ModelAxis, ModelLocatorConfig
+from entoscope.model.slicer import located_axes
 from entoscope.operation.config import AbstractConfig
 from entoscope.operation.method import MethodConfig
 
@@ -70,7 +71,7 @@ class ProbeConfig(AbstractConfig):
         source: Where to read the features.
 
     Raises:
-        ValueError: If ``pool`` names ``layer`` or ``neuron``.
+        ValueError: If ``pool`` names ``layer`` or ``neuron``, or an axis no activation of ``source`` has.
     """
 
     method: ProbeMethodConfig
@@ -83,3 +84,15 @@ class ProbeConfig(AbstractConfig):
         unpoolable = {ModelAxis.LAYER, ModelAxis.NEURON} & set(self.pool)
         if unpoolable:
             raise ValueError(f"Locations {sorted(location.value for location in unpoolable)} cannot be pooled")
+
+        # An entry for an axis no row's tensor has would reduce nothing: the axis meant, such as the pattern's
+        # positions for 'position', would stay in the features without a word.
+        activations = self.source.activations()
+        if not activations:
+            return
+        poolable = set().union(*map(located_axes, activations)) - {ModelAxis.LAYER, ModelAxis.NEURON}
+        for axis in self.pool:
+            if axis not in poolable:
+                names = ", ".join(sorted(f"'{activation.value}'" for activation in activations))
+                axes = ", ".join(f"'{name.value}'" for name in ModelAxis if name in poolable)
+                raise ValueError(f"'{axis.value}' is not an axis of {names} to pool: the poolable axes are {axes}")
