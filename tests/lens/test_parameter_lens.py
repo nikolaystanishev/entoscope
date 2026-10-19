@@ -284,17 +284,19 @@ def test_an_activation_that_names_no_weight_vector_raises(model, activation_name
 
 
 @pytest.mark.parametrize(
-    "source",
+    ("source", "axis"),
     [
         # weights have no position axis, declaratively...
-        {"activation": "mlp.post", "location": ["layer", "position"], "filter": [{"neuron": NEURON}]},
-        # ...or as a coordinate
-        {"coordinates": [{"activation": "mlp.post", "layer": -1, "neuron": NEURON, "position": -1}]},
+        ({"activation": "mlp.post", "location": ["layer", "position"], "filter": [{"neuron": NEURON}]}, "position"),
+        # ...or as a coordinate...
+        ({"coordinates": [{"activation": "mlp.post", "layer": -1, "neuron": NEURON, "position": -1}]}, "position"),
+        # ...and none of the attention pattern's positions either
+        ({"activation": "attn.pattern", "location": ["layer", "head", "dest_pos"]}, "dest_pos"),
     ],
 )
-def test_a_position_is_not_a_parameter_lens_location(config_from_yaml, source):
+def test_a_position_is_not_a_parameter_lens_location(config_from_yaml, source, axis):
     # Rejected as the config is loaded, before any input names a prompt.
-    with pytest.raises(ValueError, match="'position' is not a location of 'parameter_lens'"):
+    with pytest.raises(ValueError, match=f"'{axis}' is not a location of 'parameter_lens'"):
         config_from_yaml(LensConfig, "positioned", {"method": "parameter_lens", "source": source})
 
 

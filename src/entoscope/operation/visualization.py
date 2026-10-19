@@ -38,6 +38,8 @@ AXIS_ORDER: tuple[ModelAxis, ...] = (
     ModelAxis.HEAD,
     ModelAxis.NEURON,
     ModelAxis.POSITION,
+    ModelAxis.DESTINATION_POSITION,
+    ModelAxis.SOURCE_POSITION,
 )
 
 DIVERGING = [(0.0, "#2166ac"), (0.5, "#f7f7f7"), (1.0, "#b2182b")]

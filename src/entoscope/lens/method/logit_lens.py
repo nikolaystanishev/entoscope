@@ -90,7 +90,7 @@ def _through(
     Returns:
         The activation's contribution in the residual stream's basis.
     """
-    weight = weight[index.slices()[2:]]
+    weight = index.read_unit_slices(weight)
     return torch.tensordot(activation, weight, dims=weight.ndim - 1)
 
 
@@ -116,7 +116,7 @@ class LogitLens(AbstractLensMethod[LensMethodConfigT]):
         Returns:
             The activation, sliced at the element.
         """
-        return lens_input.cache[index.transformer_activation()][index.slices()]
+        return index.read_slices(lens_input.cache[index.transformer_activation()])
 
     @torch.no_grad()
     def project(

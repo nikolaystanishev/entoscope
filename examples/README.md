@@ -18,7 +18,7 @@ and all but `custom_lens.py` take `--cache-dir` to keep the model's activations 
 |---|---|---|
 | `lens.py` | `lens.yaml` | `logit_lens`, `neuron_logit_lens`, `head_logit_lens`, `tuned_lens`, `parameter_lens`, `subhead_parameter_lens`, `explicit_coordinates` |
 | `probe.py` | `probe.yaml` | `residual_by_layer`, `last_token_by_layer`, `head_outputs` |
-| `patching.py` | `patching.yaml` | `residual_sweep`, `head_sweep`, `zero_ablation`, `noise_tracing`, `attribution`, `integrated_gradients`, `explicit_coordinates`, `heads_with_fixed_mlp` |
+| `patching.py` | `patching.yaml` | `residual_sweep`, `head_sweep`, `pattern_entries`, `zero_ablation`, `noise_tracing`, `attribution`, `integrated_gradients`, `explicit_coordinates`, `heads_with_fixed_mlp` |
 | `circuit.py` | `circuit.yaml` | `information_flow_routes`, `strong_routes`, `last_two_predictions` |
 | `custom_lens.py` | `custom_lens.yaml` | `warm`, `plain`: a lens the script registers itself |
 

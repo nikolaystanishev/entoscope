@@ -215,6 +215,7 @@ def test_a_yaml_config_runs_the_same_way_a_code_built_one_does(model, config_fro
         ({**PROBE_YAML, "pool": {"neuron": "mean"}}, "cannot be pooled"),
         ({**PROBE_YAML, "pool": {"position": "median"}}, "median"),
         ({**PROBE_YAML, "pool": {"attention": "mean"}}, "attention"),
+        ({**PROBE_YAML, "pool": {"head": "mean"}}, "'head' is not an axis of 'resid.post' to pool"),
         ({**PROBE_YAML, "max_iter": 250}, "Unknown keys for ProbeConfig.*max_iter"),
         ({**PROBE_YAML, "metric": ["accuracy", "mse"]}, "mse"),
         ({**PROBE_YAML, "metric": "accuracy"}, "Expected a list"),

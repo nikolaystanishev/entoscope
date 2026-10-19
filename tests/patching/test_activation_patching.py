@@ -1029,8 +1029,49 @@ _EVERY_SLICE = slice(None)
         ({"activation": "attn.q", "layer": 9, "position": -1, "head": 8}, [("blocks.9.attn.hook_q", (-1, 8))]),
         ({"activation": "attn.k", "layer": 9, "position": 4, "head": 8}, [("blocks.9.attn.hook_k", (4, 8))]),
         ({"activation": "attn.v", "layer": 9, "position": 4, "head": 8}, [("blocks.9.attn.hook_v", (4, 8))]),
-        # [batch, head, dest_position, src_position]
+        # Two listed axes write the block they span, spelled here with a slice rather than the run's own index.
+        (
+            {"activation": "attn.z", "layer": 9, "position": -1, "head": [8, 9], "neuron": [0, 11]},
+            [("blocks.9.attn.hook_z", (-1, slice(8, 10), [0, 11]))],
+        ),
+        # [batch, head, dest_pos, src_pos]
         ({"activation": "attn.pattern", "layer": 9, "head": 8}, [("blocks.9.attn.hook_pattern", (8,))]),
+        (
+            {"activation": "attn.pattern", "layer": 9, "head": 8, "dest_pos": -1, "src_pos": 4},
+            [("blocks.9.attn.hook_pattern", (8, -1, 4))],
+        ),
+        (
+            {"activation": "attn.pattern", "layer": 9, "head": 8, "dest_pos": -1},
+            [("blocks.9.attn.hook_pattern", (8, -1))],
+        ),
+        (
+            {"activation": "attn.pattern", "layer": 9, "head": 8, "src_pos": 4},
+            [("blocks.9.attn.hook_pattern", (8, _EVERY_SLICE, 4))],
+        ),
+        (
+            {"activation": "attn.pattern", "layer": 9, "head": 8, "dest_pos": [4, 5], "src_pos": [1, 4]},
+            [("blocks.9.attn.hook_pattern", (8, slice(4, 6), [1, 4]))],
+        ),
+        # Three listed axes write the block of every combination of their values.
+        (
+            {
+                "activation": "attn.pattern",
+                "layer": 9,
+                "head": [8, 9],
+                "dest_pos": [0, 1, 2, 3, 4, 5],
+                "src_pos": [1, 4],
+            },
+            [("blocks.9.attn.hook_pattern", (slice(8, 10), _EVERY_SLICE, [1, 4]))],
+        ),
+        # An axis read whole between two listed ones is written whole within their block.
+        (
+            {"activation": "attn.pattern", "layer": 9, "head": [8, 9], "src_pos": [1, 4]},
+            [("blocks.9.attn.hook_pattern", (slice(8, 10), _EVERY_SLICE, [1, 4]))],
+        ),
+        (
+            {"activation": "attn.z", "layer": 9, "position": [-2, -1], "neuron": [0, 11]},
+            [("blocks.9.attn.hook_z", (slice(-2, None), _EVERY_SLICE, [0, 11]))],
+        ),
     ],
     ids=lambda value: value["activation"] if isinstance(value, dict) else "",
 )
@@ -1110,6 +1151,117 @@ def test_every_row_patches_the_heads_it_names_together(model: Model, config_from
         assert row["logit_diff"] == pytest.approx(float(expected), abs=1e-6), heads
     # Every set of heads scores apart from every other, so a row that patched another set would show.
     assert result["logit_diff"].nunique() == len(result)
+
+
+def _head_pattern_config(config_from_yaml) -> PatchingConfig:
+    """Layer 9's head 8, one entry of its attention pattern per row, read from a config file."""
+    element = {
+        "activation": "attn.pattern",
+        "location": ["layer", "head", "dest_pos", "src_pos"],
+        "filter": [{"layer": 9, "head": 8}],
+        "type": "replace",
+    }
+    return config_from_yaml(
+        PatchingConfig,
+        "pattern_entries",
+        {
+            "metric": {"logit_diff": ["indirect_effect"]},
+            "method": "exact",
+            "patch": [{"source": element, "target": element}],
+        },
+    )
+
+
+def test_every_entry_of_a_heads_pattern_is_patched_on_its_own(model: Model, config_from_yaml) -> None:
+    result = _collect(model, _head_pattern_config(config_from_yaml)).result
+
+    positions = model.to_tokens(TARGET_PROMPT).shape[1]
+    assert len(result) == positions * positions
+    unpatched = float(_unpatched_metrics(model, TARGET_PROMPT)[PatchingMetric.LOGIT_DIFF])
+    for _, row in result.iterrows():
+        query, key = row["target_dest_pos"], row["target_src_pos"]
+        effect = row["indirect_effect_logit_diff"]
+        if key > query:
+            # The causal mask zeroes the entry in both runs, so the patch writes back what was there.
+            assert effect == 0.0, (query, key)
+        else:
+            patched = _expected_logit_diff(
+                model, _copying_hooks(model, [("blocks.9.attn.hook_pattern", (8, query, key))])
+            )
+            assert effect == pytest.approx(float(patched) - unpatched, abs=1e-6), (query, key)
+    # An entry the mask leaves open does move the metric, so had dest_pos and src_pos been swapped, a row
+    # above the diagonal would have scored too.
+    assert (result.loc[result["target_src_pos"] <= result["target_dest_pos"], "indirect_effect_logit_diff"] != 0).any()
+
+
+def test_attribution_scores_a_block_of_the_pattern_as_the_sum_of_its_entries(model: Model) -> None:
+    # gradient · change is linear in the change, so a block's estimate is the sum over all four of its
+    # entries, while reading the lists as pairs would take only (4, 1) and (5, 4).
+    entries = [{"dest_pos": query, "src_pos": key} for query in (4, 5) for key in (1, 4)]
+    element = PatchingElementConfig(
+        activation=ModelLayerLocation.ATTENTION_PATTERN,
+        coordinates=[
+            {"layer": 9, "head": 8, "dest_pos": [4, 5], "src_pos": [1, 4]},
+            *({"layer": 9, "head": 8, **entry} for entry in entries),
+        ],
+        type=PatchingType.REPLACE,
+    )
+    config = PatchingConfig(
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]},
+        method=PatchingMethodConfig(type="attribution"),
+        patch=[SinglePatchingConfig(source=element, target=element)],
+    )
+
+    block, *singles = _run(model, config).tolist()
+
+    assert block == pytest.approx(sum(singles), rel=1e-4)
+    assert singles[1] + singles[2] != pytest.approx(0.0, abs=1e-6)
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float64])
+@pytest.mark.parametrize(
+    ("target", "writes"),
+    [
+        (
+            {"activation": "mlp.out", "location": ["layer"]},
+            [("blocks.0.hook_mlp_out", ()), ("blocks.1.hook_mlp_out", ()), ("blocks.2.hook_mlp_out", ())],
+        ),
+        (
+            {"coordinates": [{"activation": "attn.z", "layer": 1, "position": -1, "head": [0, 1], "neuron": [0, 3]}]},
+            [("blocks.1.attn.hook_z", (-1, slice(0, 2), [0, 3]))],
+        ),
+    ],
+    ids=["whole_activation", "two_listed_axes"],
+)
+def test_a_constant_is_written_in_the_models_own_dtype(backend: str, dtype: torch.dtype, target: dict, writes) -> None:
+    # value_replace's constant is float32 whatever the model holds, so the write has to cast it.
+    model = build_small_model(backend, dtype=dtype)
+    config = PatchingConfig(
+        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.INDIRECT_EFFECT]},
+        method=EXACT,
+        patch=[
+            SinglePatchingConfig(
+                source=PatchingElementConfig(type=PatchingType.VALUE_REPLACE, value=1.0),
+                target=PatchingElementConfig(**target, type=PatchingType.REPLACE),
+            )
+        ],
+    )
+    answers = (model.to_single_token(" Paris"), model.to_single_token(" Madrid"))
+
+    effects = _run(model, config, correct_token=" Paris", distractor_token=" Madrid").tolist()
+
+    def constant(at: tuple):
+        def write(activation: torch.Tensor, hook) -> torch.Tensor:
+            activation[(slice(None), *at)] = 1.0
+            return activation
+
+        return write
+
+    unpatched = float(_expected_logit_diff(model, [], answers))
+    for effect, (name, at) in zip(effects, writes, strict=True):
+        expected = float(_expected_logit_diff(model, [(name, constant(at))], answers)) - unpatched
+        assert effect == pytest.approx(expected, abs=1e-6), name
+        assert effect != 0.0, name
 
 
 # --------------------------------------------------------------------------------------------------
@@ -2415,6 +2567,18 @@ def test_a_sweep_written_into_one_location_is_labelled_by_the_source_it_sweeps(m
     tokens = model.to_str_tokens(SOURCE_PROMPT)
     assert figure.ticks("xaxis") == [f'{position}: "{escape(token)}"' for position, token in enumerate(tokens)]
     assert figure.ticks("yaxis") == ["0", "1", "2"]
+
+
+def test_a_heads_pattern_is_drawn_with_key_positions_across_and_query_positions_up(
+    model: Model, config_from_yaml, tmp_path: Path
+) -> None:
+    figure = _draw(model, _head_pattern_config(config_from_yaml), tmp_path / "pattern_entries")
+
+    # The layout a pattern is drawn in: each query's row of weights runs across, one row per query.
+    assert figure.kind == "heatmap"
+    assert (figure.axis_title("xaxis"), figure.axis_title("yaxis")) == ("src_pos", "dest_pos")
+    tokens = [f'{position}: "{escape(token)}"' for position, token in enumerate(model.to_str_tokens(TARGET_PROMPT))]
+    assert figure.ticks("xaxis") == figure.ticks("yaxis") == tokens
 
 
 def test_a_single_coordinate_run_still_writes_a_page(model: Model, tmp_path: Path) -> None:

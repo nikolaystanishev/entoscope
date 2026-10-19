@@ -34,12 +34,11 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
             deltas: dict[PatchingMetric, torch.Tensor] = {}
             for index in group:
                 name = index.target.transformer_activation()
-                slices = index.target.slices()
-                clean = patching_input.target_cache[name][slices]
+                clean = index.target.read_slices(patching_input.target_cache[name])
                 replacement = SourceStrategy.get(index.source.config.type).extract(index.source, patching_input)
                 change = replacement.to(clean) - clean
                 for metric in self.config.metric:
-                    contribution = (gradients[metric][name][slices] * change).sum()
+                    contribution = (index.target.read_slices(gradients[metric][name]) * change).sum()
                     deltas[metric] = deltas[metric] + contribution if metric in deltas else contribution
 
             yield RowResult(output, self._report(patching_input, deltas))

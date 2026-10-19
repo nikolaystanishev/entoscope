@@ -83,10 +83,6 @@ class LastPooling(AbstractPooling):
         return activation.select(dim, -1)
 
 
-def _matches(axis: ModelAxis | str, location: ModelAxis) -> bool:
-    return axis == location or (location is ModelAxis.POSITION and axis in {"dest_pos", "src_pos"})
-
-
 def pool(
     activation: Float[torch.Tensor, "..."],
     axes: Sequence[ModelAxis | str],
@@ -111,10 +107,9 @@ def pool(
 
     dim = 0
     for axis in axes:
-        location = next((location for location in config if _matches(axis, location)), None)
-        if location is None:
-            dim += 1
+        if axis in config:
+            activation = AbstractPooling.get(config[axis]).reduce(activation, dim)
         else:
-            activation = AbstractPooling.get(config[location]).reduce(activation, dim)
+            dim += 1
 
     return activation.flatten()

@@ -91,7 +91,7 @@ in `self.method_config`.
 
 - **Lens.** One instance reads every row of the run, so a lens that handles several kinds of
   activation tells them apart with `index.activation()`. `extract(lens_input, index)` returns the
-  tensor a row names; the logit lens's is `lens_input.cache[index.transformer_activation()][index.slices()]`.
+  tensor a row names; the logit lens's is `index.read_slices(lens_input.cache[index.transformer_activation()])`.
   `project(tensor, index)` maps it to the row's logits, a single vector over the vocabulary. Extending
   `LogitLens`, as above, keeps its read-out of residual-stream, MLP and attention head activations.
   A lens that reads only the weights sets `reads_activations = False`: it then takes no prompt and

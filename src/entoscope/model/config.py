@@ -18,9 +18,10 @@ from entoscope.util.data import read_fields
 class ModelAxis(StrEnum):
     """The axes an index row names its location on, and the row's activation.
 
-    ``layer``, ``head``, ``neuron`` and ``position`` are axes a locator can enumerate. ``activation`` is
-    not an axis but a key of every row: it is set once on the locator (or on each coordinate) and stamped
-    on every row.
+    ``layer``, ``head``, ``neuron`` and ``position`` are axes a locator can enumerate, and so are
+    ``dest_pos`` and ``src_pos``, the query and the key position of ``attn.pattern`` (the names
+    ``transformer_lens``'s patching gives them). ``activation`` is not an axis but a key of every row: it
+    is set once on the locator (or on each coordinate) and stamped on every row.
     """
 
     ACTIVATION = "activation"
@@ -28,6 +29,12 @@ class ModelAxis(StrEnum):
     HEAD = "head"
     NEURON = "neuron"
     POSITION = "position"
+    DESTINATION_POSITION = "dest_pos"
+    SOURCE_POSITION = "src_pos"
+
+
+# The axes counted in the prompt's tokens, which the prompt's length sizes.
+POSITION_AXES: tuple[ModelAxis, ...] = (ModelAxis.POSITION, ModelAxis.DESTINATION_POSITION, ModelAxis.SOURCE_POSITION)
 
 
 class ModelLayerLocation(StrEnum):
@@ -44,7 +51,7 @@ class ModelLayerLocation(StrEnum):
     ATTENTION_Q = "attn.q"  # [batch, position, head, neuron]
     ATTENTION_K = "attn.k"  # [batch, position, head, neuron]
     ATTENTION_V = "attn.v"  # [batch, position, head, neuron]
-    ATTENTION_PATTERN = "attn.pattern"  # [batch, head, dest_position /query/, src_position /key/]
+    ATTENTION_PATTERN = "attn.pattern"  # [batch, head, dest_pos /query/, src_pos /key/]
     ATTENTION_Z = "attn.z"  # [batch, position, head, neuron]
     ATTENTION_OUT = "attn.out"  # [batch, position, neuron]
     MLP_PRE = "mlp.pre"  # [batch, position, neuron]
@@ -89,7 +96,7 @@ MODEL_LOCATION_MAPPER: dict[ModelAxis, Callable] = {
             ModelLayerLocation.MLP_OUT: model.cfg.d_model,
         }[layer_location]
     ),
-    ModelAxis.POSITION: lambda _1, _2, prompt_size: prompt_size,
+    **dict.fromkeys(POSITION_AXES, lambda _1, _2, prompt_size: prompt_size),
 }
 
 
@@ -400,8 +407,8 @@ class Combination:
     """Expands each row into one row per combination of the values it holds on each listed axis.
 
     Combinations run from one value up to ``max_elements``, so it follows a ``group``: after
-    ``group: {head: all}`` over heads 6, 9 and 10, ``max_elements: 2`` gives the rows ``(6,)``,
-    ``(9,)``, ``(10,)``, ``(6, 9)``, ``(6, 10)`` and ``(9, 10)``.
+    ``group: {head: all}`` over heads 6, 9 and 10, ``max_elements: 2`` gives the rows ``[6]``,
+    ``[9]``, ``[10]``, ``[6, 9]``, ``[6, 10]`` and ``[9, 10]``.
 
     Attributes:
         location: The axes to expand.
@@ -428,7 +435,7 @@ class Combination:
                 value_combinations = range_combinations(values, 1, min(len(values), self.max_elements))
                 for el in value_combinations:
                     new_row = deepcopy(row)
-                    new_row[location] = el
+                    new_row[location] = list(el)
                     new_rows.append(new_row)
             if len(new_rows) > 0:
                 index_df = pd.DataFrame(new_rows)
@@ -653,6 +660,17 @@ class ModelLocatorConfig:
                 )
         _check_axes(self.activation, {*self.location, *self.incremental})
 
+    def activations(self) -> set[ModelLayerLocation]:
+        """Name the activations the locator's rows read.
+
+        Returns:
+            The locator's ``activation``, or the one each coordinate names, empty when none is named.
+        """
+        if self.coordinates is None:
+            return set() if self.activation is None else {self.activation}
+        named = (coordinate.get(ModelAxis.ACTIVATION, self.activation) for coordinate in self.coordinates)
+        return {activation for activation in named if activation is not None}
+
     @property
     def _transforms(self) -> list[IndexTransform]:
         return [self.group, self.incremental, self.combination]
@@ -660,9 +678,10 @@ class ModelLocatorConfig:
     def parse(self, model: Model, n_positions: int | None) -> ModelLocationIndex:
         """Resolve the locator into an index for a prompt of ``n_positions`` tokens.
 
-        When the prompt length varies, as when probing prompts of unequal length, positions stay
-        symbolic: a non-negative one counts from the start and a negative one from each prompt's own
-        end, which torch resolves at slice time. Other axes never depend on the prompt length.
+        When the prompt length varies, as when probing prompts of unequal length, the values of every
+        position axis stay symbolic: a non-negative one counts from the start and a negative one from
+        each prompt's own end, which torch resolves at slice time. Other axes never depend on the prompt
+        length.
 
         Args:
             model: The model the axes are sized by.
@@ -672,8 +691,8 @@ class ModelLocatorConfig:
             The index, one row per location.
 
         Raises:
-            ValueError: If ``n_positions`` is ``None`` and the locator would enumerate every position, or
-                a filter or a coordinate is not valid.
+            ValueError: If ``n_positions`` is ``None`` and the locator would enumerate every value of a
+                position axis, or a filter or a coordinate is not valid.
         """
         if self.coordinates is not None:
             index_df = self.coordinates.to_df(model, n_positions, self.activation)
