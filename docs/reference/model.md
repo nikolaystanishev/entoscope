@@ -19,6 +19,12 @@ The index classes are imported from the module defining them, `entoscope.model.i
 ```
 
 ```{eval-rst}
+.. automodule:: entoscope.model.activation
+   :members:
+   :show-inheritance:
+```
+
+```{eval-rst}
 .. automodule:: entoscope.model.index
    :members:
    :show-inheritance:

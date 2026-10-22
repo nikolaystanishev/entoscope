@@ -429,6 +429,108 @@ def test_multi_config_patching_mlp_mhsa_and_pattern(model: Model) -> None:
 
 
 # --------------------------------------------------------------------------------------------------
+# A sublayer's own input and output - what it reads after its norm, what it writes before its post-norm
+# --------------------------------------------------------------------------------------------------
+_SUBLAYER_LAYER = 5
+
+
+def _layer_element(activation: ModelLayerLocation, layer: int) -> PatchingElementConfig:
+    """An activation of one layer, at every position."""
+    return PatchingElementConfig(
+        activation=activation,
+        location=[ModelAxis.LAYER],
+        filter=Filter(inclusion_terms=[{ModelAxis.LAYER: layer}]),
+        type=PatchingType.REPLACE,
+    )
+
+
+@pytest.mark.parametrize(
+    ("sublayer_input", "sublayer_output", "stream"),
+    [
+        (ModelLayerLocation.ATTENTION_IN, "hook_attn_out", ModelLayerLocation.RESIDUAL_PRE),
+        (ModelLayerLocation.MLP_IN, "hook_mlp_out", ModelLayerLocation.RESIDUAL_MID),
+    ],
+)
+def test_replacing_a_sublayers_input_everywhere_replaces_its_output_alone(
+    backend: str, model: Model, sublayer_input: ModelLayerLocation, sublayer_output: str, stream: ModelLayerLocation
+) -> None:
+    if backend == "hooked":
+        pytest.skip("a HookedTransformer has no hooks on its sublayers themselves")
+
+    result = _run(model, _patch_config(_layer_element(sublayer_input, _SUBLAYER_LAYER)))
+
+    # A sublayer computes its output from its input alone, so the source's input at every position
+    # brings the source's output with it, while the skip connection carries the target's residual stream on.
+    output = f"blocks.{_SUBLAYER_LAYER}.{sublayer_output}"
+    assert torch.allclose(
+        result.squeeze(), _expected_logit_diff(model, _copying_hooks(model, [(output, ())])), atol=1e-5
+    )
+    # The residual stream the input is normalized from feeds the skip connection too.
+    replaced_stream = _run(model, _patch_config(_layer_element(stream, _SUBLAYER_LAYER)))
+    assert not torch.allclose(result.squeeze(), replaced_stream.squeeze(), atol=1e-3)
+
+
+def _pre_norm_output_written_over_output(
+    model: Model, pre_norm_output: ModelLayerLocation, output: ModelLayerLocation, layer: int
+) -> torch.Tensor:
+    """The target run with a sublayer's output replaced by its own output before the post-norm."""
+    config = PatchingConfig(
+        metric=_metrics({PatchingMetric.LOGIT_DIFF: MetricComparison.ABSOLUTE}),
+        method=EXACT,
+        patch=[
+            SinglePatchingConfig(source=_layer_element(pre_norm_output, layer), target=_layer_element(output, layer))
+        ],
+    )
+    return _run(model, config, source=TARGET_PROMPT).squeeze()
+
+
+_PRE_NORM_OUTPUTS = [
+    (ModelLayerLocation.ATTENTION_OUT_PRE_NORM, ModelLayerLocation.ATTENTION_OUT),
+    (ModelLayerLocation.MLP_OUT_PRE_NORM, ModelLayerLocation.MLP_OUT),
+]
+
+
+@pytest.mark.parametrize(("pre_norm_output", "output"), _PRE_NORM_OUTPUTS)
+def test_without_a_post_norm_a_sublayers_output_is_its_pre_norm_output(
+    backend: str, model: Model, pre_norm_output: ModelLayerLocation, output: ModelLayerLocation
+) -> None:
+    if backend == "hooked":
+        pytest.skip("a HookedTransformer has no hooks on its sublayers themselves")
+
+    # GPT-2 adds each sublayer's output to the residual stream as it is, so writing one over the other is no patch.
+    result = _pre_norm_output_written_over_output(model, pre_norm_output, output, _SUBLAYER_LAYER)
+
+    assert torch.allclose(result, _expected_logit_diff(model, []), atol=1e-5)
+
+
+@pytest.mark.parametrize(
+    ("pre_norm_output", "output", "pre_norm_hook", "output_hook"),
+    [
+        (*_PRE_NORM_OUTPUTS[0], "attn.hook_out", "hook_attn_out"),
+        (*_PRE_NORM_OUTPUTS[1], "mlp.hook_out", "hook_mlp_out"),
+    ],
+)
+def test_a_post_norm_sits_between_a_sublayers_pre_norm_output_and_its_output(
+    post_norm_model: Model,
+    pre_norm_output: ModelLayerLocation,
+    output: ModelLayerLocation,
+    pre_norm_hook: str,
+    output_hook: str,
+) -> None:
+    layer = 1
+    result = _pre_norm_output_written_over_output(post_norm_model, pre_norm_output, output, layer)
+
+    before, after = f"blocks.{layer}.{pre_norm_hook}", f"blocks.{layer}.{output_hook}"
+    with torch.no_grad():
+        _, cache = post_norm_model.run_with_cache(post_norm_model.to_tokens(TARGET_PROMPT), names_filter=[before])
+    skipping_the_norm = [(after, lambda activation, hook: cache[before])]
+
+    assert torch.allclose(result, _expected_logit_diff(post_norm_model, skipping_the_norm), atol=1e-5)
+    # Skipping the norm is a patch: the residual stream receives the output before it, not after.
+    assert not torch.allclose(result, _expected_logit_diff(post_norm_model, []), atol=1e-4)
+
+
+# --------------------------------------------------------------------------------------------------
 # The metrics - every scalar the formulas name, read off the patched run's final position
 # --------------------------------------------------------------------------------------------------
 def _no_op_element() -> PatchingElementConfig:

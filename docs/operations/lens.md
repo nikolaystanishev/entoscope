@@ -77,7 +77,9 @@ stream, `ln_final(x) @ W_U + b_U`. What `x` is depends on the activation:
 Queries and keys are read differently, against the embedding through the other side of their head. A
 query is mapped through `W_K` and a key through `W_Q`, then scored against `W_E` and divided by the
 attention scale. A query's tokens are those whose embeddings, read as keys, it attends to most, and
-the other way around for a key. `attn.pattern` cannot be read out onto the vocabulary.
+the other way around for a key. `attn.pattern` cannot be read out onto the vocabulary, and neither can
+a sublayer's input (`attn.in`, `mlp.in`) or its output before a post-norm (`attn.out_pre_norm`,
+`mlp.out_pre_norm`), since none of them is in the residual stream.
 
 On a model with grouped-query attention, `attn.k` and `attn.v` have fewer heads than the weights that
 would read them out, and the lens rejects them.

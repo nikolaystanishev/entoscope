@@ -8,11 +8,7 @@ from typing import Generic, TypeVar
 import pandas as pd
 import torch
 
-try:
-    from transformer_lens.utilities import get_act_name
-except ImportError:  # transformer-lens 2.x (Intel macOS fallback)
-    from transformer_lens.utils import get_act_name
-
+from entoscope.model.activation import hook_name
 from entoscope.model.config import (
     POSITION_AXES,
     ModelAxis,
@@ -23,23 +19,6 @@ from entoscope.model.config import (
 )
 from entoscope.model.slicer import ActivationSlicer
 from entoscope.util.collections import broadcast_length, dataframe_to_list, zip_broadcast
-
-TRANSFORMER_ACT_NAME: dict[ModelLayerLocation, str] = {
-    ModelLayerLocation.EMBEDDING: "embed",
-    ModelLayerLocation.RESIDUAL_PRE: "resid_pre",
-    ModelLayerLocation.RESIDUAL_MID: "resid_mid",
-    ModelLayerLocation.RESIDUAL_POST: "resid_post",
-    ModelLayerLocation.ATTENTION_Q: "q",
-    ModelLayerLocation.ATTENTION_K: "k",
-    ModelLayerLocation.ATTENTION_V: "v",
-    ModelLayerLocation.ATTENTION_PATTERN: "pattern",
-    ModelLayerLocation.ATTENTION_Z: "z",
-    ModelLayerLocation.ATTENTION_OUT: "attn_out",
-    ModelLayerLocation.MLP_PRE: "pre",
-    ModelLayerLocation.MLP_PRE_LINEAR: "pre_linear",
-    ModelLayerLocation.MLP_POST: "post",
-    ModelLayerLocation.MLP_OUT: "mlp_out",
-}
 
 T = TypeVar("T", bound="ModelLocatorConfig")
 
@@ -198,7 +177,7 @@ class IndexElement(Generic[T]):
         Returns:
             The ``transformer_lens`` hook name, such as ``blocks.3.hook_resid_post``.
         """
-        return get_act_name(TRANSFORMER_ACT_NAME[self.activation()], layer=self.layer())
+        return hook_name(self.activation(), self.layer())
 
     def layer(self) -> int | None:
         """Read the row's layer.

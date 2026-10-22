@@ -6,6 +6,8 @@ model's ``cfg`` and the prompts' token counts, but runs no forward pass. A promp
 is a probing run's, so the symbolic positions are read off a probe's plan.
 """
 
+import re
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -151,6 +153,35 @@ def test_a_location_enumerates_the_model_dimension_it_names(
     index_df = planned(model, {"activation": activation, "location": [location]})
 
     assert values_of(index_df, ModelAxis(location)) == list(range(axis_size(model)))
+
+
+SUBLAYER_HOOKS = ["attn.in", "attn.out_pre_norm", "mlp.in", "mlp.out_pre_norm"]
+
+
+@pytest.mark.parametrize("activation", SUBLAYER_HOOKS)
+def test_a_sublayers_own_hook_is_located_along_the_residual_stream(backend, small_model, planned, activation):
+    if backend == "hooked":
+        pytest.skip("a HookedTransformer has no hooks on its sublayers themselves")
+
+    index_df = planned(small_model, {"activation": activation, "location": ["layer", "position", "neuron"]})
+
+    assert coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.POSITION, ModelAxis.NEURON) == [
+        (layer, position, neuron)
+        for layer in range(small_model.cfg.n_layers)
+        for position in range(n_positions(small_model))
+        for neuron in range(small_model.cfg.d_model)
+    ]
+
+
+@pytest.mark.parametrize("activation", SUBLAYER_HOOKS)
+def test_a_hooked_transformer_refuses_a_sublayers_own_hook(backend, small_model, planned, activation):
+    if backend != "hooked":
+        pytest.skip("only a HookedTransformer lacks hooks on its sublayers themselves")
+
+    # Every coordinate's activation is checked, not only the first's.
+    locator = {"coordinates": [{"activation": "resid.post", "layer": 0}, {"activation": activation, "layer": 0}]}
+    with pytest.raises(ValueError, match=re.escape(f"'{activation}' is a hook of a TransformerBridge's sublayer")):
+        planned(small_model, locator)
 
 
 def test_locations_form_a_cartesian_product(small_model, planned):
@@ -595,6 +626,7 @@ def test_a_position_grid_that_depends_on_the_prompt_length_raises(small_model, p
         ({"location": ["layer", "dest_pos"]}, "'resid.post' has no 'dest_pos'"),
         ({"activation": "attn.z", "location": ["layer", "src_pos"]}, "'attn.z' has no 'src_pos'"),
         ({"location": ["layer", "head"]}, "'resid.post' has no 'head'"),
+        ({"activation": "attn.in", "location": ["layer", "head"]}, "'attn.in' has no 'head'"),
         ({"location": ["layer"], "incremental": {"head": [0]}}, "'resid.post' has no 'head'"),
         ({"activation": "embed", "location": ["layer", "position"]}, "'embed' has no 'layer'"),
         (

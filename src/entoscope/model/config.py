@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from pandas._typing import Axes
 
-from entoscope.model.base import Model
+from entoscope.model.base import Model, is_bridge
 from entoscope.util.collections import range_combinations
 
 
@@ -41,22 +41,41 @@ class ModelLayerLocation(StrEnum):
 
     Each maps onto a ``transformer_lens`` hook through ``TRANSFORMER_ACT_NAME``, and the comment beside a
     member is its tensor's axes. ``embed`` is not inside a block, so a locator reading it names no layer.
+    ``attn.in`` and ``mlp.in`` are what the sublayer reads, after the norm before it, and ``attn.out`` and
+    ``mlp.out`` what it adds to the residual stream, after the norm following it on a model that has one
+    (Gemma 2 and 3). ``attn.out_pre_norm`` and ``mlp.out_pre_norm`` are the sublayer's output before that norm,
+    the same tensor as ``attn.out`` and ``mlp.out`` on any other model. Those four are hooks of a
+    ``TransformerBridge``'s sublayers, which a ``HookedTransformer`` does not have.
     """
 
     EMBEDDING = "embed"  # [batch, position, neuron]
     RESIDUAL_PRE = "resid.pre"  # [batch, position, neuron]
     RESIDUAL_MID = "resid.mid"  # [batch, position, neuron]
     RESIDUAL_POST = "resid.post"  # [batch, position, neuron]
+    ATTENTION_IN = "attn.in"  # [batch, position, neuron]
     ATTENTION_Q = "attn.q"  # [batch, position, head, neuron]
     ATTENTION_K = "attn.k"  # [batch, position, head, neuron]
     ATTENTION_V = "attn.v"  # [batch, position, head, neuron]
     ATTENTION_PATTERN = "attn.pattern"  # [batch, head, dest_pos /query/, src_pos /key/]
     ATTENTION_Z = "attn.z"  # [batch, position, head, neuron]
+    ATTENTION_OUT_PRE_NORM = "attn.out_pre_norm"  # [batch, position, neuron]
     ATTENTION_OUT = "attn.out"  # [batch, position, neuron]
+    MLP_IN = "mlp.in"  # [batch, position, neuron]
     MLP_PRE = "mlp.pre"  # [batch, position, neuron]
     MLP_PRE_LINEAR = "mlp.pre_linear"  # [batch, position, neuron]
     MLP_POST = "mlp.post"  # [batch, position, neuron]
+    MLP_OUT_PRE_NORM = "mlp.out_pre_norm"  # [batch, position, neuron]
     MLP_OUT = "mlp.out"  # [batch, position, neuron]
+
+
+BRIDGE_ONLY_LOCATIONS = frozenset(
+    {
+        ModelLayerLocation.ATTENTION_IN,
+        ModelLayerLocation.ATTENTION_OUT_PRE_NORM,
+        ModelLayerLocation.MLP_IN,
+        ModelLayerLocation.MLP_OUT_PRE_NORM,
+    }
+)
 
 
 @dataclass
@@ -83,15 +102,19 @@ MODEL_LOCATION_MAPPER: dict[ModelAxis, Callable] = {
             ModelLayerLocation.RESIDUAL_PRE: model.cfg.d_model,
             ModelLayerLocation.RESIDUAL_MID: model.cfg.d_model,
             ModelLayerLocation.RESIDUAL_POST: model.cfg.d_model,
+            ModelLayerLocation.ATTENTION_IN: model.cfg.d_model,
             ModelLayerLocation.ATTENTION_Q: model.cfg.d_head,
             ModelLayerLocation.ATTENTION_K: model.cfg.d_head,
             ModelLayerLocation.ATTENTION_V: model.cfg.d_head,
             ModelLayerLocation.ATTENTION_PATTERN: 0,
             ModelLayerLocation.ATTENTION_Z: model.cfg.d_head,
+            ModelLayerLocation.ATTENTION_OUT_PRE_NORM: model.cfg.d_model,
             ModelLayerLocation.ATTENTION_OUT: model.cfg.d_model,
+            ModelLayerLocation.MLP_IN: model.cfg.d_model,
             ModelLayerLocation.MLP_PRE: model.cfg.d_mlp,
             ModelLayerLocation.MLP_PRE_LINEAR: model.cfg.d_mlp,
             ModelLayerLocation.MLP_POST: model.cfg.d_mlp,
+            ModelLayerLocation.MLP_OUT_PRE_NORM: model.cfg.d_model,
             ModelLayerLocation.MLP_OUT: model.cfg.d_model,
         }[layer_location]
     ),
@@ -687,9 +710,15 @@ class ModelLocatorConfig:
             The index, one row per location.
 
         Raises:
-            ValueError: If ``n_positions`` is ``None`` and the locator would enumerate every value of a
-                position axis, or a filter or a coordinate is not valid.
+            ValueError: If the model is a ``HookedTransformer`` and the locator reads one of
+                ``BRIDGE_ONLY_LOCATIONS``, ``n_positions`` is ``None`` and the locator would enumerate every
+                value of a position axis, or a filter or a coordinate is not valid.
         """
+        if not is_bridge(model) and (unsupported := BRIDGE_ONLY_LOCATIONS & self.activations()):
+            raise ValueError(
+                f"'{min(unsupported).value}' is a hook of a TransformerBridge's sublayer, which a HookedTransformer "
+                "does not have; load the model as a TransformerBridge to read it"
+            )
         if self.coordinates is not None:
             index_df = self.coordinates.to_df(model, n_positions, self.activation)
         else:

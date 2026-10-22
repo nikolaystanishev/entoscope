@@ -9,6 +9,8 @@ import torch
 import yaml
 from transformers import (
     AutoTokenizer,
+    Gemma2Config,
+    Gemma2ForCausalLM,
     GPT2Config,
     GPT2LMHeadModel,
     GPTNeoXConfig,
@@ -189,6 +191,18 @@ parallel_model = _backend_fixture(
     ),
     lambda: build_tiny_model(parallel_attn_mlp=True),
 )
+
+
+@pytest.fixture(scope="session")
+def post_norm_model(backend):
+    """A Gemma 2, which norms each sublayer's output before adding it to the residual stream.
+
+    Only a bridge hooks the output before that norm, so a test taking it is skipped on a ``HookedTransformer``.
+    """
+    if backend == "hooked":
+        pytest.skip("a HookedTransformer has no hook between a sublayer and the norm after it")
+    hf_model = _tiny_hf(Gemma2ForCausalLM, Gemma2Config, head_dim=TINY["d_head"], num_key_value_heads=TINY["n_heads"])
+    return build_tiny_bridge(hf_model, compatible=backend == "compat")
 
 
 def forbid_model_runs(monkeypatch, model) -> None:

@@ -41,15 +41,19 @@ print(rows(locator))  # 72 rows: 12 layers x 6 positions
 | `resid.pre` | `RESIDUAL_PRE` | batch, position, neuron | `blocks.0.hook_resid_pre` | `d_model` |
 | `resid.mid` | `RESIDUAL_MID` | batch, position, neuron | `blocks.0.hook_resid_mid` | `d_model` |
 | `resid.post` | `RESIDUAL_POST` | batch, position, neuron | `blocks.0.hook_resid_post` | `d_model` |
+| `attn.in` | `ATTENTION_IN` | batch, position, neuron | `blocks.0.attn.hook_in` | `d_model` |
 | `attn.q` | `ATTENTION_Q` | batch, position, head, neuron | `blocks.0.attn.hook_q` | `d_head` |
 | `attn.k` | `ATTENTION_K` | batch, position, head, neuron | `blocks.0.attn.hook_k` | `d_head` |
 | `attn.v` | `ATTENTION_V` | batch, position, head, neuron | `blocks.0.attn.hook_v` | `d_head` |
 | `attn.pattern` | `ATTENTION_PATTERN` | batch, head, dest_pos, src_pos | `blocks.0.attn.hook_pattern` | none |
 | `attn.z` | `ATTENTION_Z` | batch, position, head, neuron | `blocks.0.attn.hook_z` | `d_head` |
+| `attn.out_pre_norm` | `ATTENTION_OUT_PRE_NORM` | batch, position, neuron | `blocks.0.attn.hook_out` | `d_model` |
 | `attn.out` | `ATTENTION_OUT` | batch, position, neuron | `blocks.0.hook_attn_out` | `d_model` |
+| `mlp.in` | `MLP_IN` | batch, position, neuron | `blocks.0.mlp.hook_in` | `d_model` |
 | `mlp.pre` | `MLP_PRE` | batch, position, neuron | `blocks.0.mlp.hook_pre` | `d_mlp` |
 | `mlp.pre_linear` | `MLP_PRE_LINEAR` | batch, position, neuron | `blocks.0.mlp.hook_pre_linear` | `d_mlp` |
 | `mlp.post` | `MLP_POST` | batch, position, neuron | `blocks.0.mlp.hook_post` | `d_mlp` |
+| `mlp.out_pre_norm` | `MLP_OUT_PRE_NORM` | batch, position, neuron | `blocks.0.mlp.hook_out` | `d_model` |
 | `mlp.out` | `MLP_OUT` | batch, position, neuron | `blocks.0.hook_mlp_out` | `d_model` |
 
 A few of them have quirks:
@@ -62,6 +66,14 @@ A few of them have quirks:
   same whole pattern on every row.
 - `attn.k` and `attn.v` have `n_key_value_heads` heads on a model with grouped-query attention.
 - `mlp.pre_linear` exists only on a gated MLP, where it is the linear branch and `mlp.pre` the gate.
+- `attn.in` and `mlp.in` are what the sublayer reads, after the norm before it. Patching one changes
+  that sublayer's input alone, not the residual stream it was normalized from.
+- `attn.out` and `mlp.out` are what the sublayer adds to the residual stream: after the norm that
+  follows it on a model with one (Gemma 2 and 3). `attn.out_pre_norm` and `mlp.out_pre_norm` are its
+  output before that norm, and the same tensor as `attn.out` and `mlp.out` on any other model.
+- `attn.in`, `mlp.in`, `attn.out_pre_norm` and `mlp.out_pre_norm` are hooks on a `TransformerBridge`'s
+  sublayers, which a `HookedTransformer` does not have. A locator reading one is refused on a
+  `HookedTransformer`.
 
 ## Axes
 

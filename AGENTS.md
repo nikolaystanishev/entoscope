@@ -106,8 +106,10 @@ lists. `transformer_activation()` maps entoscope's dotted `ModelLayerLocation` v
 activation is read through `IndexElement.activation()`, which returns the member.
 
 Adding a location or activation therefore means touching `ModelLayerLocation`,
-`MODEL_LOCATION_MAPPER`, `TRANSFORMER_ACT_NAME` and `ActivationSlicer` together; a new axis also goes
-in `AXIS_ORDER` (`operation/visualization.py`), and in `POSITION_AXES` when the prompt sizes it.
+`MODEL_LOCATION_MAPPER`, `TRANSFORMER_ACT_NAME` (`model/activation.py`, hooks relative to the block)
+and `ActivationSlicer` together, plus `BRIDGE_ONLY_LOCATIONS` for a hook a `HookedTransformer` lacks;
+a new axis also goes in `AXIS_ORDER` (`operation/visualization.py`), and in `POSITION_AXES` when the
+prompt sizes it.
 
 ### Models and backends
 
@@ -117,8 +119,7 @@ switches to `transformer_lens`'s folded-LayerNorm convention and both must keep 
 `HookedTransformer` is kept because Intel macOS is pinned to `transformer-lens` 2.x (see the
 platform markers in `pyproject.toml`), and transformer-lens 4 removed it, so either backend may be
 missing. **Any new `transformer_lens` import that moved or went away between 2.x, 3.x and 4.x needs
-the same `try/except ImportError` fallback** used in `model/index.py`,
-`model/base.py` and `tests/conftest.py`. Backend-dependent weight access is centralized in
+the same `try/except ImportError` fallback** used in `model/base.py` and `tests/conftest.py`. Backend-dependent weight access is centralized in
 `model/weight.py` and `model/unembed.py` - go through those rather than reading `model.W_*`
 directly. `model_weight` returns any `ModelWeight` with `d_model` last, whichever side of the residual
 stream it sits on, and `ACTIVATION_WEIGHT` maps an activation to its own weight; the lenses read every

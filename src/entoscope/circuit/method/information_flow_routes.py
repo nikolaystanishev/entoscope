@@ -33,8 +33,8 @@ from entoscope.circuit.config import CircuitMethodConfig
 from entoscope.circuit.method.circuit import AbstractCircuitMethod, PromptCircuit
 from entoscope.circuit.vendor import contributions
 from entoscope.model import Model
+from entoscope.model.activation import hook_name
 from entoscope.model.config import ModelLayerLocation
-from entoscope.model.index import TRANSFORMER_ACT_NAME, get_act_name
 from entoscope.model.token import str_token_labels
 from entoscope.model.weight import ModelWeight, model_weight
 
@@ -179,10 +179,10 @@ def decomposed_attn(
         Each head's contribution from each key position to each query position, in ``d_model`` space.
     """
     # ``hook_v`` already carries ``b_V`` on both backends, so the bias is not added again here.
-    hook_v = cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.ATTENTION_V], layer][batch_i]  # [key_pos, head_kv, d_head]
+    hook_v = cache[hook_name(ModelLayerLocation.ATTENTION_V, layer)][batch_i]  # [key_pos, head_kv, d_head]
     v = hook_v.repeat_interleave(model.cfg.n_heads // hook_v.shape[-2], dim=-2)  # [key_pos, head, d_head]
 
-    pattern = cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.ATTENTION_PATTERN], layer][batch_i].to(
+    pattern = cache[hook_name(ModelLayerLocation.ATTENTION_PATTERN, layer)][batch_i].to(
         v.dtype
     )  # [head, query_pos, key_pos]
 
@@ -232,8 +232,8 @@ def build_information_flow_graph(
 
     for layer in range(n_layers):
         c_attn, c_resid_attn = contributions.get_attention_contributions(
-            resid_pre=cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.RESIDUAL_PRE], layer],
-            resid_mid=cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.RESIDUAL_MID], layer],
+            resid_pre=cache[hook_name(ModelLayerLocation.RESIDUAL_PRE, layer)],
+            resid_mid=cache[hook_name(ModelLayerLocation.RESIDUAL_MID, layer)],
             decomposed_attn=decomposed_attn(model, cache, layer).unsqueeze(0),
         )
         c_attn, c_resid_attn = contributions.apply_threshold_and_renormalize(threshold, c_attn, c_resid_attn)
@@ -250,9 +250,9 @@ def build_information_flow_graph(
                 builder.add_residual_to_attn(layer, token_to, resid_weights[token_to])
 
         c_ffn, c_resid_ffn = contributions.get_mlp_contributions(
-            resid_mid=cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.RESIDUAL_MID], layer],
-            resid_post=cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.RESIDUAL_POST], layer],
-            mlp_out=cache[TRANSFORMER_ACT_NAME[ModelLayerLocation.MLP_OUT], layer],
+            resid_mid=cache[hook_name(ModelLayerLocation.RESIDUAL_MID, layer)],
+            resid_post=cache[hook_name(ModelLayerLocation.RESIDUAL_POST, layer)],
+            mlp_out=cache[hook_name(ModelLayerLocation.MLP_OUT, layer)],
         )
         # apply_threshold_and_renormalize renormalizes over the block dims via
         # ``c_blocks.sum(dim=range(resid_dims, block_dims))``. Here c_ffn and c_resid_ffn have equal
@@ -408,7 +408,5 @@ class InformationFlowRoutes(AbstractCircuitMethod[InformationFlowRoutesConfig]):
             The hook names, layer by layer.
         """
         return [
-            get_act_name(TRANSFORMER_ACT_NAME[activation], layer=layer)
-            for layer in range(self.model.cfg.n_layers)
-            for activation in READ_ACTIVATIONS
+            hook_name(activation, layer) for layer in range(self.model.cfg.n_layers) for activation in READ_ACTIVATIONS
         ]
