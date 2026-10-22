@@ -2,7 +2,6 @@
 
 import json
 import pickle
-from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -237,12 +236,6 @@ def test_pooling_defaults_to_nothing_pooled(config_from_yaml):
     raw = {key: value for key, value in PROBE_YAML.items() if key != "pool"}
 
     assert config_from_yaml(ProbeConfig, "my_probe", raw).pool == {}
-
-
-def test_a_probe_metric_that_is_not_known_raises():
-    # A config built in code is read as a file's is, so a metric nothing implements is refused as it is built.
-    with pytest.raises(ValueError, match="'mse' is not a valid ProbeMetric"):
-        replace(probe_config(), metric=["mse"])
 
 
 def test_both_classes_are_required(model):

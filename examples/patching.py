@@ -4,7 +4,8 @@
     uv run python examples/patching.py --config-id zero_ablation --source-prompt ""
     uv run python examples/patching.py --config-id attribution --dry-run
 
-Results land in runs/<config-id>/: open result.html in a browser.
+Results land in runs/<config-id>/: open result.html in a browser. Prompts of your own come with
+answers of their own, named for the metrics as --tokens correct:" Rome" distractor:" Madrid" other:" Paris".
 """
 
 from dataclasses import dataclass, field
@@ -25,8 +26,10 @@ class Config:
         default="The capital of France is", metadata={"help": "the run patched from; empty for none"}
     )
     target_prompt: str = field(default="The capital of Spain is", metadata={"help": "the run patched into"})
-    correct_token: str = field(default=" Paris", metadata={"help": "what the source prompt should predict"})
-    distractor_token: str = field(default=" Madrid", metadata={"help": "what the target prompt should predict"})
+    tokens: dict[str, str] = field(
+        default_factory=lambda: {"correct": " Paris", "distractor": " Madrid", "other": " Rome"},
+        metadata={"help": "the tokens the metrics read, as name:token, by the names the configs give them"},
+    )
     batch_size: int = field(default=1, metadata={"help": "patched runs per forward pass ('exact' only)"})
     model_name: str = "gpt2"
     output_dir: str = field(default="runs", metadata={"help": "results go into <output-dir>/<config-id>"})
@@ -45,8 +48,7 @@ def main(config: Config):
         # A source that writes a value or noise reads no source run, so it may go without a prompt.
         config.source_prompt or None,
         config.target_prompt,
-        correct_token=config.correct_token,
-        distractor_token=config.distractor_token,
+        tokens=config.tokens,
     )
     patcher = Patcher(model, batch_size=config.batch_size)
     save_dir = f"{config.output_dir}/{config.config_id}"

@@ -38,6 +38,7 @@ from entoscope.patching import (
     PatchingInput,
     PatchingMethodConfig,
     PatchingMetric,
+    PatchingMetricConfig,
     PatchingType,
     SinglePatchingConfig,
 )
@@ -84,6 +85,7 @@ __all__ = [
     "PatchingInput",
     "PatchingMethodConfig",
     "PatchingMetric",
+    "PatchingMetricConfig",
     "PatchingType",
     "PoolingType",
     "ProbeConfig",

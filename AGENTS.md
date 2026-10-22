@@ -48,10 +48,9 @@ follows the same four-part shape, and adding one means writing the same four pie
 - **Config** (`<op>/config.py`) - a `kw_only` dataclass extending `AbstractConfig`, validating in
   `__post_init__`. Loadable from YAML through `ConfigFactory[TheConfig](path).create("id")`, which
   deserializes strictly via `entoscope.util.data.from_dict` (unknown/missing keys and mistyped scalars
-  raise; a `from_config` classmethod on a field's type overrides the default handling). Every config,
-  method config and locator also reads its own fields through `from_dict` in `__post_init__`
-  (`read_fields`), so one built in code is read as its file twin is; a subclass's `__post_init__`
-  calls `super().__post_init__()` first. Its `method` field is
+  raise; a `from_config` classmethod on a field's type overrides the default handling). `from_dict` is
+  the only reader of raw shapes: a config built in code holds typed values, and code holding a raw
+  shape reads it through `from_dict`. Its `method` field is
   the method config, a `MethodConfig` whose `type` names the method - in YAML a mapping or just
   the type. `type` is `MethodConfig`'s own field and has no default, since one method config class
   serves several methods. It is saved as `config.json` beside the run's results,
@@ -166,12 +165,17 @@ Everything else dispatches by `match` on an enum in an `AbstractX.get(enum)` sta
 Patching composes three of those: `PatchingMetric` picks the scalar read off a run, `MetricComparison`
 picks what the patched run is reported against, and the config's `method` picks how the change in
 the metric is obtained. Patched run `i` applies row `i` of every patch element, and the result is laid
-out along the element with the most rows. The config's `metric` maps the first onto a list of the second, one result column
-per pair, so the comparison is chosen per metric and a metric may carry several. Every method yields
+out along the element with the most rows. The config's `metric` maps a name of its choosing (its key
+everywhere downstream; its result column is `<name>_metric`, which no column of the run's own can be)
+to a `PatchingMetricConfig`: the `PatchingMetric`, the
+tokens it reads by their names in the input's `tokens`, and its comparison. Tokens are resolved before
+any forward pass, so a plan refuses a bad one; the input builds every metric on their ids when first read
+(`patching_input.metrics`), and a metric holds nothing else: the input is passed with every run it reads,
+so it reads the unpatched runs off that. Every method yields
 the same primitive - the patched run's metric minus the unpatched target run's, one per *metric* -
 so adding one means implementing `AbstractPatchingMethod.scores` (and `passes`, which a plan reports;
-`check` refuses an input before any forward pass); `_report` fans that out into the columns and the
-figure draws one plot per `config.metric_pairs()` entry. `integrated_gradients` interpolates one hook
+`check` refuses an input before any forward pass); `_report` reports that under each metric's comparison
+and the figure draws one plot per metric. `integrated_gradients` interpolates one hook
 per pass, so its cost grows with the hooks an index patches but a row's score never depends on the
 rest of the index. A method
 that actually runs the patched model (only `exact`) also reports that run's next token as the row's
@@ -206,7 +210,7 @@ time, so the config class must be defined above it.
 - Docstrings are Google style, rendered by napoleon: a summary line, then `Args:`, `Returns:` (or
   `Yields:`) and `Raises:` for a function, and `Args:` for a class's constructor or `Attributes:` for a
   dataclass's fields. Types stay in the signature, not the docstring.
-- Messages to the user go through a module's `logging.getLogger(__name__)`, never `print`.
+- Messages to the user go through a module's `logging.getLogger(__name__)`, never `print` or `warnings`.
   `entoscope/__init__.py` gives the `entoscope` logger its own stderr handler at INFO and stops it propagating,
   so a dependency that configures the root logger (transformer_lens does) cannot reformat or mute it.
 - `src/entoscope/circuit/vendor/` is CC BY-NC 4.0 third-party code, kept close to verbatim and excluded

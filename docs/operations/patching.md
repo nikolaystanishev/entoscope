@@ -29,6 +29,7 @@ from entoscope import (
     PatchingInput,
     PatchingMethodConfig,
     PatchingMetric,
+    PatchingMetricConfig,
     PatchingType,
     SinglePatchingConfig,
 )
@@ -42,7 +43,13 @@ residual = PatchingElementConfig(
     location=[ModelAxis.LAYER, ModelAxis.POSITION],
 )
 config = PatchingConfig(
-    metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.NORMALIZED]},
+    metric={
+        "logit_diff": PatchingMetricConfig(
+            type=PatchingMetric.LOGIT_DIFF,
+            tokens=["correct", "distractor"],
+            comparison=MetricComparison.NORMALIZED,
+        )
+    },
     method=PatchingMethodConfig(type="exact"),
     patch=[SinglePatchingConfig(source=residual, target=residual)],
 )
@@ -50,16 +57,17 @@ patching_input = PatchingInput(
     config,
     "The capital of France is",  # source
     "The capital of Spain is",  # target
-    correct_token=" Paris",
-    distractor_token=" Madrid",
+    tokens={"correct": " Paris", "distractor": " Madrid"},
 )
 Patcher(model).apply(patching_input, save_dir="runs/residual_sweep")
 ```
 
-Each row of `result.csv` holds one patched run's `normalized_logit_diff`: 0 where the patch changed
-nothing, 1 where the target run now prefers " Paris" over " Madrid" as much as the source run does.
-For GPT-2 the grid shows the answer travelling. Up to layer 9, patching the `" France"` position (4)
-alone restores it almost fully; by layers 10 and 11 the last position carries it instead:
+The config's metric, which it names `logit_diff`, reads the tokens the input names `correct` and
+`distractor`. Each row of `result.csv` holds one patched run's `logit_diff_metric`, reported `normalized`: 0
+where the patch changed nothing, 1 where the target run now prefers " Paris" over " Madrid" as much as the
+source run does. For GPT-2 the grid shows the answer travelling. Up to layer 9, patching the
+`" France"` position (4) alone restores it almost fully; by layers 10 and 11 the last position
+carries it instead:
 
 ```text
 target_position    0    1    2    3     4     5
@@ -82,51 +90,63 @@ In a config file this is the `residual_sweep` entry of
 [`examples/patching.yaml`](../examples.md#activation-patching),
 which has an entry for every variant on this page.
 
-## The two runs and the answer tokens
+## The two runs and the tokens
 
-`PatchingInput(config, source_prompt, target_prompt, correct_token=..., distractor_token=...)`:
+`PatchingInput(config, source_prompt, target_prompt, tokens=...)`:
 
 - The **target run** is the one patched, and every metric is read off the patched target run.
 - The **source run** is what `replace` and `value_scale` read. A config whose sources only write a
   value or noise reads no source run, and `source_prompt` may then be `None` (see
   [Without a source prompt](#without-a-source-prompt)).
-- `correct_token` and `distractor_token` are the `r` and `r'` of the metrics below: each a string that
-  tokenizes to a single token, or a token id. Left unset, the correct token is what the source run
-  predicts and the distractor what the target run predicts. For the prompts above GPT-2 predicts
-  `" now"` and `" the"`, so name them. A pair that comes out as the same token is rejected when a
-  difference metric is asked for, since every difference would be zero.
+- `tokens` names the tokens the metrics read: each a string that tokenizes to a single token, or a
+  token id. A string of several tokens is read as its first, with a warning. A config reads tokens by
+  these names, so they are best chosen as roles, such as `correct`
+  and `distractor`: the config then runs on any pair of prompts, each pair naming its own answers.
+  Only the tokens a metric reads are looked at, so one mapping can serve several configs.
 
 The metrics are read at the final position of each run, and the source and target prompts are each
-run once and cached before the patching starts.
+run once and cached before the patching starts. The tokens are resolved before either run, so
+`plan()` already refuses a metric that reads a token the input does not name, an empty string, or an id
+outside the vocabulary.
 
 ## Metrics and comparisons
 
-`metric` maps each metric to the comparisons it is reported under, and every pair is a column of the
-result. All of them come off the same patched run, so a second metric costs no extra forward pass:
+`metric` names every metric the run reads, each written to the result column `<name>_metric`. A
+metric gives its `type`, the `tokens` it reads by their names in the input's `tokens`, and the
+comparison it is reported under. All of them come off the same
+patched run, so a second metric costs no extra forward pass:
 
 ```yaml
 metric:
-  logit_diff: [normalized, absolute]
-  kl_divergence: [indirect_effect]
+  logit_diff:
+    type: logit_diff
+    tokens: [correct, distractor]
+    comparison: normalized
+  kl_divergence:
+    type: kl_divergence
+    comparison: indirect_effect
 ```
 
-The metrics, read off a run's final-position logits:
+The metrics, read off a run's final-position logits, where $r$ and $r'$ are the first and the second
+token a metric's `tokens` lists:
 
-| Metric | Value | Needs |
+| Metric | Value | Tokens |
 |---|---|---|
-| `logit_diff` | $\mathrm{logit}(r) - \mathrm{logit}(r')$ | both tokens |
-| `logprob_diff` | $\log P(r) - \log P(r')$, numerically the same as `logit_diff` | both tokens |
-| `probability` | $P(r)$ | the correct token |
-| `log_prob` | $\log P(r)$ | the correct token |
-| `kl_divergence` | $D_{KL}(P_{\text{source}} \,\Vert\, P_{\text{run}})$, how far the run's whole distribution is from the source run's | a source run, no tokens |
+| `logit_diff` | $\mathrm{logit}(r) - \mathrm{logit}(r')$ | 2 |
+| `logprob_diff` | $\log P(r) - \log P(r')$, numerically the same as `logit_diff` | 2 |
+| `probability` | $P(r)$ | 1 |
+| `log_prob` | $\log P(r)$ | 1 |
+| `kl_divergence` | $D_{KL}(P_{\text{source}} \,\Vert\, P_{\text{run}})$, how far the run's whole distribution is from the source run's, which it needs | 0 |
+
+A metric names exactly as many tokens as its type reads, or the input is refused as it is built.
 
 The comparisons, where $m$ is a metric and the subscripts name the run it is read off:
 
-| Comparison | Reported value | Column | Needs a source run |
-|---|---|---|---|
-| `absolute` | $m_{\text{patched}}$ | `logit_diff` | no |
-| `indirect_effect` | $m_{\text{patched}} - m_{\text{target}}$ | `indirect_effect_logit_diff` | no |
-| `normalized` | $(m_{\text{patched}} - m_{\text{target}}) / (m_{\text{source}} - m_{\text{target}})$ | `normalized_logit_diff` | yes |
+| Comparison | Reported value | Needs a source run |
+|---|---|---|
+| `absolute` | $m_{\text{patched}}$ | no |
+| `indirect_effect` | $m_{\text{patched}} - m_{\text{target}}$ | no |
+| `normalized` | $(m_{\text{patched}} - m_{\text{target}}) / (m_{\text{source}} - m_{\text{target}})$ | yes |
 
 `indirect_effect` is activation patching stated as a causal quantity. `normalized` puts 0 at "the
 patch changed nothing" and 1 at "the patch reproduced the source run". This is the ratio circuit work
@@ -135,7 +155,35 @@ the patch moved the model toward the source run for every metric: a divergence f
 the source, so `kl_divergence`'s indirect effect is its decrease.
 
 The comparison is chosen per metric because the natural one differs: a divergence reads well as an
-effect, a logit difference as a fraction of the gap between the two runs. A metric may list several.
+effect, a logit difference as a fraction of the gap between the two runs. A metric wanted under two
+comparisons is named twice, once with each.
+
+### Several metrics of one type
+
+Each metric reads tokens of its own, so one type can be read on several. The `competing_answers` entry
+of [`examples/patching.yaml`](../examples.md#activation-patching) sets the source run's answer against
+the target run's and against a third city neither prompt is about, and reads that city's chance too:
+
+```yaml
+metric:
+  against_target:
+    type: logit_diff
+    tokens: [correct, distractor]
+    comparison: normalized
+  against_other:
+    type: logit_diff
+    tokens: [correct, other]
+    comparison: indirect_effect
+  other:
+    type: probability
+    tokens: [other]
+    comparison: indirect_effect
+```
+
+With `tokens={"correct": " Paris", "distractor": " Madrid", "other": " Rome"}`, its columns are
+`against_target_metric`, `against_other_metric` and `other_metric`. Every metric column carries the
+suffix, so no name can take a column the run writes itself, `generation`, `str_generation` or one of
+the index's.
 
 ## Patch elements
 
@@ -246,7 +294,9 @@ from entoscope.util.data import from_dict
 zero_mlp = from_dict(
     PatchingConfig,
     {
-        "metric": {"logit_diff": ["indirect_effect"]},
+        "metric": {
+            "logit_diff": {"type": "logit_diff", "tokens": ["correct", "distractor"], "comparison": "indirect_effect"}
+        },
         "method": "exact",
         "patch": [
             {
@@ -256,19 +306,20 @@ zero_mlp = from_dict(
         ],
     },
 )
-ablation = PatchingInput(zero_mlp, None, "The capital of Spain is", correct_token=" Paris", distractor_token=" Madrid")
+ablation = PatchingInput(zero_mlp, None, "The capital of Spain is", tokens={"correct": " Paris", "distractor": " Madrid"})
 Patcher(model).apply(ablation, save_dir="runs/zero_mlp")
 ```
 
 Reported as an indirect effect, each row is $m(x \mid do(a = 0)) - m(x)$. Without a source run there
-is no `normalized` and no `kl_divergence`, and the correct token has to be named.
+is no `normalized` and no `kl_divergence`.
 
 A source that reads no source run counts its positions in the target prompt: a value is written into
 the target run, and `gaussian_noise` corrupts the target run's own activation, so `position: -1` on
 such a source is the target's last token, with or without a source prompt.
 
-A `normalized` metric divides by the gap between the source and target runs, so two runs that score
-the same, such as one prompt on both sides, are refused once they are cached and before any patched run.
+A `normalized` metric divides by the gap between the source and target runs. Two runs that score the
+same, such as one prompt on both sides, leave no gap: every row then reads inf, or nan where the patch
+changed nothing, and logs a warning.
 
 ## Output
 
@@ -276,16 +327,16 @@ the same, such as one prompt on both sides, are refused once they are cached and
 
 - the index of the element the result is laid out along, as `source_*` and `target_*` columns, a
   one-row source or target repeated on every row it pairs with;
-- a column per metric and comparison pair, in the order the config names them: the metric's name for
-  `absolute`, otherwise the comparison then the metric, as in `normalized_logit_diff`;
+- a column per metric, `<name>_metric`, in the order the config names them;
 - `generation` and `str_generation`, the token the patched run predicts next, for `exact`.
 
 Every element's index is written to its own `index-{i}.csv`.
 
 `result.html` draws one grid per result column, on a diverging scale centred on what an ineffective
 patch would score: the target run's own metric for `absolute`, zero otherwise. Warm cells moved the
-model toward the source run. The subtitle names both prompts and what each predicts, and a cell's
-hover gives its value, its patched run's prediction and its full source and target coordinates.
+model toward the source run. The subtitle names both prompts and what each predicts, then the plot's
+metric type and the tokens it reads, by name and as spelled, since a metric's name need not say. A
+cell's hover gives its value, its patched run's prediction and its full source and target coordinates.
 
 ## Recipes
 
@@ -295,6 +346,7 @@ All of these are entries of
 | Question | Entry |
 |---|---|
 | Where, layer by layer and token by token, is the answer carried? | `residual_sweep` |
+| Against which rival does a patch move the answer? | `competing_answers`: two `logit_diff` metrics on different tokens |
 | Which heads matter? | `head_sweep`: `attn.z` over `[layer, head]` |
 | Which of a head's attention weights matter? | `pattern_entries`: `attn.pattern` over `[layer, head, dest_pos, src_pos]`, at the last token's row |
 | Which MLP layers matter? | `zero_ablation`: `value_replace` into `mlp.out` over `[layer]` |

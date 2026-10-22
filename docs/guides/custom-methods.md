@@ -102,8 +102,10 @@ in `self.method_config`.
   pickle.
 - **Activation patching.** `scores(patching_input, verbose)` yields a `RowResult` per patched run
   (`patching_input.rows()` lists them, the `i`-th filling result row `i`). Each one is built from the change the run made to every metric,
-  the patched run's value minus the unpatched target run's, which `self._report` turns into the columns
-  the config's comparisons ask for. `passes(patching_input, batches)` returns the `(forward, backward)`
+  the patched run's value minus the unpatched target run's, keyed by the metric's name, which
+  `self._report` reports under each metric's comparison. `patching_input.metrics[name]` is
+  that metric: its `compute(patching_input, logits)` reads it off a run's final-position logits, and its
+  `target(patching_input)` off the unpatched target run. `passes(patching_input, batches)` returns the `(forward, backward)`
   passes the method adds, for `plan`, reading what it needs off the index-resolved input, such as
   `rows()` or `target_activation_names()`. Override `check(patching_input)` to refuse an input the
   method cannot score: it runs before either prompt is, in `plan` as in the run. Set `batched = True`

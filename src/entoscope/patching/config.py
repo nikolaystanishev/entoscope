@@ -30,8 +30,8 @@ class PatchingType(StrEnum):
 class PatchingMetric(StrEnum):
     """The scalar read off one run's output distribution.
 
-    ``r`` is the correct token and ``r'`` the distractor, both named by the input.
-    ``kl_divergence`` needs neither: it scores the whole distribution against the source run's.
+    ``r`` and ``r'`` are the first and second of the tokens a metric names in its ``tokens``.
+    ``kl_divergence`` reads none: it scores the whole distribution against the source run's.
     """
 
     LOGIT_DIFF = "logit_diff"  # logit(r) - logit(r')
@@ -45,11 +45,11 @@ class MetricComparison(StrEnum):
     """How a patched run's metric is reported against the two runs it sits between.
 
     Chosen per metric: a divergence is normally read as an ``indirect_effect`` and a logit
-    difference as ``normalized``, and a run may name several for one metric.
+    difference as ``normalized``.
 
     An ineffective patch reproduces the target run, and one that takes over entirely reproduces
     the source run, so ``normalized`` reads 0 and 1 at those two ends whichever of the pair is the
-    clean prompt - that choice is expressed by the correct and distractor tokens, not here.
+    clean prompt - that choice is expressed by the tokens a metric reads and their order, not here.
     """
 
     ABSOLUTE = "absolute"  # m(patched)
@@ -87,23 +87,24 @@ class SinglePatchingConfig:
     target: PatchingElementConfig
 
 
-MetricPair = tuple[PatchingMetric, MetricComparison]
+@dataclass(kw_only=True)
+class PatchingMetricConfig:
+    """A metric a run reads off every patched run, the tokens it reads and what it is reported against.
 
+    The config's ``metric`` names it, so several metrics of one type can each read tokens of their own,
+    or be reported under a comparison of their own.
 
-def metric_column(metric: PatchingMetric, comparison: MetricComparison) -> str:
-    """Name the result column of a metric reported under a comparison.
-
-    Args:
-        metric: The metric.
-        comparison: What it is reported against.
-
-    Returns:
-        The metric's name for ``absolute``, otherwise ``<comparison>_<metric>``, such as
-        ``normalized_logit_diff``.
+    Attributes:
+        type: The scalar read off a run.
+        tokens: The tokens the metric reads, by their names in the input's ``tokens``: two for a
+            difference, the first read against the second, one for ``probability`` and ``log_prob``, and
+            none for ``kl_divergence``.
+        comparison: What the metric is reported against.
     """
-    if comparison is MetricComparison.ABSOLUTE:
-        return metric.value
-    return f"{comparison.value}_{metric.value}"
+
+    type: PatchingMetric
+    tokens: list[str] = field(default_factory=list)
+    comparison: MetricComparison
 
 
 @dataclass(kw_only=True)
@@ -129,58 +130,19 @@ class PatchingMethodConfig(MethodConfig):
 class PatchingConfig(AbstractConfig):
     """What a patching run patches, and what it reads off every patched run.
 
-    Every metric is read off the same patched run, so a second metric costs no extra forward pass and
-    a second comparison of a metric already asked for costs nothing at all: it re-reads that metric's
-    change. Each result column is drawn as its own plot on the result page.
+    Every metric is read off the same patched run, so a second metric costs no extra forward pass. Each
+    metric's result column is drawn as its own plot on the result page.
 
     Attributes:
-        metric: Each metric, mapped to the comparisons it is reported under, one result column each.
+        metric: Each metric, by a name of the config's choosing, which names its result column too.
         method: How the change in a metric is obtained, its ``type`` naming the method. ``exact`` patches
             and runs the model once per index row, while ``attribution`` and ``integrated_gradients``
             estimate every row from gradients instead, trading a linearity assumption for a cost that
             does not grow with the index. In a YAML file it is the mapping read strictly into the method's
             config class, or just the method's type for its defaults.
         patch: The patch elements, applied together in every patched run.
-
-    Raises:
-        ValueError: If no metric is named, or a metric names no comparison or one twice.
     """
 
-    metric: dict[PatchingMetric, list[MetricComparison]]
+    metric: dict[str, PatchingMetricConfig]
     method: PatchingMethodConfig
     patch: list[SinglePatchingConfig] = field(default_factory=list)
-
-    def __post_init__(self):
-        super().__post_init__()
-        if not self.metric:
-            raise ValueError("At least one patching metric is required")
-        for metric, comparisons in self.metric.items():
-            if not comparisons:
-                raise ValueError(f"{metric.value} names no comparison to report it under")
-            repeated = sorted({c.value for c in comparisons if comparisons.count(c) > 1})
-            if repeated:
-                raise ValueError(f"{metric.value} names {', '.join(repeated)} more than once")
-
-    def metric_pairs(self) -> list[MetricPair]:
-        """Pair every metric with each comparison it is reported under.
-
-        Returns:
-            The pairs, in the order the config names them.
-        """
-        return [(metric, comparison) for metric, comparisons in self.metric.items() for comparison in comparisons]
-
-    def metric_columns(self) -> list[str]:
-        """Name the result columns.
-
-        Returns:
-            One column per metric pair, in the order the config names them.
-        """
-        return [metric_column(*pair) for pair in self.metric_pairs()]
-
-    def primary(self) -> MetricPair:
-        """Pick the run's headline metric and comparison.
-
-        Returns:
-            The first column's pair.
-        """
-        return self.metric_pairs()[0]

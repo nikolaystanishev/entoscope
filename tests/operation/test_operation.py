@@ -10,7 +10,7 @@ from entoscope.circuit.method.information_flow_routes import InformationFlowRout
 from entoscope.lens.config import LensConfig, LensMethodConfig
 from entoscope.lens.input import LensInput
 from entoscope.lens.lens import Lens
-from entoscope.model.config import ModelAxis, ModelLayerLocation, ModelLocatorConfig
+from entoscope.model.config import Filter, ModelAxis, ModelLayerLocation, ModelLocatorConfig
 from entoscope.patching.collector import PatchingCollector
 from entoscope.patching.config import (
     MetricComparison,
@@ -18,6 +18,7 @@ from entoscope.patching.config import (
     PatchingElementConfig,
     PatchingMethodConfig,
     PatchingMetric,
+    PatchingMetricConfig,
     PatchingType,
     SinglePatchingConfig,
 )
@@ -38,7 +39,7 @@ NEGATIVE = [TARGET_PROMPT, "I hated it"]
 ONE_LAYER = ModelLocatorConfig(
     activation=ModelLayerLocation.RESIDUAL_POST,
     location=[ModelAxis.LAYER, ModelAxis.POSITION],
-    filter=[{"layer": 1}],
+    filter=Filter.from_config([{"layer": 1}]),
 )
 
 
@@ -53,7 +54,9 @@ def _probe(model):
         pool={ModelAxis.POSITION: PoolingType.MEAN},
         metric=[ProbeMetric.ACCURACY],
         source=ModelLocatorConfig(
-            activation=ModelLayerLocation.RESIDUAL_POST, location=[ModelAxis.LAYER], filter=[{"layer": 1}]
+            activation=ModelLayerLocation.RESIDUAL_POST,
+            location=[ModelAxis.LAYER],
+            filter=Filter.from_config([{"layer": 1}]),
         ),
     )
     return Prober(model), ProbeInput(config, POSITIVE, NEGATIVE)
@@ -66,17 +69,23 @@ def _patching(model):
         return PatchingElementConfig(
             activation=ModelLayerLocation.RESIDUAL_POST,
             location=[ModelAxis.LAYER],
-            filter=[{"layer": 1}],
+            filter=Filter.from_config([{"layer": 1}]),
             type=patching_type,
         )
 
     config = PatchingConfig(
-        metric={PatchingMetric.LOGIT_DIFF: [MetricComparison.NORMALIZED]},
+        metric={
+            "logit_diff": PatchingMetricConfig(
+                type=PatchingMetric.LOGIT_DIFF,
+                tokens=["correct", "distractor"],
+                comparison=MetricComparison.NORMALIZED,
+            )
+        },
         method=PatchingMethodConfig(type="exact"),
         patch=[SinglePatchingConfig(source=element(PatchingType.GAUSSIAN_NOISE), target=element(PatchingType.REPLACE))],
     )
     patching_input = PatchingInput(
-        config, SOURCE_PROMPT, TARGET_PROMPT, correct_token=" Paris", distractor_token=" Madrid"
+        config, SOURCE_PROMPT, TARGET_PROMPT, tokens={"correct": " Paris", "distractor": " Madrid"}
     )
     return Patcher(model, collector_class=PatchingCollector), patching_input
 
@@ -155,13 +164,15 @@ def _tensors(value) -> list[torch.Tensor]:
 
 
 # --------------------------------------------------------------------------------------------------
-# Reading a config - from a file or built in code, every field is read the same way
+# Reading a config - every field is read strictly
 # --------------------------------------------------------------------------------------------------
 ELEMENT = {"activation": "resid.post", "location": ["layer"], "filter": [{"layer": 1}], "type": "replace"}
 RAW_CONFIGS = {
     LensConfig: {"method": "logit_lens", "top_k": 2, "source": {"activation": "resid.post", "location": ["position"]}},
     PatchingConfig: {
-        "metric": {"logit_diff": ["indirect_effect"]},
+        "metric": {
+            "logit_diff": {"type": "logit_diff", "tokens": ["correct", "distractor"], "comparison": "indirect_effect"}
+        },
         "method": "exact",
         "patch": [{"source": ELEMENT, "target": ELEMENT}],
     },
@@ -174,15 +185,6 @@ RAW_CONFIGS = {
     # An int written for a float field is read as the float it means.
     CircuitConfig: {"method": {"type": "information_flow_routes", "threshold": 0}},
 }
-
-
-@pytest.mark.parametrize("config_class", list(RAW_CONFIGS), ids=lambda config_class: config_class.__name__)
-def test_a_config_built_in_code_reads_its_raw_values_as_its_file_does(config_from_yaml, config_class):
-    raw = RAW_CONFIGS[config_class]
-
-    from_file = config_from_yaml(config_class, "raw", raw)
-
-    assert config_class(config_id="raw", **raw) == from_file
 
 
 def test_an_int_written_for_a_float_field_is_read_as_a_float(config_from_yaml):
@@ -213,9 +215,6 @@ def test_an_int_written_for_a_float_field_is_read_as_a_float(config_from_yaml):
 def test_a_value_its_field_cannot_take_is_rejected_as_the_config_is_read(config_from_yaml, config_class, raw, message):
     with pytest.raises(ValueError, match=message):
         config_from_yaml(config_class, "broken", raw)
-    # Built in code, the same value is refused the same way.
-    with pytest.raises(ValueError, match=message):
-        config_class(**raw)
 
 
 def test_an_environment_variable_is_read_as_the_value_it_holds(config_from_yaml, monkeypatch):

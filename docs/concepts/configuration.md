@@ -57,8 +57,10 @@ registered, and a field the method does not take is an unknown key of its method
 field cannot take is refused as well, such as a quoted `"0.04"` for a float or `true` for a count; an
 int written for a float field is read as that float.
 
-A config built in code is read the same way, so it may hold a field's raw form, such as
-`method="exact"` or `metric={"logit_diff": ["normalized"]}`, and is refused what a file would be.
+A config built in code holds its fields' types: enum members, a method config, a `Filter` or
+`Coordinates`. A raw shape held in code, such as a mapping assembled at runtime, is read through
+`from_dict(PatchingConfig, {...})` from `entoscope.util.data`, which checks it exactly as strictly as a
+file.
 
 ## The `method` field
 
@@ -110,7 +112,10 @@ sweep repeated with several methods, written once:
 ```yaml
 residual_sweep:
   metric:
-    logit_diff: [normalized]
+    logit_diff: &logit_diff
+      type: logit_diff
+      tokens: [correct, distractor]
+      comparison: normalized
   method: exact
   patch:
     - source: &residual
@@ -121,7 +126,7 @@ residual_sweep:
 
 attribution:
   metric:
-    logit_diff: [indirect_effect]
+    logit_diff: *logit_diff
   method: attribution
   patch:
     - source: *residual

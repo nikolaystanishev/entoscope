@@ -95,13 +95,19 @@ The run writes four files into `runs/logit_lens/`:
 
 The same operators run from YAML. This entry of
 [`examples/patching.yaml`](https://github.com/nikolaystanishev/entoscope/blob/main/examples/patching.yaml)
-patches the residual stream of a clean prompt into a corrupted one, at every layer and position:
+patches the residual stream of a clean prompt into a corrupted one, at every layer and position. Each
+metric is named, and reads the tokens the input names:
 
 ```yaml
 residual_sweep:
   metric:
-    logit_diff: [normalized]
-    kl_divergence: [indirect_effect]
+    logit_diff:
+      type: logit_diff
+      tokens: [correct, distractor]
+      comparison: normalized
+    kl_divergence:
+      type: kl_divergence
+      comparison: indirect_effect
   method: exact
   patch:
     - source: &residual
@@ -119,16 +125,15 @@ patching_input = PatchingInput(
     config,
     "The capital of France is",  # source
     "The capital of Spain is",  # target
-    correct_token=" Paris",
-    distractor_token=" Madrid",
+    tokens={"correct": " Paris", "distractor": " Madrid"},
 )
 collector = Patcher(model).apply(patching_input, save_dir="runs/residual_sweep", return_collector=True)
 
-grid = collector.result.pivot(index="target_layer", columns="target_position", values="normalized_logit_diff")
+grid = collector.result.pivot(index="target_layer", columns="target_position", values="logit_diff_metric")
 print(grid.round(2))
 ```
 
-`normalized_logit_diff` is 0 where a patch changed nothing and 1 where it restored the clean answer.
+`logit_diff_metric`, reported `normalized`, is 0 where a patch changed nothing and 1 where it restored the clean answer.
 The grid shows the answer moving through GPT-2: up to layer 9 it sits at the `" France"` position, and
 by the last layers it has moved to the final position:
 

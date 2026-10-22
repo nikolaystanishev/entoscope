@@ -8,9 +8,10 @@ run's coefficients exactly when - and only when - the run pooled the same way.
 import pytest
 import torch
 
-from entoscope.model.config import Filter, Group, ModelAxis, ModelLayerLocation, ModelLocatorConfig
-from entoscope.probe.config import PoolingType, ProbeConfig
+from entoscope.model.config import Coordinates, Filter, Group, ModelAxis, ModelLayerLocation, ModelLocatorConfig
+from entoscope.probe.config import PoolingType, ProbeConfig, ProbeMetric
 from entoscope.probe.input import ProbeInput
+from entoscope.probe.method.linear import LinearProbeConfig
 from entoscope.probe.prober import Prober
 
 from ..conftest import forbid_model_runs
@@ -131,14 +132,16 @@ def test_a_pooling_entry_for_an_axis_the_activation_lacks_raises(activation, axi
 
 
 def test_a_pooling_entry_for_an_axis_one_of_the_coordinates_activations_has_is_accepted():
-    coordinates = [
-        {ModelAxis.ACTIVATION: ModelLayerLocation.RESIDUAL_POST, ModelAxis.LAYER: 0},
-        {ModelAxis.ACTIVATION: ModelLayerLocation.ATTENTION_Z, ModelAxis.LAYER: 0},
-    ]
+    coordinates = Coordinates(
+        [
+            {ModelAxis.ACTIVATION: ModelLayerLocation.RESIDUAL_POST, ModelAxis.LAYER: 0},
+            {ModelAxis.ACTIVATION: ModelLayerLocation.ATTENTION_Z, ModelAxis.LAYER: 0},
+        ]
+    )
     config = ProbeConfig(
-        method="linear",
+        method=LinearProbeConfig(type="linear"),
         pool={ModelAxis.POSITION: PoolingType.MEAN, ModelAxis.HEAD: PoolingType.MAX},
-        metric=["accuracy"],
+        metric=[ProbeMetric.ACCURACY],
         source=ModelLocatorConfig(coordinates=coordinates),
     )
 
@@ -195,12 +198,6 @@ def test_an_entry_of_the_pattern_is_read_against_each_prompts_own_end(small_mode
     assert probe_of(collector, head=2).coef_.shape[1] == 1
     expected = _stacked(small_caches, "blocks.0.attn.hook_pattern", lambda p: p[2, -1, 0].reshape(1))
     assert_trained_alike(probe_of(collector, head=2), refit(expected))
-
-
-def test_a_pooling_type_that_is_not_known_raises():
-    # A config built in code is read as a file's is, so a pooling nothing implements is refused as it is built.
-    with pytest.raises(ValueError, match="'median' is not a valid PoolingType"):
-        probe_config(pool={ModelAxis.POSITION: "median"})
 
 
 def test_a_single_value_becomes_a_single_feature(small_model, small_caches):
