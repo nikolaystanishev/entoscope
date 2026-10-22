@@ -16,13 +16,17 @@ from ..conftest import forbid_model_runs, rendered_figures
 
 SOURCE_PROMPT = "The capital of France is"
 TARGET_PROMPT = "The capital of Spain is"
-CORRECT_TOKEN, DISTRACTOR_TOKEN = " Paris", " Madrid"
+TOKENS = {"correct": " Paris", "distractor": " Madrid"}
 DELTA = 0.5
 
 ELEMENT_YAML = {"activation": "resid.post", "location": ["layer"], "type": "replace"}
 CONSTANT_YAML = {
     "method": {"type": "constant", "delta": DELTA},
-    "metric": {"logit_diff": ["absolute", "indirect_effect"], "kl_divergence": ["indirect_effect"]},
+    "metric": {
+        "logit_diff": {"type": "logit_diff", "tokens": ["correct", "distractor"], "comparison": "absolute"},
+        "logprob_diff": {"type": "logprob_diff", "tokens": ["correct", "distractor"], "comparison": "indirect_effect"},
+        "kl_divergence": {"type": "kl_divergence", "comparison": "indirect_effect"},
+    },
     "patch": [{"source": ELEMENT_YAML, "target": ELEMENT_YAML}],
 }
 
@@ -50,15 +54,14 @@ def constant_method(registries):
 
 
 def _input(config: PatchingConfig) -> PatchingInput:
-    return PatchingInput(
-        config, SOURCE_PROMPT, TARGET_PROMPT, correct_token=CORRECT_TOKEN, distractor_token=DISTRACTOR_TOKEN
-    )
+    return PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT, tokens=TOKENS)
 
 
 def _target_logit_diff(model) -> float:
     with torch.no_grad():
         logits = model(TARGET_PROMPT)[0, -1]
-    return float(logits[model.to_single_token(CORRECT_TOKEN)] - logits[model.to_single_token(DISTRACTOR_TOKEN)])
+    correct, distractor = (model.to_single_token(TOKENS[name]) for name in ("correct", "distractor"))
+    return float(logits[correct] - logits[distractor])
 
 
 def test_a_registered_method_is_reported_under_every_comparison_the_config_names(
@@ -72,9 +75,9 @@ def test_a_registered_method_is_reported_under_every_comparison_the_config_names
     assert len(result) == rows
     # The change rides on the unpatched target run's own metric, and an effect reads it as it is -
     # except a divergence's, whose effect is its drop.
-    assert result["logit_diff"].tolist() == pytest.approx([_target_logit_diff(model) + DELTA] * rows, rel=1e-4)
-    assert result["indirect_effect_logit_diff"].tolist() == pytest.approx([DELTA] * rows)
-    assert result["indirect_effect_kl_divergence"].tolist() == pytest.approx([-DELTA] * rows)
+    assert result["logit_diff_metric"].tolist() == pytest.approx([_target_logit_diff(model) + DELTA] * rows, rel=1e-4)
+    assert result["logprob_diff_metric"].tolist() == pytest.approx([DELTA] * rows)
+    assert result["kl_divergence_metric"].tolist() == pytest.approx([-DELTA] * rows)
     # Nothing was run patched, so no row names a generation.
     assert "generation" not in result.columns
 

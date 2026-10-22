@@ -52,7 +52,7 @@ class LensFigure(GridFigure[LensInput, int]):
 
     def hover(self, rank: int, position: int, coordinate: str) -> str:
         row = self.result.iloc[position]
-        lines = [coordinate, describe_row(row, "source_")]
+        lines = [coordinate, describe_row(self.coordinates.iloc[position], "source_")]
         for i in range(self.operation_input.config.top_k):
             token, probability = f"str_token_{i}", f"probability_{i}"
             if token in row.index and probability in row.index:

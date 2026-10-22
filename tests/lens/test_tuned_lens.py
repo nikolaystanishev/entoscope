@@ -18,7 +18,7 @@ from entoscope.lens.input import LensInput
 from entoscope.lens.lens import Lens
 from entoscope.lens.method import tuned_lens
 from entoscope.lens.method.tuned_lens import TunedLensConfig
-from entoscope.model.config import Filter, ModelAxis, ModelLayerLocation, ModelLocatorConfig
+from entoscope.model.config import Coordinates, Filter, ModelAxis, ModelLayerLocation, ModelLocatorConfig
 from entoscope.model.unembed import build_unembed
 
 from ..conftest import build_small_model, forbid_model_runs
@@ -280,13 +280,15 @@ def test_a_yaml_tuned_lens_config_runs(model, config_from_yaml):
         method=TunedLensConfig(type="tuned_lens", translators="gpt2"),
         top_k=2,
         source=ModelLocatorConfig(
-            coordinates=[
-                {
-                    ModelAxis.ACTIVATION: ModelLayerLocation.RESIDUAL_POST,
-                    ModelAxis.LAYER: -1,
-                    ModelAxis.POSITION: -1,
-                }
-            ]
+            coordinates=Coordinates(
+                [
+                    {
+                        ModelAxis.ACTIVATION: ModelLayerLocation.RESIDUAL_POST,
+                        ModelAxis.LAYER: -1,
+                        ModelAxis.POSITION: -1,
+                    }
+                ]
+            )
         ),
         config_id="my_tuned_lens",
     )

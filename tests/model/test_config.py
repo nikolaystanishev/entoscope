@@ -25,6 +25,7 @@ from entoscope.patching.config import (
     PatchingElementConfig,
     PatchingMethodConfig,
     PatchingMetric,
+    PatchingMetricConfig,
     PatchingType,
     SinglePatchingConfig,
 )
@@ -41,7 +42,10 @@ TARGET_PROMPT = "The capital of Spain is"
 # Two prompts of different lengths, so a probe over them cannot resolve a position against either.
 LONG_PROMPT, SHORT_PROMPT = "The movie was absolutely wonderful", "I loved it"
 
-PATCHING = {"metric": {"probability": ["absolute"]}, "method": "exact"}
+PATCHING = {
+    "metric": {"probability": {"type": "probability", "tokens": ["correct"], "comparison": "absolute"}},
+    "method": "exact",
+}
 
 
 def n_positions(model) -> int:
@@ -68,12 +72,17 @@ def planned(config_from_yaml, monkeypatch):
             )
         else:
             config = PatchingConfig(
-                metric={PatchingMetric.PROBABILITY: [MetricComparison.ABSOLUTE]},
+                metric={
+                    "probability": PatchingMetricConfig(
+                        type=PatchingMetric.PROBABILITY, tokens=["correct"], comparison=MetricComparison.ABSOLUTE
+                    )
+                },
                 method=PatchingMethodConfig(type="exact"),
                 patch=[SinglePatchingConfig(source=locator, target=locator)],
             )
         forbid_model_runs(monkeypatch, model)
-        index = Patcher(model).plan(PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT), verbose=False).index[0]
+        patching_input = PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT, tokens={"correct": " Paris"})
+        index = Patcher(model).plan(patching_input, verbose=False).index[0]
         return _source_columns(index)
 
     return plan
@@ -409,9 +418,9 @@ def test_an_empty_coordinate_list_yields_no_rows(model, planned):
 
 
 # --------------------------------------------------------------------------------------------------
-# Built in code - the same locator as a config file's, whether given raw shapes or the typed sections
+# Built in code - the typed sections plan the index a config file's raw shapes do
 # --------------------------------------------------------------------------------------------------
-def test_a_code_built_locator_plans_the_index_its_config_file_twin_does(model, planned):
+def test_a_typed_locator_built_in_code_plans_the_index_its_config_file_twin_does(model, planned):
     raw = {
         "activation": "attn.z",
         "location": ["layer", "head"],
@@ -432,15 +441,8 @@ def test_a_code_built_locator_plans_the_index_its_config_file_twin_does(model, p
 
     from_file = planned(model, raw)
 
-    # A code-built locator takes the raw shapes a file holds as readily as the typed sections.
-    pd.testing.assert_frame_equal(planned(model, PatchingElementConfig(**raw, type=PatchingType.REPLACE)), from_file)
     pd.testing.assert_frame_equal(planned(model, typed), from_file)
     assert len(from_file) > 0
-
-
-def test_a_code_built_locator_rejects_a_location_it_does_not_know():
-    with pytest.raises(ValueError, match="'layers' is not a valid ModelAxis"):
-        PatchingElementConfig(activation="resid.post", location=["layers"], type=PatchingType.REPLACE)
 
 
 def test_a_code_built_coordinate_is_checked_too():

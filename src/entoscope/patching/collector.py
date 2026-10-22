@@ -2,7 +2,7 @@ from entoscope.model.index import Index
 from entoscope.model.token import str_token
 from entoscope.operation.collector import FrameCollector, VisualizationCollector
 from entoscope.patching.input import PatchingInput
-from entoscope.patching.method.patching import RowResult
+from entoscope.patching.method.patching import RowResult, metric_column
 from entoscope.patching.visualization import PatchingFigure
 
 
@@ -11,6 +11,9 @@ class PatchingCollector(FrameCollector[PatchingInput]):
 
     A run that patched the model also records what it then predicts next, as ``generation`` (the
     token id, exact) and ``str_generation`` (its string, see ``str_token`` on reading it back).
+
+    Each metric's column is its name with ``_metric`` appended, such as ``logit_diff_metric``, so no
+    metric can take a column the run writes itself.
 
     This base collector writes the CSV files only, and ``PatchingVisualizationCollector`` also draws
     ``result.html``.
@@ -23,7 +26,7 @@ class PatchingCollector(FrameCollector[PatchingInput]):
             row: The run's result row and metric columns, and its next token when the method ran the
                 patched model.
         """
-        cell: dict[str, float | int | str] = dict(row.metrics)
+        cell: dict[str, float | int | str] = {metric_column(metric): value for metric, value in row.metrics.items()}
         if row.generation is not None:
             cell["generation"] = row.generation
             cell["str_generation"] = str_token(self.model, row.generation)

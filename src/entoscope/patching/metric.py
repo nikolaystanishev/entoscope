@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import abc
-from typing import TYPE_CHECKING
+import logging
+from typing import TYPE_CHECKING, ClassVar
 
 import torch
 from jaxtyping import Float
@@ -13,28 +14,68 @@ if TYPE_CHECKING:
 
 Logits = Float[torch.Tensor, "d_vocab"]
 
+logger = logging.getLogger(__name__)
+
 
 class AbstractMetric(abc.ABC):
-    """One scalar read off a single run's final-position logits.
+    """One scalar read off a run's final-position logits, on the tokens it reads.
+
+    The input, which holds the two unpatched runs, is handed to it with every run it reads. The input also
+    builds it, and builds it again whenever it re-runs its prompts, so a metric belongs to one pair of
+    unpatched runs: what it reads off them, which every row is reported against, it reads once and keeps.
+
+    Args:
+        tokens: The ids of the tokens the metric reads, in the order its config names them.
 
     Attributes:
         effect_sign: The sign an ``indirect_effect`` is reported with, -1 for a metric that falls as the
             patch restores the source run.
-        needs_distractor: Whether the metric reads the distractor token.
+        n_tokens: How many tokens the metric reads, which its config names in ``tokens``.
         needs_source_run: Whether the metric scores against the source run.
+        tokens: The ids of the tokens the metric reads.
     """
 
-    effect_sign: int = 1
-    needs_distractor: bool = False
-    needs_source_run: bool = False
+    effect_sign: ClassVar[int] = 1
+    n_tokens: ClassVar[int] = 0
+    needs_source_run: ClassVar[bool] = False
 
-    @classmethod
+    def __init__(self, tokens: list[int]):
+        self.tokens = tokens
+        self._source: torch.Tensor | None = None
+        self._target: torch.Tensor | None = None
+
+    def source(self, patching_input: PatchingInput) -> torch.Tensor:
+        """Read the metric off the unpatched source run, the first time it is asked.
+
+        Args:
+            patching_input: The prepared input that built the metric, which has a source prompt.
+
+        Returns:
+            The metric, a scalar.
+        """
+        if self._source is None:
+            self._source = self.compute(patching_input, patching_input.source_logits[0, -1])
+        return self._source
+
+    def target(self, patching_input: PatchingInput) -> torch.Tensor:
+        """Read the metric off the unpatched target run, the first time it is asked.
+
+        Args:
+            patching_input: The prepared input that built the metric.
+
+        Returns:
+            The metric, a scalar.
+        """
+        if self._target is None:
+            self._target = self.compute(patching_input, patching_input.target_logits[0, -1])
+        return self._target
+
     @abc.abstractmethod
-    def compute(cls, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
+    def compute(self, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
         """Read the metric off one run, differentiably, so the gradient methods can back-propagate through it.
 
         Args:
-            patching_input: The prepared input, which names the answer tokens.
+            patching_input: The prepared input, whose unpatched runs a metric may score against.
             logits: The run's logits at the final position.
 
         Returns:
@@ -73,27 +114,31 @@ class AbstractMetric(abc.ABC):
 class LogitDiffMetric(AbstractMetric):
     """``logit(r) - logit(r')``."""
 
-    needs_distractor = True
+    n_tokens = 2
 
-    @classmethod
-    def compute(cls, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
-        return logits[patching_input.correct_token_id] - logits[patching_input.distractor_token_id]
+    def compute(self, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
+        token, against = self.tokens
+        return logits[token] - logits[against]
 
 
 class ProbabilityMetric(AbstractMetric):
     """``P(r)``."""
 
-    @classmethod
-    def compute(cls, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
-        return logits.softmax(dim=-1)[patching_input.correct_token_id]
+    n_tokens = 1
+
+    def compute(self, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
+        (token,) = self.tokens
+        return logits.softmax(dim=-1)[token]
 
 
 class LogProbMetric(AbstractMetric):
     """``log P(r)``."""
 
-    @classmethod
-    def compute(cls, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
-        return logits.log_softmax(dim=-1)[patching_input.correct_token_id]
+    n_tokens = 1
+
+    def compute(self, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
+        (token,) = self.tokens
+        return logits.log_softmax(dim=-1)[token]
 
 
 class LogProbDiffMetric(AbstractMetric):
@@ -103,14 +148,12 @@ class LogProbDiffMetric(AbstractMetric):
     two tokens and cancels, and kept apart because the papers that use it call it by this name.
     """
 
-    needs_distractor = True
+    n_tokens = 2
 
-    @classmethod
-    def compute(cls, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
+    def compute(self, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
+        token, against = self.tokens
         log_probabilities = logits.log_softmax(dim=-1)
-        return (
-            log_probabilities[patching_input.correct_token_id] - log_probabilities[patching_input.distractor_token_id]
-        )
+        return log_probabilities[token] - log_probabilities[against]
 
 
 class KLDivergenceMetric(AbstractMetric):
@@ -124,11 +167,14 @@ class KLDivergenceMetric(AbstractMetric):
     effect_sign = -1
     needs_source_run = True
 
-    @classmethod
-    def compute(cls, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
-        return torch.nn.functional.kl_div(
-            logits.log_softmax(dim=-1), patching_input.source_probabilities, reduction="sum"
-        )
+    def __init__(self, tokens: list[int]):
+        super().__init__(tokens)
+        self._source_probabilities: torch.Tensor | None = None
+
+    def compute(self, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
+        if self._source_probabilities is None:
+            self._source_probabilities = patching_input.source_logits[0, -1].softmax(dim=-1)
+        return torch.nn.functional.kl_div(logits.log_softmax(dim=-1), self._source_probabilities, reduction="sum")
 
 
 class AbstractComparison(abc.ABC):
@@ -145,12 +191,12 @@ class AbstractComparison(abc.ABC):
 
     @classmethod
     @abc.abstractmethod
-    def apply(cls, metric: PatchingMetric, patching_input: PatchingInput, delta: torch.Tensor) -> torch.Tensor:
+    def apply(cls, metric: AbstractMetric, patching_input: PatchingInput, delta: torch.Tensor) -> torch.Tensor:
         """Report a change in a metric.
 
         Args:
             metric: The metric that changed.
-            patching_input: The prepared input, which holds the unpatched runs' metrics.
+            patching_input: The prepared input, whose unpatched runs the change is reported against.
             delta: The patched run's metric minus the unpatched target run's.
 
         Returns:
@@ -186,27 +232,36 @@ class AbsoluteComparison(AbstractComparison):
     """The patched run's metric itself."""
 
     @classmethod
-    def apply(cls, metric: PatchingMetric, patching_input: PatchingInput, delta: torch.Tensor) -> torch.Tensor:
-        return patching_input.target_baseline(metric) + delta
+    def apply(cls, metric: AbstractMetric, patching_input: PatchingInput, delta: torch.Tensor) -> torch.Tensor:
+        return metric.target(patching_input) + delta
 
 
 class IndirectEffectComparison(AbstractComparison):
     """The patched run's metric minus the unpatched target run's, signed by the metric's ``effect_sign``."""
 
     @classmethod
-    def apply(cls, metric: PatchingMetric, patching_input: PatchingInput, delta: torch.Tensor) -> torch.Tensor:
-        return AbstractMetric.get(metric).effect_sign * delta
+    def apply(cls, metric: AbstractMetric, patching_input: PatchingInput, delta: torch.Tensor) -> torch.Tensor:
+        return metric.effect_sign * delta
 
 
 class NormalizedComparison(AbstractComparison):
     """0 where the patch changed nothing, 1 where it reproduced the source run.
 
     The same ratio circuit work calls faithfulness, with the unpatched target run playing the part
-    of the fully-ablated model.
+    of the fully-ablated model. Two runs that score the same leave no gap to divide by: every row then
+    reads inf, or nan where the patch changed nothing, and a warning is logged.
     """
 
     needs_source_run = True
 
     @classmethod
-    def apply(cls, metric: PatchingMetric, patching_input: PatchingInput, delta: torch.Tensor) -> torch.Tensor:
-        return delta / (patching_input.source_baseline(metric) - patching_input.target_baseline(metric))
+    def apply(cls, metric: AbstractMetric, patching_input: PatchingInput, delta: torch.Tensor) -> torch.Tensor:
+        target = metric.target(patching_input)
+        gap = metric.source(patching_input) - target
+        if gap == 0:
+            logger.warning(
+                "A normalized metric divides by the gap between the source and target runs, which both score %.6g: "
+                "the row reads inf, or nan where the patch changed nothing",
+                float(target),
+            )
+        return delta / gap

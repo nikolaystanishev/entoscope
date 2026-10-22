@@ -4,7 +4,8 @@ The grid is the run's own index, layer up and position across for the canonical 
 the metric on a diverging scale centred on the value an ineffective patch would produce, so warm
 cells are the locations that moved the model toward the source. One such grid is drawn per column
 the config names, each centred on its own comparison's ineffective value. A cell's hover names the
-token its patched run predicts next, and the subtitle the token each unpatched prompt does.
+token its patched run predicts next, and the subtitle the token each unpatched prompt does and the
+tokens the grid's metric reads.
 """
 
 from __future__ import annotations
@@ -19,12 +20,13 @@ from entoscope.model.config import POSITION_AXES
 from entoscope.model.index import Index
 from entoscope.model.token import str_token, str_token_labels
 from entoscope.operation.visualization import DIVERGING, GridFigure, describe_row, diverging_range, format_value, titled
-from entoscope.patching.config import MetricComparison, MetricPair, metric_column
+from entoscope.patching.config import MetricComparison
 from entoscope.patching.input import PatchingInput
+from entoscope.patching.method.patching import metric_column
 
 
-class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
-    """The page of a patching run: one grid per result column, each panel a metric and its comparison.
+class PatchingFigure(GridFigure[PatchingInput, str]):
+    """The page of a patching run: one grid per result column, each panel a metric, by its name.
 
     The patch elements the result is not laid out along are described in the subtitle when they patch
     the same location in every run, and in each cell's hover when they vary with the row.
@@ -46,32 +48,30 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
     def title(self) -> str:
         return titled("Patching", self.operation_input.config)
 
-    def panels(self) -> list[MetricPair]:
-        return self.operation_input.config.metric_pairs()
+    def panels(self) -> list[str]:
+        return list(self.operation_input.config.metric)
 
-    def heading(self, panel: MetricPair) -> str:
+    def heading(self, panel: str) -> str:
         config = self.operation_input.config
         return titled(f"Patching - {config.method.type} · {self.value_column(panel)}", config)
 
-    def subtitle(self, panel: MetricPair) -> str:
+    def subtitle(self, panel: str) -> str:
         patching_input = self.operation_input
         prompts = self._prompt("target", patching_input.target_prompt, patching_input.target_generation)
         if patching_input.source_prompt is not None:
             source = self._prompt("source", patching_input.source_prompt, patching_input.source_generation)
             prompts = f"{source} → {prompts}"
-        parts = [prompts]
+        parts = [prompts, self._reads(panel)]
         if self.constant:
             parts.append(self.constant)
         return " · ".join(parts)
 
-    def value_column(self, panel: MetricPair) -> str:
-        return metric_column(*panel)
+    def value_column(self, panel: str) -> str:
+        return metric_column(panel)
 
-    def value_range(self, panel: MetricPair, values: Sequence[float]) -> tuple[float, float]:
-        metric, comparison = panel
-        midpoint = (
-            float(self.operation_input.target_baseline(metric)) if comparison is MetricComparison.ABSOLUTE else 0.0
-        )
+    def value_range(self, panel: str, values: Sequence[float]) -> tuple[float, float]:
+        absolute = self.operation_input.config.metric[panel].comparison is MetricComparison.ABSOLUTE
+        midpoint = float(self.operation_input.metrics[panel].target(self.operation_input)) if absolute else 0.0
         return diverging_range(values, midpoint)
 
     def str_tokens(self) -> dict[str, list[str]]:
@@ -81,16 +81,17 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
         labels = {prefix: str_token_labels(self.model, tokens) for prefix, tokens in prompts}
         return {f"{prefix}{axis.value}": labels[prefix] for prefix in labels for axis in POSITION_AXES}
 
-    def hover(self, panel: MetricPair, position: int, coordinate: str) -> str:
+    def hover(self, panel: str, position: int, coordinate: str) -> str:
         row = self.result.iloc[position]
-        target = describe_row(row, "target_")
+        coordinates = self.coordinates.iloc[position]
+        target = describe_row(coordinates, "target_")
         column = self.value_column(panel)
-        lines = [f"<b>{column} = {format_value(row[column])}</b>"]
+        lines = [f"<b>{escape(column)} = {format_value(row[column])}</b>"]
         if "str_generation" in row.index:
             lines.append(f'generation: "{format_value(row["str_generation"])}"')
         if coordinate and coordinate != target:
             lines.append(coordinate)
-        lines.append(f"source: {describe_row(row, 'source_')}")
+        lines.append(f"source: {describe_row(coordinates, 'source_')}")
         lines.append(f"target: {target}")
         if self.per_row[position]:
             lines.append(self.per_row[position])
@@ -98,6 +99,23 @@ class PatchingFigure(GridFigure[PatchingInput, MetricPair]):
 
     def _prompt(self, run: str, prompt: str, generation: int) -> str:
         return f'{run}: "{escape(prompt)}" generates "{format_value(str_token(self.model, generation))}"'
+
+    def _reads(self, metric: str) -> str:
+        """Spell out what a metric measures, since its name is whatever the config chose.
+
+        Args:
+            metric: The metric's name in the config.
+
+        Returns:
+            The metric's type, then every token it reads, by name and spelled, such as
+            ``logit_diff: correct " Paris", distractor " Madrid"``.
+        """
+        config = self.operation_input.config.metric[metric]
+        tokens = [
+            f'{escape(token)} "{format_value(str_token(self.model, token_id))}"'
+            for token, token_id in zip(config.tokens, self.operation_input.metrics[metric].tokens, strict=True)
+        ]
+        return f"{config.type.value}: {', '.join(tokens)}" if tokens else config.type.value
 
     def _companions(self) -> tuple[str, list[str]]:
         """Describe what the patch elements other than the laid-out one did.

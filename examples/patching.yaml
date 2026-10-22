@@ -2,13 +2,16 @@
 #
 # A patching run writes activations of the source run into the target run, one patched run per row
 # of the index, and reads metrics off every patched run. The script's defaults patch "The capital of
-# France is" (source) into "The capital of Spain is" (target), scoring " Paris" against " Madrid".
+# France is" (source) into "The capital of Spain is" (target), and give the tokens the metrics read
+# their names: 'correct' is " Paris", 'distractor' " Madrid" and 'other' " Rome".
 #
-# `metric` maps each scalar read off a patched run to the comparisons it is reported under - one
-# result column per pair. 'logit_diff' and 'logprob_diff' compare the correct token with the
-# distractor, 'probability' and 'log_prob' read the correct one alone, and 'kl_divergence' scores the
-# whole distribution against the source run's and needs no answer token at all. They all come off the
-# same forward pass, so asking for several costs nothing, and each column is drawn as its own plot.
+# `metric` names each scalar read off a patched run, written to the result column '<name>_metric'. A
+# metric gives its `type`, the `tokens` it reads, by those names, and the comparison it is reported under.
+# 'logit_diff' and 'logprob_diff' compare their first token with their second, 'probability' and
+# 'log_prob' read a single token, and 'kl_divergence' scores the whole distribution against the source
+# run's and reads none. The names are roles rather than the tokens themselves, so an entry runs on
+# other prompts once `--tokens` names their answers. Every metric comes off the same forward pass, so
+# asking for several costs nothing, and each column is drawn as its own plot.
 #
 # The comparison says what a patched run is reported against. 'absolute' is the metric of the patched
 # run itself; 'indirect_effect' subtracts the unpatched target run, which is activation patching
@@ -19,8 +22,13 @@
 # two prompts apart lives, layer by layer.
 residual_sweep:
   metric:
-    logit_diff: [normalized]
-    kl_divergence: [indirect_effect]
+    logit_diff:
+      type: logit_diff
+      tokens: [correct, distractor]
+      comparison: normalized
+    kl_divergence:
+      type: kl_divergence
+      comparison: indirect_effect
   method: exact
   patch:
     - source: &residual
@@ -29,12 +37,40 @@ residual_sweep:
         type: replace
       target: *residual
 
+# Several metrics of one type, each on tokens of its own: the source run's answer against the target
+# run's, and against a third city neither prompt is about, whose own chance is read as well. Each
+# metric's columns carry its name.
+competing_answers:
+  metric:
+    against_target:
+      type: logit_diff
+      tokens: [correct, distractor]
+      comparison: normalized
+    against_other:
+      type: logit_diff
+      tokens: [correct, other]
+      comparison: indirect_effect
+    other:
+      type: probability
+      tokens: [other]
+      comparison: indirect_effect
+  method: exact
+  patch:
+    - source: *residual
+      target: *residual
+
 # Every head's output, at every position at once. A comparison sits on its metric because the right
-# one differs per metric, and a metric may name several: all three columns come off the one run.
+# one differs per metric: both columns come off the one run.
 head_sweep:
   metric:
-    logit_diff: [normalized, absolute]
-    probability: [indirect_effect]
+    logit_diff:
+      type: logit_diff
+      tokens: [correct, distractor]
+      comparison: normalized
+    probability:
+      type: probability
+      tokens: [correct]
+      comparison: indirect_effect
   method: exact
   patch:
     - source: &heads
@@ -50,7 +86,10 @@ head_sweep:
 # entries with src_pos past dest_pos are masked to 0 in both runs, so about half its runs score nothing.
 pattern_entries:
   metric:
-    logit_diff: [normalized]
+    logit_diff:
+      type: logit_diff
+      tokens: [correct, distractor]
+      comparison: normalized
   method: exact
   patch:
     - source: &pattern
@@ -69,7 +108,10 @@ pattern_entries:
 # is available without one.
 zero_ablation:
   metric:
-    logit_diff: [indirect_effect]
+    logit_diff:
+      type: logit_diff
+      tokens: [correct, distractor]
+      comparison: indirect_effect
   method: exact
   patch:
     - source:
@@ -83,7 +125,10 @@ zero_ablation:
 # embedding's own spread, one position at a time. `embed` sits outside the blocks, so it has no layer.
 noise_tracing:
   metric:
-    logit_diff: [indirect_effect]
+    logit_diff:
+      type: logit_diff
+      tokens: [correct, distractor]
+      comparison: indirect_effect
   method: exact
   patch:
     - source:
@@ -101,7 +146,10 @@ noise_tracing:
 # leaves behind.
 attribution:
   metric:
-    logit_diff: [indirect_effect]
+    logit_diff:
+      type: logit_diff
+      tokens: [correct, distractor]
+      comparison: indirect_effect
   method: attribution
   patch:
     - source: *residual
@@ -113,7 +161,10 @@ attribution:
 # prompts of the same token length.
 integrated_gradients:
   metric:
-    logit_diff: [indirect_effect]
+    logit_diff:
+      type: logit_diff
+      tokens: [correct, distractor]
+      comparison: indirect_effect
   method:
     type: integrated_gradients
     interpolation_steps: 10
@@ -126,7 +177,10 @@ integrated_gradients:
 # activation instead of the element-level one.
 explicit_coordinates:
   metric:
-    logit_diff: [absolute]
+    logit_diff:
+      type: logit_diff
+      tokens: [correct, distractor]
+      comparison: absolute
   method: exact
   patch:
     - source:
@@ -145,7 +199,10 @@ explicit_coordinates:
 # page names it in its subtitle.
 heads_with_fixed_mlp:
   metric:
-    logit_diff: [normalized]
+    logit_diff:
+      type: logit_diff
+      tokens: [correct, distractor]
+      comparison: normalized
   method: exact
   patch:
     - source: &late_heads

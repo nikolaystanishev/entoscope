@@ -12,7 +12,6 @@ from pandas._typing import Axes
 
 from entoscope.model.base import Model
 from entoscope.util.collections import range_combinations
-from entoscope.util.data import read_fields
 
 
 class ModelAxis(StrEnum):
@@ -574,8 +573,7 @@ class ModelLocatorConfig:
     Declaratively, ``location`` names the index axes and the full range of every axis is narrowed
     by ``filter`` and reshaped by the transforms. Explicitly, ``coordinates`` enumerates the exact
     points, every coordinate naming the same axes. The two modes are mutually exclusive. Negative
-    values count from the end of their axis. A field built in code may hold its raw config form, such
-    as a list for ``filter``, which is read as a config file's would be.
+    values count from the end of their axis.
 
     Attributes:
         activation: The activation every row reads. Left unset when every coordinate names its own.
@@ -603,8 +601,6 @@ class ModelLocatorConfig:
     coordinates: Coordinates | None = None
 
     def __post_init__(self):
-        read_fields(self)
-
         if ModelAxis.ACTIVATION in self.location:
             raise ValueError("'activation' is not a declarative location; set 'activation' on the config instead")
         declarative = (

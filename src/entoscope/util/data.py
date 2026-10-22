@@ -235,25 +235,6 @@ def _key_from_dict(key_type: Any, key: Any) -> Any:
     return from_dict(key_type, key)
 
 
-def read_fields(instance: Any) -> None:
-    """Read every init field of a dataclass instance through ``from_dict``, in place.
-
-    What a ``__post_init__`` calls so that an instance built in code holds what one read from a config
-    file would: a field given its raw config form is read into its type, and one given a value its
-    type cannot take is refused, as it would be from the file.
-
-    Args:
-        instance: The dataclass instance.
-
-    Raises:
-        ValueError: If a field holds a value its type cannot take.
-    """
-    hints = typing.get_type_hints(type(instance))
-    for declared in dataclasses.fields(instance):
-        if declared.init:
-            setattr(instance, declared.name, from_dict(hints[declared.name], getattr(instance, declared.name)))
-
-
 def dataclass_from_dict(cls: type, value: Any) -> Any:
     """Read a mapping field by field into a dataclass, bypassing any ``from_config`` of its own.
 

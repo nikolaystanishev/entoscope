@@ -5,7 +5,6 @@ from tqdm import tqdm
 
 from entoscope.patching.input import PatchingInput
 from entoscope.patching.method.patching import AbstractPatchingMethod, PatchingMethodConfigT, RowResult
-from entoscope.patching.metric import AbstractMetric
 from entoscope.patching.processor import HookedPatchProcessor
 from entoscope.util.collections import batch_generator
 
@@ -46,9 +45,8 @@ class ExactPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
                     self._report(
                         patching_input,
                         {
-                            metric: AbstractMetric.get(metric).compute(patching_input, logits)
-                            - patching_input.target_baseline(metric)
-                            for metric in self.config.metric
+                            name: metric.compute(patching_input, logits) - metric.target(patching_input)
+                            for name, metric in patching_input.metrics.items()
                         },
                     ),
                     generation=generation,

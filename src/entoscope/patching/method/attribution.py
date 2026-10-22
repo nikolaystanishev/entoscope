@@ -4,13 +4,13 @@ from dataclasses import dataclass
 import torch
 from tqdm import tqdm
 
-from entoscope.patching.config import PatchingMethodConfig, PatchingMetric
+from entoscope.patching.config import PatchingMethodConfig
 from entoscope.patching.input import PatchingInput
 from entoscope.patching.method.patching import AbstractPatchingMethod, PatchingMethodConfigT, RowResult
-from entoscope.patching.metric import AbstractMetric
 from entoscope.patching.processor import SourceStrategy
 
-Gradients = dict[PatchingMetric, dict[str, torch.Tensor]]
+# Keyed by the metric's name, then by the hook's.
+Gradients = dict[str, dict[str, torch.Tensor]]
 
 
 class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
@@ -31,7 +31,7 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
         gradients = self._gradients(patching_input, verbose)
 
         for output, group in enumerate(tqdm(patching_input.rows(), disable=not verbose)):
-            deltas: dict[PatchingMetric, torch.Tensor] = {}
+            deltas: dict[str, torch.Tensor] = {}
             for index in group:
                 name = index.target.transformer_activation()
                 clean = index.target.read_slices(patching_input.target_cache[name])
@@ -88,7 +88,8 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
             verbose: Whether to show a progress bar over the passes.
 
         Returns:
-            Each metric's gradient with respect to every patched activation, keyed by metric and hook name.
+            Each metric's gradient with respect to every patched activation, keyed by the metric's name and
+            the hook's.
         """
         passes = self._passes(patching_input.target_activation_names())
         totals: Gradients = {metric: {} for metric in self.config.metric}
@@ -99,9 +100,8 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
             logits = self.model.run_with_hooks(patching_input.target_tokens, fwd_hooks=fwd_hooks)[0, -1]
 
             for i, metric in enumerate(self.config.metric):
-                value = AbstractMetric.get(metric).compute(patching_input, logits)
                 gradients = torch.autograd.grad(
-                    value,
+                    patching_input.metrics[metric].compute(patching_input, logits),
                     list(captured.values()),
                     retain_graph=i < len(self.config.metric) - 1,
                     allow_unused=True,
@@ -164,7 +164,6 @@ class IntegratedGradientsConfig(PatchingMethodConfig):
     interpolation_steps: int = 10
 
     def __post_init__(self):
-        super().__post_init__()
         if self.interpolation_steps < 1:
             raise ValueError(f"interpolation_steps must be at least 1, got {self.interpolation_steps}")
 

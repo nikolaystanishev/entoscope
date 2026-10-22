@@ -8,6 +8,7 @@ from entoscope.patching.config import (
     PatchingElementConfig,
     PatchingMethodConfig,
     PatchingMetric,
+    PatchingMetricConfig,
     PatchingType,
     SinglePatchingConfig,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "PatchingMethodConfig",
     "PatchingMethodFactory",
     "PatchingMetric",
+    "PatchingMetricConfig",
     "PatchingType",
     "PatchingVisualizationCollector",
     "SinglePatchingConfig",

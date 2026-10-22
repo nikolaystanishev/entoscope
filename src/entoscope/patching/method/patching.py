@@ -7,9 +7,24 @@ import torch
 from typing_extensions import TypeVar
 
 from entoscope.model import Model
-from entoscope.patching.config import PatchingConfig, PatchingMethodConfig, PatchingMetric, metric_column
+from entoscope.patching.config import PatchingConfig, PatchingMethodConfig
 from entoscope.patching.input import PatchingInput
 from entoscope.patching.metric import AbstractComparison
+
+
+def metric_column(metric: str) -> str:
+    """Name the result column a metric is written to.
+
+    Every metric's column carries the same suffix, so none is a column the run writes itself: ``generation``,
+    ``str_generation`` or one of the index's.
+
+    Args:
+        metric: The metric's name in the config.
+
+    Returns:
+        ``<name>_metric``, such as ``logit_diff_metric``.
+    """
+    return f"{metric}_metric"
 
 
 @dataclass(frozen=True)
@@ -18,7 +33,8 @@ class RowResult:
 
     Attributes:
         output: The result row the collector files the report under.
-        metrics: The row's value in every result column, keyed by column.
+        metrics: The row's value of every metric, keyed by the metric's name; the collector writes each to
+            its ``metric_column``.
         generation: The token the patched run predicts next. Only a method that actually runs the patched
             model has one, and the gradient methods, which estimate the metric without such a run, leave it
             unset.
@@ -36,8 +52,8 @@ class AbstractPatchingMethod(abc.ABC, Generic[PatchingMethodConfigT]):
     """The base of every patching method: how a run turns its index into one number per row.
 
     Every method produces the same primitive for each row, ``delta``, the metric of the patched run
-    minus the metric of the unpatched target run, one per metric, and ``_report`` fans it out into the
-    columns the config's comparisons ask for. What separates the methods is only how ``delta`` is
+    minus the metric of the unpatched target run, one per metric, and ``_report`` reports each under its
+    metric's comparison. What separates the methods is only how ``delta`` is
     reached: by patching and running the model, or by estimating from gradients.
 
     A method is built once per run. Its type argument names the dataclass of its method config,
@@ -70,7 +86,7 @@ class AbstractPatchingMethod(abc.ABC, Generic[PatchingMethodConfigT]):
             verbose: Whether to show a progress bar.
 
         Yields:
-            One ``RowResult`` per patched run, its metric values keyed by result column.
+            One ``RowResult`` per patched run, its metric values keyed by the metric's name.
         """
         raise NotImplementedError
 
@@ -101,20 +117,19 @@ class AbstractPatchingMethod(abc.ABC, Generic[PatchingMethodConfigT]):
             ValueError: If the method cannot score the input.
         """
 
-    def _report(self, patching_input: PatchingInput, deltas: dict[PatchingMetric, torch.Tensor]) -> dict[str, float]:
-        """Fan one row's change in every metric out into the result columns.
+    def _report(self, patching_input: PatchingInput, deltas: dict[str, torch.Tensor]) -> dict[str, float]:
+        """Report one row's change in every metric under the metric's comparison.
 
         Args:
             patching_input: The prepared input.
-            deltas: Each metric's patched value minus its unpatched target value.
+            deltas: Each metric's patched value minus its unpatched target value, keyed by the metric's name.
 
         Returns:
-            The row's value in every result column, keyed by column.
+            The row's value of every metric, keyed by the metric's name.
         """
         return {
-            metric_column(metric, comparison): AbstractComparison.get(comparison)
-            .apply(metric, patching_input, deltas[metric])
+            name: AbstractComparison.get(metric.comparison)
+            .apply(patching_input.metrics[name], patching_input, deltas[name])
             .item()
-            for metric, comparisons in self.config.metric.items()
-            for comparison in comparisons
+            for name, metric in self.config.metric.items()
         }

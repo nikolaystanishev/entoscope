@@ -33,7 +33,9 @@ Python 3.11 to 3.14 (and on 3.15, allowed to fail until torch publishes wheels f
 (report-only, no threshold), and a `docs` job builds the site above into a `docs-html` artifact. A `lowest`
 job runs the tests on the lowest dependency versions `pyproject.toml` allows, and a `package` job builds the
 sdist and wheel and runs the tests against the installed wheel. A `v*` tag runs `release.yml`: the whole of
-CI, then PyPI by trusted publishing, the docs to GitHub Pages and a GitHub release.
+CI, then PyPI by trusted publishing, the docs to GitHub Pages and a GitHub release. CI's jobs run on the
+runner the repository variable `CI_RUNNER` names, `ubuntu-latest` when it is unset; a self-hosted one must
+not be named once the repository is public, since a fork's pull request runs its own workflow on it.
 
 ## What this repo is
 
@@ -48,10 +50,9 @@ follows the same four-part shape, and adding one means writing the same four pie
 - **Config** (`<op>/config.py`) - a `kw_only` dataclass extending `AbstractConfig`, validating in
   `__post_init__`. Loadable from YAML through `ConfigFactory[TheConfig](path).create("id")`, which
   deserializes strictly via `entoscope.util.data.from_dict` (unknown/missing keys and mistyped scalars
-  raise; a `from_config` classmethod on a field's type overrides the default handling). Every config,
-  method config and locator also reads its own fields through `from_dict` in `__post_init__`
-  (`read_fields`), so one built in code is read as its file twin is; a subclass's `__post_init__`
-  calls `super().__post_init__()` first. Its `method` field is
+  raise; a `from_config` classmethod on a field's type overrides the default handling). `from_dict` is
+  the only reader of raw shapes: a config built in code holds typed values, and code holding a raw
+  shape reads it through `from_dict`. Its `method` field is
   the method config, a `MethodConfig` whose `type` names the method - in YAML a mapping or just
   the type. `type` is `MethodConfig`'s own field and has no default, since one method config class
   serves several methods. It is saved as `config.json` beside the run's results,
@@ -166,12 +167,13 @@ Everything else dispatches by `match` on an enum in an `AbstractX.get(enum)` sta
 Patching composes three of those: `PatchingMetric` picks the scalar read off a run, `MetricComparison`
 picks what the patched run is reported against, and the config's `method` picks how the change in
 the metric is obtained. Patched run `i` applies row `i` of every patch element, and the result is laid
-out along the element with the most rows. The config's `metric` maps the first onto a list of the second, one result column
-per pair, so the comparison is chosen per metric and a metric may carry several. Every method yields
+out along the element with the most rows. The config's `metric` maps a name of its choosing to a
+`PatchingMetricConfig`: the `PatchingMetric`, the tokens it reads by their names in the input's
+`tokens`, and its comparison. The input builds the metrics and owns their lifetime. Every method yields
 the same primitive - the patched run's metric minus the unpatched target run's, one per *metric* -
 so adding one means implementing `AbstractPatchingMethod.scores` (and `passes`, which a plan reports;
-`check` refuses an input before any forward pass); `_report` fans that out into the columns and the
-figure draws one plot per `config.metric_pairs()` entry. `integrated_gradients` interpolates one hook
+`check` refuses an input before any forward pass); `_report` reports that under each metric's comparison
+and the figure draws one plot per metric. `integrated_gradients` interpolates one hook
 per pass, so its cost grows with the hooks an index patches but a row's score never depends on the
 rest of the index. A method
 that actually runs the patched model (only `exact`) also reports that run's next token as the row's
@@ -206,7 +208,7 @@ time, so the config class must be defined above it.
 - Docstrings are Google style, rendered by napoleon: a summary line, then `Args:`, `Returns:` (or
   `Yields:`) and `Raises:` for a function, and `Args:` for a class's constructor or `Attributes:` for a
   dataclass's fields. Types stay in the signature, not the docstring.
-- Messages to the user go through a module's `logging.getLogger(__name__)`, never `print`.
+- Messages to the user go through a module's `logging.getLogger(__name__)`, never `print` or `warnings`.
   `entoscope/__init__.py` gives the `entoscope` logger its own stderr handler at INFO and stops it propagating,
   so a dependency that configures the root logger (transformer_lens does) cannot reformat or mute it.
 - `src/entoscope/circuit/vendor/` is CC BY-NC 4.0 third-party code, kept close to verbatim and excluded

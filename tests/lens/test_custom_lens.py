@@ -17,7 +17,7 @@ from entoscope.lens.lens import Lens
 from entoscope.lens.method.factory import LensMethodFactory
 from entoscope.lens.method.logit_lens import LogitLens
 from entoscope.lens.method.parameter_lens import ParameterLens, ParameterLensConfig, ProjectionSpace
-from entoscope.model.config import Filter, ModelAxis, ModelLayerLocation, ModelLocatorConfig
+from entoscope.model.config import Coordinates, Filter, ModelAxis, ModelLayerLocation, ModelLocatorConfig
 from entoscope.util.data import from_dict
 
 from ..conftest import TransformerBridge, forbid_model_runs, rendered_figure
@@ -120,7 +120,9 @@ def _warm(source: ModelLocatorConfig) -> LensConfig:
 
 
 def _last_position(activation: str, **coordinate: int) -> ModelLocatorConfig:
-    return ModelLocatorConfig(coordinates=[{"activation": activation, "layer": -1, "position": -1, **coordinate}])
+    return ModelLocatorConfig(
+        coordinates=Coordinates.from_config([{"activation": activation, "layer": -1, "position": -1, **coordinate}])
+    )
 
 
 def _neurons() -> ModelLocatorConfig:
