@@ -33,7 +33,9 @@ Python 3.11 to 3.14 (and on 3.15, allowed to fail until torch publishes wheels f
 (report-only, no threshold), and a `docs` job builds the site above into a `docs-html` artifact. A `lowest`
 job runs the tests on the lowest dependency versions `pyproject.toml` allows, and a `package` job builds the
 sdist and wheel and runs the tests against the installed wheel. A `v*` tag runs `release.yml`: the whole of
-CI, then PyPI by trusted publishing, the docs to GitHub Pages and a GitHub release.
+CI, then PyPI by trusted publishing, the docs to GitHub Pages and a GitHub release. CI's jobs run on the
+runner the repository variable `CI_RUNNER` names, `ubuntu-latest` when it is unset; a self-hosted one must
+not be named once the repository is public, since a fork's pull request runs its own workflow on it.
 
 ## What this repo is
 
