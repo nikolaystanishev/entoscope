@@ -12,13 +12,29 @@ from entoscope.patching.input import PatchingInput
 from entoscope.patching.metric import AbstractComparison
 
 
+def metric_column(metric: str) -> str:
+    """Name the result column a metric is written to.
+
+    Every metric's column carries the same suffix, so none is a column the run writes itself: ``generation``,
+    ``str_generation`` or one of the index's.
+
+    Args:
+        metric: The metric's name in the config.
+
+    Returns:
+        ``<name>_metric``, such as ``logit_diff_metric``.
+    """
+    return f"{metric}_metric"
+
+
 @dataclass(frozen=True)
 class RowResult:
     """What a method reports for one index row.
 
     Attributes:
         output: The result row the collector files the report under.
-        metrics: The row's value in every result column, keyed by the metric's name, which is its column.
+        metrics: The row's value of every metric, keyed by the metric's name; the collector writes each to
+            its ``metric_column``.
         generation: The token the patched run predicts next. Only a method that actually runs the patched
             model has one, and the gradient methods, which estimate the metric without such a run, leave it
             unset.
@@ -70,7 +86,7 @@ class AbstractPatchingMethod(abc.ABC, Generic[PatchingMethodConfigT]):
             verbose: Whether to show a progress bar.
 
         Yields:
-            One ``RowResult`` per patched run, its metric values keyed by result column.
+            One ``RowResult`` per patched run, its metric values keyed by the metric's name.
         """
         raise NotImplementedError
 
@@ -109,7 +125,7 @@ class AbstractPatchingMethod(abc.ABC, Generic[PatchingMethodConfigT]):
             deltas: Each metric's patched value minus its unpatched target value, keyed by the metric's name.
 
         Returns:
-            The row's value in every result column, keyed by the metric's name, which is its column.
+            The row's value of every metric, keyed by the metric's name.
         """
         return {
             name: AbstractComparison.get(metric.comparison)

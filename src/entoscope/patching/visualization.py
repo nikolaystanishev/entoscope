@@ -22,21 +22,7 @@ from entoscope.model.token import str_token, str_token_labels
 from entoscope.operation.visualization import DIVERGING, GridFigure, describe_row, diverging_range, format_value, titled
 from entoscope.patching.config import MetricComparison
 from entoscope.patching.input import PatchingInput
-
-
-def metric_column(metric: str) -> str:
-    """Name the result column of a metric.
-
-    Every metric's column carries the same suffix, so none is a column the run writes itself: ``generation``,
-    ``str_generation`` or one of the index's.
-
-    Args:
-        metric: The metric's name in the config.
-
-    Returns:
-        ``<name>_metric``, such as ``logit_diff_metric``.
-    """
-    return f"{metric}_metric"
+from entoscope.patching.method.patching import metric_column
 
 
 class PatchingFigure(GridFigure[PatchingInput, str]):
@@ -56,7 +42,6 @@ class PatchingFigure(GridFigure[PatchingInput, str]):
 
     def __init__(self, result: pd.DataFrame, operation_input: PatchingInput, model: Model, index: Index) -> None:
         super().__init__(result, operation_input, model, index)
-        self.coordinates = index.to_df()
         self.constant, self.per_row = self._companions()
 
     @property
@@ -98,12 +83,10 @@ class PatchingFigure(GridFigure[PatchingInput, str]):
 
     def hover(self, panel: str, position: int, coordinate: str) -> str:
         row = self.result.iloc[position]
-        # Described off the index's own columns, since the result's also hold the metrics, and a metric
-        # named with a side's prefix would read as a coordinate.
         coordinates = self.coordinates.iloc[position]
         target = describe_row(coordinates, "target_")
         column = self.value_column(panel)
-        lines = [f"<b>{column} = {format_value(row[column])}</b>"]
+        lines = [f"<b>{escape(column)} = {format_value(row[column])}</b>"]
         if "str_generation" in row.index:
             lines.append(f'generation: "{format_value(row["str_generation"])}"')
         if coordinate and coordinate != target:

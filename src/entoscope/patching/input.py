@@ -1,4 +1,5 @@
 import logging
+import numbers
 from dataclasses import dataclass, field
 
 import torch
@@ -37,7 +38,8 @@ class PatchingInput(OperationInput):
     Raises:
         ValueError: If the config has no patch element, names a patch type, metric or comparison nothing
             implements, reads or scores against the source run without a source prompt, or a metric
-            names other than as many tokens as its type reads, or a token ``tokens`` does not name.
+            names other than as many tokens as its type reads, or a token that ``tokens`` does not name
+            or that is neither a string nor a token id.
     """
 
     config: PatchingConfig
@@ -64,6 +66,8 @@ class PatchingInput(OperationInput):
     def __post_init__(self):
         self._check_available()
         self._check_tokens()
+        if not self.config.metric:
+            logger.warning("The config names no metric, so the run reports none and its page draws no plot")
 
     def prepare(self, model: Model, batch_size: int = 1, *, index_only: bool = False) -> "PatchingInput":
         """Resolve the index and the tokens, then run both prompts, caching what it reads, as wide as the patched runs.
@@ -127,6 +131,7 @@ class PatchingInput(OperationInput):
                 )
             self._batch_width = batch_width
             self._noise_scales = {}
+            self._metrics = None
 
             if self._source_logits is not None:
                 self._source_generation = int(self._source_logits[0, -1].argmax())
@@ -229,8 +234,12 @@ class PatchingInput(OperationInput):
     def _check_tokens(self) -> None:
         """Reject a metric that names other than as many tokens as its type reads, or one the input does not name.
 
+        A token is a string or an id, so a bool or a float, which would truncate to an unrelated id, is
+        refused.
+
         Raises:
-            ValueError: If a metric names too many or too few tokens, or one missing from ``tokens``.
+            ValueError: If a metric names too many or too few tokens, one missing from ``tokens``, or one
+                that is neither a string nor a token id.
         """
         for name, metric in self.config.metric.items():
             n_tokens = AbstractMetric.get(metric.type).n_tokens
@@ -245,6 +254,9 @@ class PatchingInput(OperationInput):
                     raise ValueError(
                         f"{name} reads the token {token!r}, which the input's tokens do not name: they name {named}"
                     )
+                value = self.tokens[token]
+                if isinstance(value, bool) or not isinstance(value, str | numbers.Integral):
+                    raise ValueError(f"The token {token!r} is {value!r}, which is neither a string nor a token id")
 
     def _resolve_tokens(self, model: Model) -> dict[str, int]:
         """Find the id of every token a metric reads, which needs the tokenizer and no forward pass.
@@ -351,7 +363,11 @@ class PatchingInput(OperationInput):
 
     @property
     def metrics(self) -> dict[str, AbstractMetric]:
-        """Every metric of the config by its name, built on the ids of the tokens it reads when first read."""
+        """Every metric of the config by its name, built on the ids of the tokens it reads when first read.
+
+        Built again once the prompts are re-run, or the input moved, so what a metric keeps of the unpatched
+        runs is always of the runs the input holds.
+        """
         if self._metrics is None:
             assert self._token_ids is not None
             self._metrics = {
@@ -390,5 +406,6 @@ class PatchingInput(OperationInput):
         if self._target_logits is not None:
             self._target_logits = self._target_logits.to(device)
         self._noise_scales = {name: scale.to(device) for name, scale in self._noise_scales.items()}
+        self._metrics = None
 
         return self

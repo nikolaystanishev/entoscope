@@ -20,8 +20,9 @@ logger = logging.getLogger(__name__)
 class AbstractMetric(abc.ABC):
     """One scalar read off a run's final-position logits, on the tokens it reads.
 
-    It holds no run of its own: the input, which holds the two unpatched runs, is handed to it with every
-    run it reads.
+    The input, which holds the two unpatched runs, is handed to it with every run it reads. The input also
+    builds it, and builds it again whenever it re-runs its prompts, so a metric belongs to one pair of
+    unpatched runs: what it reads off them, which every row is reported against, it reads once and keeps.
 
     Args:
         tokens: The ids of the tokens the metric reads, in the order its config names them.
@@ -40,28 +41,34 @@ class AbstractMetric(abc.ABC):
 
     def __init__(self, tokens: list[int]):
         self.tokens = tokens
+        self._source: torch.Tensor | None = None
+        self._target: torch.Tensor | None = None
 
     def source(self, patching_input: PatchingInput) -> torch.Tensor:
-        """Read the metric off the unpatched source run.
+        """Read the metric off the unpatched source run, the first time it is asked.
 
         Args:
-            patching_input: The prepared input, which has a source prompt.
+            patching_input: The prepared input that built the metric, which has a source prompt.
 
         Returns:
             The metric, a scalar.
         """
-        return self.compute(patching_input, patching_input.source_logits[0, -1])
+        if self._source is None:
+            self._source = self.compute(patching_input, patching_input.source_logits[0, -1])
+        return self._source
 
     def target(self, patching_input: PatchingInput) -> torch.Tensor:
-        """Read the metric off the unpatched target run.
+        """Read the metric off the unpatched target run, the first time it is asked.
 
         Args:
-            patching_input: The prepared input.
+            patching_input: The prepared input that built the metric.
 
         Returns:
             The metric, a scalar.
         """
-        return self.compute(patching_input, patching_input.target_logits[0, -1])
+        if self._target is None:
+            self._target = self.compute(patching_input, patching_input.target_logits[0, -1])
+        return self._target
 
     @abc.abstractmethod
     def compute(self, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
@@ -160,10 +167,14 @@ class KLDivergenceMetric(AbstractMetric):
     effect_sign = -1
     needs_source_run = True
 
+    def __init__(self, tokens: list[int]):
+        super().__init__(tokens)
+        self._source_probabilities: torch.Tensor | None = None
+
     def compute(self, patching_input: PatchingInput, logits: Logits) -> torch.Tensor:
-        return torch.nn.functional.kl_div(
-            logits.log_softmax(dim=-1), patching_input.source_logits[0, -1].softmax(dim=-1), reduction="sum"
-        )
+        if self._source_probabilities is None:
+            self._source_probabilities = patching_input.source_logits[0, -1].softmax(dim=-1)
+        return torch.nn.functional.kl_div(logits.log_softmax(dim=-1), self._source_probabilities, reduction="sum")
 
 
 class AbstractComparison(abc.ABC):

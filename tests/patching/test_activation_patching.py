@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from dataclasses import replace
 from html import escape
 from pathlib import Path
@@ -791,6 +792,17 @@ def test_a_token_the_input_cannot_supply_is_rejected_as_the_input_is_built(token
         PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT, tokens=tokens)
 
 
+@pytest.mark.parametrize("token", [True, 3.7], ids=["bool", "float"])
+def test_a_token_that_is_neither_a_string_nor_an_id_is_rejected_as_the_input_is_built(token) -> None:
+    # Read as an id, either would truncate to an unrelated token rather than fail.
+    message = f"The token 'correct' is {token!r}, which is neither a string nor a token id"
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        PatchingInput(
+            _last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT, tokens={**TOKENS, "correct": token}
+        )
+
+
 @pytest.mark.parametrize(
     ("distractor", "message"),
     [
@@ -894,6 +906,7 @@ def test_a_metric_named_as_a_column_of_the_run_s_own_keeps_a_column_of_its_own(m
     for figure in figures:
         (hover,) = figure.trace["hovertext"]
         assert hover.split("<br>")[-2:] == [f"source: {location}", f"target: {location}"]
+        assert figure.ticks("xaxis") == [location]
 
 
 # --------------------------------------------------------------------------------------------------
@@ -1989,6 +2002,25 @@ def test_an_input_run_at_another_batch_size_remakes_its_runs_at_that_width(
     assert [run.width for run in runs if run.entry == "run_with_cache"] == [3, 3]
 
 
+def test_an_input_run_again_at_another_batch_size_reports_against_the_runs_made_at_it(
+    batch_shape_dependent_model: Model,
+) -> None:
+    # What a metric reads off the unpatched runs is read once per run, so an input run again at another
+    # width reads it again off the runs remade at that width: a prompt patched into itself still changes
+    # nothing.
+    model = batch_shape_dependent_model
+    config = replace(
+        _self_patch_config(), metric=_metrics({PatchingMetric.PROBABILITY: MetricComparison.INDIRECT_EFFECT})
+    )
+    patching_input = PatchingInput(config, TARGET_PROMPT, TARGET_PROMPT, tokens=TARGET_TOKENS)
+
+    for batch_size in (1, 3):
+        patcher = Patcher(model, collector_class=PatchingCollector, batch_size=batch_size)
+        result = patcher.apply(patching_input, return_collector=True, verbose=False).result
+
+        assert result["probability_metric"].tolist() == [0.0] * len(result), batch_size
+
+
 def test_a_batch_wider_than_the_sweep_runs_only_as_wide_as_its_rows(model: Model, monkeypatch) -> None:
     patching_input = PatchingInput(_last_layer_resid_patch_config(), SOURCE_PROMPT, TARGET_PROMPT, tokens=TOKENS)
     runs = record_runs(monkeypatch, model)
@@ -2193,11 +2225,14 @@ def test_a_metric_comparison_that_is_not_known_raises(model: Model) -> None:
         Patcher(model).apply(PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT, tokens=TOKENS), verbose=False)
 
 
-def test_a_run_without_a_metric_still_reports_what_each_patched_run_predicts(model: Model) -> None:
-    # Nothing to refuse: a config may ask for no metric at all.
+def test_a_run_without_a_metric_still_reports_what_each_patched_run_predicts(
+    model: Model, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Nothing to refuse: a config may ask for no metric at all, and is told that it reports none.
     collector = _collect(model, replace(_last_layer_resid_patch_config(), metric={}))
 
     assert _cell_columns(collector) == GENERATION_COLUMNS
+    assert _warnings(caplog) == ["The config names no metric, so the run reports none and its page draws no plot"]
 
 
 def test_a_run_without_a_collector_still_writes_its_artifacts(model: Model, tmp_path: Path) -> None:
@@ -2781,6 +2816,29 @@ def test_the_colour_is_centred_on_the_value_an_ineffective_patch_would_produce(m
     assert trace["colorbar"]["title"]["text"] == "logit_diff_metric"
     # Nothing is printed inside a patching cell; the metric is the colour and the rest is hover.
     assert "text" not in trace
+
+
+def test_a_metric_s_name_is_shown_as_the_text_it_is(model: Model, tmp_path: Path) -> None:
+    # The name is the config's to choose, so markup in it is shown on the page rather than rendered.
+    element = _last_layer_resid_element()
+    config = PatchingConfig(
+        metric={
+            "<i>p</i>": PatchingMetricConfig(
+                type=PatchingMetric.PROBABILITY, tokens=["correct"], comparison=MetricComparison.ABSOLUTE
+            )
+        },
+        method=EXACT,
+        patch=[SinglePatchingConfig(source=element, target=element)],
+    )
+
+    figure = _draw(model, config, tmp_path / "markup")
+
+    column = escape("<i>p</i>_metric")
+    assert figure.kind == "bar"
+    assert f"· {column}" in figure.title
+    assert figure.trace["hovertext"][0].startswith(f"<b>{column} = ")
+    assert figure.trace["marker"]["colorbar"]["title"]["text"] == column
+    assert figure.axis_title("yaxis") == column
 
 
 def test_patching_a_prompt_with_itself_leaves_the_scale_intact(model: Model, tmp_path: Path) -> None:

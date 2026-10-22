@@ -76,7 +76,7 @@ def label_column(frame: pd.DataFrame, axis: str, prefixes: Sequence[str]) -> str
     longer target one leaves NaN behind, and a half-filled axis labels nothing.
 
     Args:
-        frame: A result frame.
+        frame: An index's frame, as ``Index.to_df`` lays it out.
         axis: An axis of the index, such as ``"layer"``.
         prefixes: The column prefixes to try, in order of preference.
 
@@ -98,7 +98,7 @@ def tick_text(
     A position is labeled with its token, a row without a value on the axis with its full coordinates.
 
     Args:
-        frame: The result frame the grid lays out.
+        frame: The index's own frame, one row per result row, as ``Index.to_df`` lays it out.
         grid: The grid.
         axis: The axis to label.
         prefixes: The column prefixes to read values from, in order of preference.
@@ -127,10 +127,10 @@ def tick_text(
 
 
 def describe_row(row: pd.Series, prefix: str) -> str:
-    """Describe the location of one result row on one side of the index.
+    """Describe the location of one index row on one side of the index.
 
     Args:
-        row: A result row.
+        row: A row of the index's frame, as ``Index.to_df`` lays it out.
         prefix: The side to describe, ``"source_"`` or ``"target_"``.
 
     Returns:
@@ -323,7 +323,7 @@ def x_labels(frame: pd.DataFrame, grid: IndexGrid, prefixes: Sequence[str], toke
     """Label the grid's columns.
 
     Args:
-        frame: The result frame the grid lays out.
+        frame: The index's own frame, one row per result row, as ``Index.to_df`` lays it out.
         grid: The grid.
         prefixes: The column prefixes to read values from, in order of preference.
         tokens: The prompt's token strings, keyed by the position column they label.
@@ -341,7 +341,7 @@ def y_labels(frame: pd.DataFrame, grid: IndexGrid, prefixes: Sequence[str], toke
     """Label the grid's rows.
 
     Args:
-        frame: The result frame the grid lays out.
+        frame: The index's own frame, one row per result row, as ``Index.to_df`` lays it out.
         grid: The grid.
         prefixes: The column prefixes to read values from, in order of preference.
         tokens: The prompt's token strings, keyed by the position column they label.
@@ -366,7 +366,7 @@ def cell_labels(
     """Give every result row the coordinates of its cell.
 
     Args:
-        frame: The result frame the grid lays out.
+        frame: The index's own frame, one row per result row, as ``Index.to_df`` lays it out.
         grid: The grid.
         prefixes: The column prefixes to read values from, in order of preference.
         tokens: The prompt's token strings, keyed by the position column they label.
@@ -423,6 +423,9 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
         index: The index that laid the result out, whose layout codes build the grid.
 
     Attributes:
+        coordinates: The index's own frame, which every cell, tick and hover is labelled from: the result
+            frame also holds the values, and a value column named with a side's prefix would read as a
+            coordinate.
         prefixes: The column prefixes axis values are read from, in order of preference: the index's own
             ``layout_prefixes``, so the axes are labelled by the side the grid was laid out along.
         colorscale: The plotly colour scale cells are drawn with.
@@ -434,6 +437,7 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
         self.result = result
         self.operation_input = operation_input
         self.model = model
+        self.coordinates = index.to_df()
         self.prefixes = index.layout_prefixes
         self.tokens = self.str_tokens()
         self.grid = IndexGrid.of(index.layout_df)
@@ -495,7 +499,7 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
             panel: One of ``panels()``.
 
         Returns:
-            The title, by default the value column's name.
+            The title, as text, by default the value column's name.
         """
         return self.value_column(panel)
 
@@ -520,7 +524,7 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
         Returns:
             plotly ``yaxis`` settings, by default only the axis title.
         """
-        return dict(title=self.value_title(panel))
+        return dict(title=escape(self.value_title(panel)))
 
     def cell_text(self, panel: PanelT) -> list[str] | None:
         """Choose the label printed inside each cell of one panel.
@@ -590,7 +594,7 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
         grid = self.grid
         values = [float(value) for value in self.result[self.value_column(panel)]]
         low, high = self.value_range(panel, values)
-        coordinates = cell_labels(self.result, grid, self.prefixes, self.tokens)
+        coordinates = cell_labels(self.coordinates, grid, self.prefixes, self.tokens)
         hover = [self.hover(panel, position, coordinates[position]) for position in range(len(self.result))]
         text = self.cell_text(panel) if len(grid.x_codes) * len(grid.y_keys) <= MAX_ANNOTATED_CELLS else None
 
@@ -604,7 +608,7 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
                 title=axis_title([grid.x_axis]) if grid.x_axis is not None else "",
                 tickmode="array",
                 tickvals=self._x_positions,
-                ticktext=x_labels(self.result, grid, self.prefixes, self.tokens),
+                ticktext=x_labels(self.coordinates, grid, self.prefixes, self.tokens),
             ),
         )
         return figure
@@ -632,7 +636,7 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
                     colorscale=self.colorscale,
                     cmin=low,
                     cmax=high,
-                    colorbar=dict(title=self.value_title(panel)),
+                    colorbar=dict(title=escape(self.value_title(panel))),
                 ),
             )
         )
@@ -655,7 +659,7 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
             colorscale=self.colorscale,
             zmin=low,
             zmax=high,
-            colorbar=dict(title=self.value_title(panel)),
+            colorbar=dict(title=escape(self.value_title(panel))),
             hovertext=self.grid.lay_out(hover, ""),
             hoverinfo="text",
             xgap=1,
@@ -672,7 +676,7 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
                 title=axis_title(self.grid.y_axes),
                 tickmode="array",
                 tickvals=self._y_positions,
-                ticktext=y_labels(self.result, self.grid, self.prefixes, self.tokens),
+                ticktext=y_labels(self.coordinates, self.grid, self.prefixes, self.tokens),
             )
         )
         return figure

@@ -25,7 +25,9 @@ and all but `custom_lens.py` take `--cache-dir` to keep the model's activations 
 The YAML files explain every entry in their comments. The prompts are options too: `--prompt` for
 the lens, `--positive` and `--negative` for probing, `--source-prompt` and `--target-prompt` for
 patching, and `--prompts` for circuit discovery. Patching also takes `--tokens`, the tokens its
-metrics read, as `name:token` pairs such as `--tokens correct:" Paris" distractor:" Madrid"`.
+metrics read, as `name:token` pairs such as `--tokens correct:" Paris" distractor:" Madrid" other:" Rome"`.
+They replace the default tokens rather than add to them, so new prompts never keep an old answer: name
+every token the config reads.
 
 The test suite loads every entry and plans every script on each of them, so the examples keep up with
 the code. See the [docs](../docs/index.md) for what each operation and option means.

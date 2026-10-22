@@ -28,7 +28,10 @@ class Config:
     target_prompt: str = field(default="The capital of Spain is", metadata={"help": "the run patched into"})
     tokens: dict[str, str] = field(
         default_factory=lambda: {"correct": " Paris", "distractor": " Madrid", "other": " Rome"},
-        metadata={"help": "the tokens the metrics read, as name:token, by the names the configs give them"},
+        metadata={
+            "help": "the tokens the metrics read, as name:token, by the names the configs give them; "
+            "they replace the defaults, so name every token the config reads"
+        },
     )
     batch_size: int = field(default=1, metadata={"help": "patched runs per forward pass ('exact' only)"})
     model_name: str = "gpt2"

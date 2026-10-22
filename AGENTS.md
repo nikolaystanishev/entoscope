@@ -167,13 +167,9 @@ Everything else dispatches by `match` on an enum in an `AbstractX.get(enum)` sta
 Patching composes three of those: `PatchingMetric` picks the scalar read off a run, `MetricComparison`
 picks what the patched run is reported against, and the config's `method` picks how the change in
 the metric is obtained. Patched run `i` applies row `i` of every patch element, and the result is laid
-out along the element with the most rows. The config's `metric` maps a name of its choosing (its key
-everywhere downstream; its result column is `<name>_metric`, which no column of the run's own can be)
-to a `PatchingMetricConfig`: the `PatchingMetric`, the
-tokens it reads by their names in the input's `tokens`, and its comparison. Tokens are resolved before
-any forward pass, so a plan refuses a bad one; the input builds every metric on their ids when first read
-(`patching_input.metrics`), and a metric holds nothing else: the input is passed with every run it reads,
-so it reads the unpatched runs off that. Every method yields
+out along the element with the most rows. The config's `metric` maps a name of its choosing to a
+`PatchingMetricConfig`: the `PatchingMetric`, the tokens it reads by their names in the input's
+`tokens`, and its comparison. The input builds the metrics and owns their lifetime. Every method yields
 the same primitive - the patched run's metric minus the unpatched target run's, one per *metric* -
 so adding one means implementing `AbstractPatchingMethod.scores` (and `passes`, which a plan reports;
 `check` refuses an input before any forward pass); `_report` reports that under each metric's comparison

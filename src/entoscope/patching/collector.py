@@ -2,8 +2,8 @@ from entoscope.model.index import Index
 from entoscope.model.token import str_token
 from entoscope.operation.collector import FrameCollector, VisualizationCollector
 from entoscope.patching.input import PatchingInput
-from entoscope.patching.method.patching import RowResult
-from entoscope.patching.visualization import PatchingFigure, metric_column
+from entoscope.patching.method.patching import RowResult, metric_column
+from entoscope.patching.visualization import PatchingFigure
 
 
 class PatchingCollector(FrameCollector[PatchingInput]):
