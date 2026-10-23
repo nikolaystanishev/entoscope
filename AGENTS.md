@@ -102,14 +102,18 @@ with `IndexElement.read_slices` / `write_slices` (`read_unit_slices` for a weigh
 which index every axis with a tensor laid along its own axis of the block, so lists on several axes
 read and write every combination of their values; indexing with the tuple directly would pair the
 lists. `transformer_activation()` maps entoscope's dotted `ModelLayerLocation` values onto
-`transformer_lens` hook names. pandas 3 stores a frame's enum cells as plain `str`, so a row's
+transformer activation names. pandas 3 stores a frame's enum cells as plain `str`, so a row's
 activation is read through `IndexElement.activation()`, which returns the member.
 
 Adding a location or activation therefore means touching `ModelLayerLocation`,
-`MODEL_LOCATION_MAPPER`, `TRANSFORMER_ACT_NAME` (`model/activation.py`, hooks relative to the block)
-and `ActivationSlicer` together, plus `BRIDGE_ONLY_LOCATIONS` for a hook a `HookedTransformer` lacks;
-a new axis also goes in `AXIS_ORDER` (`operation/visualization.py`), and in `POSITION_AXES` when the
-prompt sizes it.
+`MODEL_LOCATION_MAPPER`, `TRANSFORMER_ACT_NAME` (`model/activation.py`, names relative to the block)
+and `ActivationSlicer` together; a new axis also goes in `AXIS_ORDER` (`operation/visualization.py`),
+and in `POSITION_AXES` when the prompt sizes it. The `Index` holds only the rows; the transformer
+activations a run touches are its input's `activation_names()`. Which exist depends on the backend and
+the architecture, so an input checks those names against the model as its index is resolved
+(`check_transformer_activations`). A patch writes in place, which is what reaches a bridge's residual
+stream, except into a sublayer's input, which the block may hand on elsewhere too (`writable`); both
+live in `model/activation.py`.
 
 ### Models and backends
 
@@ -119,11 +123,11 @@ switches to `transformer_lens`'s folded-LayerNorm convention and both must keep 
 `HookedTransformer` is kept because Intel macOS is pinned to `transformer-lens` 2.x (see the
 platform markers in `pyproject.toml`), and transformer-lens 4 removed it, so either backend may be
 missing. **Any new `transformer_lens` import that moved or went away between 2.x, 3.x and 4.x needs
-the same `try/except ImportError` fallback** used in `model/base.py` and `tests/conftest.py`. Backend-dependent weight access is centralized in
-`model/weight.py` and `model/unembed.py` - go through those rather than reading `model.W_*`
-directly. `model_weight` returns any `ModelWeight` with `d_model` last, whichever side of the residual
-stream it sits on, and `ACTIVATION_WEIGHT` maps an activation to its own weight; the lenses read every
-weight through them.
+the same `try/except ImportError` fallback** used in `model/base.py` and `tests/conftest.py`.
+Backend-dependent weight access is centralized in `model/weight.py` and `model/unembed.py` - go
+through those rather than reading `model.W_*` directly. `model_weight` returns any `ModelWeight` with
+`d_model` last, whichever side of the residual stream it sits on, and `ACTIVATION_WEIGHT` maps an
+activation to its own weight; the lenses read every weight through them.
 
 `CachedModel` (`model/cache.py`) is a transparent read-through disk cache that overrides only
 `run_with_cache` and forwards everything else via `__getattr__`, a method returning the model
@@ -174,8 +178,8 @@ out along the element with the most rows. The config's `metric` maps a name of i
 the same primitive - the patched run's metric minus the unpatched target run's, one per *metric* -
 so adding one means implementing `AbstractPatchingMethod.scores` (and `passes`, which a plan reports;
 `check` refuses an input before any forward pass); `_report` reports that under each metric's comparison
-and the figure draws one plot per metric. `integrated_gradients` interpolates one hook
-per pass, so its cost grows with the hooks an index patches but a row's score never depends on the
+and the figure draws one plot per metric. `integrated_gradients` interpolates one transformer
+activation per pass, so its cost grows with the transformer activations an index patches but a row's score never depends on the
 rest of the index. A method
 that actually runs the patched model (only `exact`) also reports that run's next token as the row's
 `generation`; the gradient methods have no such run and leave it out. Backends (MPS notably) round

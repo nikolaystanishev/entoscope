@@ -106,7 +106,7 @@ class Prober(Operator):
                 (label, prompt, tokens.shape[1])
                 for (label, prompt), tokens in zip(prompts, probe_input.token_tensors, strict=True)
             ],
-            activations=sorted(probe_input.index.source_activation_names()),
+            activations=probe_input.activation_names(),
             save_dir=save_dir,
             outputs=self.collector_class(probe_input, self.model, save_dir).output_files(),
         )

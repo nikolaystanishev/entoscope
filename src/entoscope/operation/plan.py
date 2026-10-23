@@ -53,7 +53,7 @@ class OperationPlan:
             time.
         index: One frame per index, the same frame ``index.csv`` would hold.
         prompts: One ``(label, prompt, token count)`` per prompt.
-        activations: The hook names the run caches.
+        activations: The transformer activation names the run caches.
         reads_full_cache: Whether the run caches every activation, in which case ``activations`` is empty.
         save_dir: The directory the run would write into.
         outputs: The file names the run would write into ``save_dir``.

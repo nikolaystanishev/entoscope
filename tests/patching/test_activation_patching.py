@@ -431,7 +431,8 @@ def test_multi_config_patching_mlp_mhsa_and_pattern(model: Model) -> None:
 # --------------------------------------------------------------------------------------------------
 # A sublayer's own input and output - what it reads after its norm, what it writes before its post-norm
 # --------------------------------------------------------------------------------------------------
-_SUBLAYER_LAYER = 5
+def _middle_layer(model: Model) -> int:
+    return model.cfg.n_layers // 2
 
 
 def _layer_element(activation: ModelLayerLocation, layer: int) -> PatchingElementConfig:
@@ -445,29 +446,70 @@ def _layer_element(activation: ModelLayerLocation, layer: int) -> PatchingElemen
 
 
 @pytest.mark.parametrize(
-    ("sublayer_input", "sublayer_output", "stream"),
+    ("model_fixture", "sublayer_input", "sublayer_output", "stream"),
     [
-        (ModelLayerLocation.ATTENTION_IN, "hook_attn_out", ModelLayerLocation.RESIDUAL_PRE),
-        (ModelLayerLocation.MLP_IN, "hook_mlp_out", ModelLayerLocation.RESIDUAL_MID),
+        ("model", ModelLayerLocation.ATTENTION_IN, "hook_attn_out", ModelLayerLocation.RESIDUAL_PRE),
+        ("model", ModelLayerLocation.MLP_IN, "hook_mlp_out", ModelLayerLocation.RESIDUAL_MID),
+        # The attention and the MLP read the same norm's output, so a patch of one's input must not reach the other.
+        ("shared_norm_model", ModelLayerLocation.ATTENTION_IN, "hook_attn_out", ModelLayerLocation.RESIDUAL_PRE),
+        ("shared_norm_model", ModelLayerLocation.MLP_IN, "hook_mlp_out", ModelLayerLocation.RESIDUAL_PRE),
+        # Each sublayer reads the residual stream itself, so a patch of its input must not reach the stream.
+        ("post_norm_only_model", ModelLayerLocation.ATTENTION_IN, "hook_attn_out", ModelLayerLocation.RESIDUAL_PRE),
+        ("post_norm_only_model", ModelLayerLocation.MLP_IN, "hook_mlp_out", ModelLayerLocation.RESIDUAL_MID),
     ],
 )
+@pytest.mark.usefixtures("bridge_only")
 def test_replacing_a_sublayers_input_everywhere_replaces_its_output_alone(
-    backend: str, model: Model, sublayer_input: ModelLayerLocation, sublayer_output: str, stream: ModelLayerLocation
+    request,
+    backend: str,
+    model_fixture: str,
+    sublayer_input: ModelLayerLocation,
+    sublayer_output: str,
+    stream: ModelLayerLocation,
 ) -> None:
-    if backend == "hooked":
-        pytest.skip("a HookedTransformer has no hooks on its sublayers themselves")
+    model = request.getfixturevalue(model_fixture)
+    layer = _middle_layer(model)
 
-    result = _run(model, _patch_config(_layer_element(sublayer_input, _SUBLAYER_LAYER)))
+    result = _run(model, _patch_config(_layer_element(sublayer_input, layer)))
 
     # A sublayer computes its output from its input alone, so the source's input at every position
     # brings the source's output with it, while the skip connection carries the target's residual stream on.
-    output = f"blocks.{_SUBLAYER_LAYER}.{sublayer_output}"
+    output = f"blocks.{layer}.{sublayer_output}"
     assert torch.allclose(
         result.squeeze(), _expected_logit_diff(model, _copying_hooks(model, [(output, ())])), atol=1e-5
     )
-    # The residual stream the input is normalized from feeds the skip connection too.
-    replaced_stream = _run(model, _patch_config(_layer_element(stream, _SUBLAYER_LAYER)))
+    # The residual stream the sublayer reads from feeds the skip connection too.
+    replaced_stream = _run(model, _patch_config(_layer_element(stream, layer)))
     assert not torch.allclose(result.squeeze(), replaced_stream.squeeze(), atol=1e-3)
+
+
+@pytest.mark.usefixtures("bridge_only")
+def test_attribution_differentiates_a_sublayers_input_through_that_sublayer_alone(shared_norm_model: Model) -> None:
+    model = shared_norm_model
+    layer = _middle_layer(model)
+    element = _layer_element(ModelLayerLocation.ATTENTION_IN, layer)
+    config = PatchingConfig(
+        metric=_metrics({PatchingMetric.LOGIT_DIFF: MetricComparison.ABSOLUTE}),
+        method=PatchingMethodConfig(type="attribution"),
+        patch=[SinglePatchingConfig(source=element, target=element)],
+    )
+
+    result = _run(model, config).squeeze()
+
+    # The MLP reads the norm's output too, so only a copy the attention alone reads carries the right gradient.
+    name = f"blocks.{layer}.attn.hook_in"
+    held = {}
+
+    def hold(activation: torch.Tensor, hook) -> torch.Tensor:
+        held["input"] = activation.detach().clone().requires_grad_()
+        return held["input"]
+
+    correct, distractor = _answer_ids(model)
+    logits = model.run_with_hooks(model.to_tokens(TARGET_PROMPT), fwd_hooks=[(name, hold)])[0, -1]
+    logit_diff = logits[correct] - logits[distractor]
+    logit_diff.backward()
+    change = _source_activation(model, name) - held["input"].detach()
+    assert torch.allclose(result, logit_diff.detach() + (held["input"].grad * change).sum(), atol=1e-6)
 
 
 def _pre_norm_output_written_over_output(
@@ -491,14 +533,12 @@ _PRE_NORM_OUTPUTS = [
 
 
 @pytest.mark.parametrize(("pre_norm_output", "output"), _PRE_NORM_OUTPUTS)
+@pytest.mark.usefixtures("bridge_only")
 def test_without_a_post_norm_a_sublayers_output_is_its_pre_norm_output(
-    backend: str, model: Model, pre_norm_output: ModelLayerLocation, output: ModelLayerLocation
+    model: Model, pre_norm_output: ModelLayerLocation, output: ModelLayerLocation
 ) -> None:
-    if backend == "hooked":
-        pytest.skip("a HookedTransformer has no hooks on its sublayers themselves")
-
     # GPT-2 adds each sublayer's output to the residual stream as it is, so writing one over the other is no patch.
-    result = _pre_norm_output_written_over_output(model, pre_norm_output, output, _SUBLAYER_LAYER)
+    result = _pre_norm_output_written_over_output(model, pre_norm_output, output, _middle_layer(model))
 
     assert torch.allclose(result, _expected_logit_diff(model, []), atol=1e-5)
 
@@ -517,7 +557,7 @@ def test_a_post_norm_sits_between_a_sublayers_pre_norm_output_and_its_output(
     pre_norm_hook: str,
     output_hook: str,
 ) -> None:
-    layer = 1
+    layer = _middle_layer(post_norm_model)
     result = _pre_norm_output_written_over_output(post_norm_model, pre_norm_output, output, layer)
 
     before, after = f"blocks.{layer}.{pre_norm_hook}", f"blocks.{layer}.{output_hook}"

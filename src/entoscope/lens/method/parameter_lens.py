@@ -76,8 +76,9 @@ class ParameterLens(AbstractLensMethod[ParameterLensConfig]):
         if activation not in ACTIVATION_WEIGHT:
             raise ValueError(
                 f"{type(self).__name__} cannot project {activation.value}: only MLP-hidden and attention head "
-                "locations name a weight vector, one per neuron or head dimension. Residual-stream locations "
-                "('embed', 'resid.*', 'attn.out', 'mlp.out') index the residual basis instead of a weight"
+                "locations name a weight vector, one per neuron or head dimension. Locations in the residual "
+                "stream's basis ('embed', 'resid.*', and a sublayer's input and output: 'attn.in', "
+                "'attn.out_pre_norm', 'attn.out', 'mlp.in', 'mlp.out_pre_norm', 'mlp.out') index it instead of a weight"
             )
 
         weight = activation_weight(self.model, activation, projection_layer(self.model, index))

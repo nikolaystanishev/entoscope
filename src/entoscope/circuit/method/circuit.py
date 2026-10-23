@@ -70,9 +70,9 @@ class AbstractCircuitMethod(abc.ABC, Generic[CircuitMethodConfigT]):
         raise NotImplementedError
 
     def activation_names(self) -> list[str] | None:
-        """Name the hooks ``build`` caches, which a plan reports.
+        """Name the transformer activations ``build`` caches, which a plan reports.
 
         Returns:
-            The hook names, or ``None`` when ``build`` caches every activation, the default.
+            The transformer activation names, or ``None`` when ``build`` caches every activation, the default.
         """
         return None

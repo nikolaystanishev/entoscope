@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
-from copy import deepcopy
+from collections.abc import Iterator, Sequence
 from typing import Generic, TypeVar
 
 import pandas as pd
 import torch
 
-from entoscope.model.activation import hook_name
+from entoscope.model.activation import transformer_activation, writable
 from entoscope.model.config import (
     POSITION_AXES,
     ModelAxis,
@@ -18,7 +17,7 @@ from entoscope.model.config import (
     make_df_from_ranges,
 )
 from entoscope.model.slicer import ActivationSlicer
-from entoscope.util.collections import broadcast_length, dataframe_to_list, zip_broadcast
+from entoscope.util.collections import dataframe_to_list, zip_broadcast
 
 T = TypeVar("T", bound="ModelLocatorConfig")
 
@@ -27,7 +26,7 @@ class IndexElement(Generic[T]):
     """One side of an index row: its values by axis, read off a locator config.
 
     ``slices`` turns the values into the slice of the activation tensor they address, and
-    ``transformer_activation`` names the hook that tensor is cached under. A list value addresses
+    ``transformer_activation`` is the transformer activation name that tensor is cached under. A list value addresses
     several entries of its axis at once, lists on several axes every combination of their entries, and
     an axis the row does not name is read whole.
 
@@ -39,7 +38,7 @@ class IndexElement(Generic[T]):
 
     def __init__(self, config: T, index_names: list[str], index: list[int | list[int] | str | ModelLayerLocation]):
         self.config = config
-        self.index_names = deepcopy(index_names)
+        self.index_names = index_names
         self.index = index
 
     def _index_by_name(self, batch: int | slice = slice(None)) -> defaultdict[str, int | list[int] | slice]:
@@ -100,8 +99,8 @@ class IndexElement(Generic[T]):
         ]
         return weight[self._block(weight, units)]
 
-    def write_slices(self, tensor: torch.Tensor, value: torch.Tensor, batch: int | slice = slice(None)) -> None:
-        """Write into the block ``read_slices`` reads, in place.
+    def write_slices(self, tensor: torch.Tensor, value: torch.Tensor, batch: int | slice = slice(None)) -> torch.Tensor:
+        """Write into the block ``read_slices`` reads, in the tensor ``writable`` picks.
 
         The value is cast to the tensor's dtype and device first, as assigning into a slice would: a write
         through index tensors takes only an exact match, and a constant such as ``value_replace``'s is
@@ -111,10 +110,15 @@ class IndexElement(Generic[T]):
             tensor: The activation to write into.
             value: The block, or anything that broadcasts to it.
             batch: The batch rows to write.
+
+        Returns:
+            The tensor written into: ``tensor`` itself, or a copy of a sublayer's input.
         """
+        tensor = writable(self.transformer_activation(), tensor)
         tensor[self._block(tensor, self.slices(batch))] = torch.as_tensor(
             value, dtype=tensor.dtype, device=tensor.device
         )
+        return tensor
 
     @staticmethod
     def _block(tensor: torch.Tensor, slices: Sequence[slice | int | list[int]]) -> tuple[int | torch.Tensor, ...]:
@@ -172,12 +176,12 @@ class IndexElement(Generic[T]):
         return activation if activation is None else ModelLayerLocation(activation)
 
     def transformer_activation(self) -> str:
-        """Name the hook the row's activation is cached under.
+        """Name the row's transformer activation, the name its tensor is cached under.
 
         Returns:
-            The ``transformer_lens`` hook name, such as ``blocks.3.hook_resid_post``.
+            The transformer activation name, such as ``blocks.3.hook_resid_post``.
         """
-        return hook_name(self.activation(), self.layer())
+        return transformer_activation(self.activation(), self.layer())
 
     def layer(self) -> int | None:
         """Read the row's layer.
@@ -239,7 +243,7 @@ class SingleIndex(Generic[T]):
 
 
 class Index(Generic[T]):
-    """The rows an operation iterates, one ``SingleIndex`` each.
+    """The rows an operation iterates, one ``SingleIndex`` each, built once as the index is.
 
     Patching adds a target to write into, paired with the source row by row, so the two have as many
     rows, or one of them a single row, which pairs with every row of the other.
@@ -271,16 +275,28 @@ class Index(Generic[T]):
         self.target_config = target_config
         self.target = target
 
-        if self.target is None:
-            self._length = len(self.source.df)
+        source_columns = self.source.df.columns.to_list()
+        sources = [
+            IndexElement[T](self.source_config, source_columns, row) for row in dataframe_to_list(self.source.df)
+        ]
+        if self.target is None or self.target_config is None:
+            self._rows = [SingleIndex[T](position, source_element) for position, source_element in enumerate(sources)]
         else:
+            target_columns = self.target.df.columns.to_list()
+            targets = [
+                IndexElement[T](self.target_config, target_columns, row) for row in dataframe_to_list(self.target.df)
+            ]
             try:
-                self._length = broadcast_length(len(self.source.df), len(self.target.df))
+                pairs = zip_broadcast(sources, targets)
             except ValueError:
                 raise ValueError(
                     f"A source of {len(self.source.df)} rows cannot be paired with a target of {len(self.target.df)}: "
                     "they pair row by row, so they need as many rows, or one of them a single row"
                 ) from None
+            self._rows = [
+                SingleIndex[T](position, source_element, target_element)
+                for position, (source_element, target_element) in enumerate(pairs)
+            ]
 
         target_laid_out = self.target is not None and len(self.target.df) == len(self)
         laid_out = self.target.df if target_laid_out else self.source.df
@@ -298,32 +314,28 @@ class Index(Generic[T]):
                 {column: pd.factorize(axes[column].astype(str))[0] for column in axes.columns}
             )
 
-    def source_activation_names(self) -> set[str]:
-        """Name the hooks the source rows read.
+    def activation_names(self) -> list[str]:
+        """Name the transformer activations the rows read or write.
+
+        A source without an activation, a value a patch writes, reads none.
 
         Returns:
-            The ``transformer_lens`` hook names.
+            The transformer activation names, sorted.
         """
-        return self._activation_names(self.source_config, self.source)
+        source_activation_names = {
+            row.source.transformer_activation() for row in self if row.source.activation() is not None
+        }
+        return sorted(source_activation_names.union(self.target_activation_names()))
 
-    def target_activation_names(self) -> set[str]:
-        """Name the hooks the target rows write.
+    def target_activation_names(self) -> list[str]:
+        """Name the transformer activations the target rows write.
 
         Returns:
-            The ``transformer_lens`` hook names, empty without a target.
+            The transformer activation names, sorted, none without a target.
         """
-        return self._activation_names(self.target_config, self.target)
-
-    @staticmethod
-    def _activation_names(config: T | None, index: ModelLocationIndex | None) -> set[str]:
-        if config is None or index is None:
-            return set()
-        # A hook is named by a row's activation and layer alone, so only their distinct pairs are walked.
-        columns = [column for column in (ModelAxis.ACTIVATION, ModelAxis.LAYER) if column in index.df.columns]
-        pairs = index.df[columns]
-        distinct = pairs[~pairs.astype(str).duplicated().to_numpy()]
-        elements = (IndexElement(config, columns, row) for row in dataframe_to_list(distinct))
-        return {element.transformer_activation() for element in elements if element.activation() is not None}
+        if self.target is None or self.target_config is None:
+            return []
+        return sorted({row.target.transformer_activation() for row in self if row.target.activation() is not None})
 
     def to_df(self) -> pd.DataFrame:
         """Lay the index out as ``index.csv`` holds it.
@@ -358,26 +370,8 @@ class Index(Generic[T]):
         """
         self.to_df().to_csv(path, index=False)
 
-    def __iter__(self):
-        source_columns = self.source.df.columns.to_list()
-
-        if self.target is None or self.target_config is None:
-            return (
-                SingleIndex[T](position, IndexElement[T](self.source_config, source_columns, source_row))
-                for position, source_row in enumerate(dataframe_to_list(self.source.df))
-            )
-
-        target_columns = self.target.df.columns.to_list()
-        return (
-            SingleIndex[T](
-                position,
-                IndexElement[T](self.source_config, source_columns, source_row),
-                IndexElement[T](self.target_config, target_columns, target_row),
-            )
-            for position, (source_row, target_row) in enumerate(
-                zip_broadcast(dataframe_to_list(self.source.df), dataframe_to_list(self.target.df))
-            )
-        )
+    def __iter__(self) -> Iterator[SingleIndex[T]]:
+        return iter(self._rows)
 
     def __len__(self) -> int:
-        return self._length
+        return len(self._rows)

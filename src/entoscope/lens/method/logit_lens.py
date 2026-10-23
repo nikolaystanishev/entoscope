@@ -21,6 +21,12 @@ _RESIDUAL_STREAM = (
     ModelLayerLocation.ATTENTION_OUT,
     ModelLayerLocation.MLP_OUT,
 )
+_SUBBLOCK_IO = (
+    ModelLayerLocation.ATTENTION_IN,
+    ModelLayerLocation.ATTENTION_OUT_PRE_NORM,
+    ModelLayerLocation.MLP_IN,
+    ModelLayerLocation.MLP_OUT_PRE_NORM,
+)
 _WRITTEN_AS = {
     ModelLayerLocation.ATTENTION_V: ModelLayerLocation.ATTENTION_Z,
     ModelLayerLocation.ATTENTION_Z: ModelLayerLocation.ATTENTION_Z,
@@ -97,9 +103,9 @@ def _through(
 class LogitLens(AbstractLensMethod[LensMethodConfigT]):
     """Reads an element out the way the model reads out its final residual stream.
 
-    A residual-stream state is unembedded as it is. An MLP-hidden or attention head activation is
-    first written into the residual stream through the weight that writes it there, and a query or
-    key is read against the embedding through the other side of its head.
+    A residual-stream state, or a sublayer's own input or output, is unembedded as it is. An MLP-hidden or
+    attention head activation is first written into the residual stream through the weight that writes it
+    there, and a query or key is read against the embedding through the other side of its head.
     """
 
     def extract(
@@ -134,8 +140,8 @@ class LogitLens(AbstractLensMethod[LensMethodConfigT]):
             The element's logits over the vocabulary.
 
         Raises:
-            ValueError: If the activation is neither in the residual stream nor an MLP-hidden or attention
-                head activation, or names no single layer where it needs one.
+            ValueError: If the activation is neither in the residual stream's basis nor an MLP-hidden or
+                attention head activation, or names no single layer where it needs one.
         """
         if index.activation() in _QUERY_KEY_PARTNER:
             return self._query_key_logits(activation, index)
@@ -147,7 +153,7 @@ class LogitLens(AbstractLensMethod[LensMethodConfigT]):
         activation: Float[torch.Tensor, "..."],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_model"]:
-        if index.activation() in _RESIDUAL_STREAM:
+        if index.activation() in _RESIDUAL_STREAM or index.activation() in _SUBBLOCK_IO:
             return activation
         if index.activation() in _WRITTEN_AS:
             weight = activation_weight(self.model, _WRITTEN_AS[index.activation()], projection_layer(self.model, index))

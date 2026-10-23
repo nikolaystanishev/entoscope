@@ -7,7 +7,7 @@ from jaxtyping import Float
 from tuned_lens.nn import TunedLens as PretrainedTunedLens
 
 from entoscope.lens.config import LensConfig, LensMethodConfig
-from entoscope.lens.method.logit_lens import LogitLens, projection_layer
+from entoscope.lens.method.logit_lens import _SUBBLOCK_IO, LogitLens, projection_layer
 from entoscope.model import Model
 from entoscope.model.config import ModelLayerLocation, ModelLocatorConfig
 from entoscope.model.index import IndexElement
@@ -121,6 +121,12 @@ class TunedLens(LogitLens[TunedLensConfig]):
         residual: Float[torch.Tensor, "... d_model"],
         index: IndexElement[ModelLocatorConfig],
     ) -> Float[torch.Tensor, "... d_model"]:
+        if index.activation() in _SUBBLOCK_IO:
+            raise ValueError(
+                f"{type(self).__name__} cannot project {index.activation().value}: its translators were trained on "
+                "the residual states and what the sublayers add to them, not on a sublayer's own input or its output "
+                "before a post-norm - use the logit lens for them"
+            )
         translator_index = self._translator_index(index)
         if translator_index is None:
             logger.warning(

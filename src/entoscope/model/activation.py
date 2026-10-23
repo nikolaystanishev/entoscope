@@ -1,5 +1,10 @@
-"""The ``transformer_lens`` hook each activation is cached under."""
+"""The transformer activation name each activation is cached under, and how a hook writing one hands it on."""
 
+from collections.abc import Iterable
+
+import torch
+
+from entoscope.model.base import Model
 from entoscope.model.config import ModelLayerLocation
 
 TRANSFORMER_ACT_NAME: dict[ModelLayerLocation, str] = {
@@ -24,15 +29,64 @@ TRANSFORMER_ACT_NAME: dict[ModelLayerLocation, str] = {
 }
 
 
-def hook_name(activation: ModelLayerLocation, layer: int | None) -> str:
-    """Name the hook an activation is cached under.
+def transformer_activation(activation: ModelLayerLocation, layer: int | None) -> str:
+    """Name an activation as ``transformer_lens`` caches it.
 
     Args:
         activation: The activation.
         layer: The block it is read in, ``None`` for ``embed``.
 
     Returns:
-        The ``transformer_lens`` hook name, such as ``blocks.3.hook_resid_post``.
+        The transformer activation name, such as ``blocks.3.hook_resid_post``.
     """
     name = TRANSFORMER_ACT_NAME[activation]
     return name if layer is None else f"blocks.{layer}.{name}"
+
+
+def check_transformer_activations(model: Model, names: Iterable[str]) -> None:
+    """Check that the model computes every transformer activation a run reads or writes.
+
+    Which it computes depends on its backend and architecture: a ``HookedTransformer`` has none of a
+    ``TransformerBridge``'s sublayer inputs and outputs, a model without a gated MLP no ``mlp.pre_linear`` and a
+    parallel block no ``resid.mid``. A row of a block's activation that names several layers, or none, names one
+    without its block, which no model computes. An input checks its ``activation_names()`` as it resolves its
+    index, so such a run is refused before any forward pass, and by its plan too, rather than failing in
+    ``transformer_lens`` once it looks the activation up.
+
+    Args:
+        model: The model the run reads.
+        names: The transformer activation names the run reads or writes.
+
+    Raises:
+        ValueError: If the model computes no transformer activation of one of the names.
+    """
+    if missing := sorted(set(names) - model.hook_dict.keys()):
+        raise ValueError(
+            f"This model has no transformer activation {', '.join(map(repr, missing))}: its architecture or its "
+            "backend does not compute it, or a row reads a block's activation without a single layer. A "
+            "HookedTransformer has none of a TransformerBridge's sublayer inputs and outputs"
+        )
+
+
+SUBLAYER_INPUTS = frozenset(
+    TRANSFORMER_ACT_NAME[activation] for activation in (ModelLayerLocation.ATTENTION_IN, ModelLayerLocation.MLP_IN)
+)
+
+
+def writable(name: str, tensor: torch.Tensor) -> torch.Tensor:
+    """Pick the tensor a hook writes into and hands on.
+
+    Any other activation is written in place, so the write reaches whatever else holds the tensor, which ``resid.mid``
+    needs: a bridge hooks it on the input of the norm before the MLP, and only an in-place write reaches the
+    residual stream the block keeps beside that norm. The name is the one the hook is registered under, as
+    ``transformer_activation`` gives it, not the hook point's own: OLMo 2's ``hook_resid_mid`` is ``mlp.hook_in``
+    by another name.
+
+    Args:
+        name: The transformer activation name the hook writes.
+        tensor: The tensor the hook is handed.
+
+    Returns:
+        A copy of ``tensor`` for a sublayer's input, which only the sublayer reads, and ``tensor`` itself otherwise.
+    """
+    return tensor.clone() if name.split(".", 2)[-1] in SUBLAYER_INPUTS else tensor

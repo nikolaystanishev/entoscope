@@ -271,12 +271,13 @@ patching several elements sums their contributions.
 
 `integrated_gradients` averages that gradient over `interpolation_steps` points on the straight path
 from the source run's activation to the target run's (Marks et al., 2024, Eq. 4), which recovers
-effects a single gradient at the clean point hides. As there, each hook the index patches, such as
-each layer of a sweep, is interpolated on passes of its own, so a row's score does not depend on what
-else the index holds. That costs one forward pass and one backward pass per metric for every step and
-hook, except at the clean point, where one pass serves every hook. The cost grows with the hooks but
-not with the rows: every position, head and neuron of a hook comes from the same passes. The path
-runs between the two runs, so it needs a source prompt of the same token length as the target, which
+effects a single gradient at the clean point hides. As there, each transformer activation the index
+patches, such as each layer of a sweep, is interpolated on passes of its own, so a row's score does not
+depend on what else the index holds. That costs one forward pass and one backward pass per metric for
+every step and transformer activation, except at the clean point, where one pass serves all of them.
+The cost grows with the transformer activations but not with the rows: every position, head and neuron
+of one comes from the same passes. The path runs between the two runs, so it needs a source prompt of
+the same token length as the target, which
 `plan()` checks too. It is meant for `replace` sources: a value or noise is written off that path,
 and `attribution` is the estimate to use there.
 

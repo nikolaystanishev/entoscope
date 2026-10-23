@@ -149,20 +149,26 @@ def test_a_location_enumerates_the_model_dimension_it_names(
     request, backend, planned, model_fixture, activation, location, axis_size
 ):
     model = request.getfixturevalue(model_fixture)
+    # A block's activation is read in a single layer, so any other axis is enumerated in the first.
+    in_one_layer = {} if location == "layer" else {"filter": [{"layer": 0}]}
 
-    index_df = planned(model, {"activation": activation, "location": [location]})
+    index_df = planned(model, {"activation": activation, "location": sorted({"layer", location}), **in_one_layer})
 
     assert values_of(index_df, ModelAxis(location)) == list(range(axis_size(model)))
 
 
-SUBLAYER_HOOKS = ["attn.in", "attn.out_pre_norm", "mlp.in", "mlp.out_pre_norm"]
+# Each sublayer activation a bridge has, by its transformer activation name within the block.
+SUBLAYER_HOOKS = {
+    "attn.in": "attn.hook_in",
+    "attn.out_pre_norm": "attn.hook_out",
+    "mlp.in": "mlp.hook_in",
+    "mlp.out_pre_norm": "mlp.hook_out",
+}
 
 
 @pytest.mark.parametrize("activation", SUBLAYER_HOOKS)
-def test_a_sublayers_own_hook_is_located_along_the_residual_stream(backend, small_model, planned, activation):
-    if backend == "hooked":
-        pytest.skip("a HookedTransformer has no hooks on its sublayers themselves")
-
+@pytest.mark.usefixtures("bridge_only")
+def test_a_sublayers_own_hook_is_located_along_the_residual_stream(small_model, planned, activation):
     index_df = planned(small_model, {"activation": activation, "location": ["layer", "position", "neuron"]})
 
     assert coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.POSITION, ModelAxis.NEURON) == [
@@ -173,14 +179,40 @@ def test_a_sublayers_own_hook_is_located_along_the_residual_stream(backend, smal
     ]
 
 
-@pytest.mark.parametrize("activation", SUBLAYER_HOOKS)
-def test_a_hooked_transformer_refuses_a_sublayers_own_hook(backend, small_model, planned, activation):
+@pytest.mark.parametrize(("activation", "transformer_activation"), SUBLAYER_HOOKS.items())
+def test_a_hooked_transformer_refuses_a_sublayers_own_hook(
+    backend, small_model, planned, activation, transformer_activation
+):
     if backend != "hooked":
         pytest.skip("only a HookedTransformer lacks hooks on its sublayers themselves")
 
     # Every coordinate's activation is checked, not only the first's.
     locator = {"coordinates": [{"activation": "resid.post", "layer": 0}, {"activation": activation, "layer": 0}]}
-    with pytest.raises(ValueError, match=re.escape(f"'{activation}' is a hook of a TransformerBridge's sublayer")):
+    with pytest.raises(
+        ValueError, match=re.escape(f"no transformer activation 'blocks.0.{transformer_activation}': its architecture")
+    ):
+        planned(small_model, locator)
+
+
+def test_a_location_the_model_computes_no_transformer_activation_for_is_refused_before_any_run(small_model, planned):
+    # small_model's MLP has no gate, so it computes no linear branch for 'mlp.pre_linear', on any backend.
+    with pytest.raises(ValueError, match=re.escape("no transformer activation 'blocks.1.mlp.hook_pre_linear'")):
+        planned(small_model, {"activation": "mlp.pre_linear", "location": ["layer"], "filter": [{"layer": 1}]})
+
+
+@pytest.mark.parametrize(
+    "locator",
+    [
+        {"activation": "resid.post"},
+        {"activation": "resid.post", "location": ["position"]},
+        {"activation": "resid.post", "location": ["layer"], "group": {"layer": [0, 1]}},
+        {"coordinates": [{"activation": "resid.post", "layer": [0, 1]}]},
+    ],
+    ids=["no location", "no layer", "grouped layers", "a list of layers"],
+)
+def test_a_block_activation_without_a_single_layer_is_refused_before_any_run(small_model, planned, locator):
+    # Such a row names the activation without its block, which no model computes, so no run could read it.
+    with pytest.raises(ValueError, match=re.escape("no transformer activation 'hook_resid_post'")):
         planned(small_model, locator)
 
 
@@ -216,9 +248,10 @@ def test_the_configured_activation_is_stamped_on_every_row(small_model, planned)
 
 
 def test_without_a_location_only_the_activation_is_left(small_model, planned):
-    # The product over zero axes leaves a single empty row, so nothing but the stamped activation remains.
-    from_empty = planned(small_model, {"activation": "resid.post", "location": []})
-    from_missing = planned(small_model, {"activation": "resid.post"})
+    # The product over zero axes leaves a single empty row, so nothing but the stamped activation remains. 'embed'
+    # is the one activation such a row can read: it sits before the first block, so it has no layer to name.
+    from_empty = planned(small_model, {"activation": "embed", "location": []})
+    from_missing = planned(small_model, {"activation": "embed"})
 
     assert list(from_empty.columns) == list(from_missing.columns) == [ModelAxis.ACTIVATION]
     assert len(from_empty) == len(from_missing) == 1
@@ -273,33 +306,45 @@ def test_filter_terms_are_or_ed_across_locations(small_model, planned):
 
 # --------------------------------------------------------------------------------------------------
 # Transforms - group collapses values into one cell, incremental grows prefixes, combination expands
-# a grouped cell again. They run in that order, after the filter.
+# a grouped cell again. They run in that order, after the filter. A row naming several layers is refused,
+# so they are shown on the heads of one layer.
 # --------------------------------------------------------------------------------------------------
-def _layers(planned, model, **source) -> list:
-    return values_of(planned(model, {"activation": "resid.post", "location": ["layer"], **source}), ModelAxis.LAYER)
+def _heads(planned, model, filter: list | None = None, **source) -> list:
+    """The heads an ``attn.z`` locator reads in layer 0, every term of ``filter`` narrowed to it."""
+    terms = [{**term, "layer": 0} for term in filter or [{}]]
+    locator = {"activation": "attn.z", "location": ["layer", "head"], "filter": terms, **source}
+    return values_of(planned(model, locator), ModelAxis.HEAD)
 
 
 def test_group_collapses_the_listed_values_into_one_row(small_model, planned):
-    # 0 and 1 collapse into one row addressing both; 2 is left untouched.
-    assert _layers(planned, small_model, group={"layer": [0, 1]}) == [(0, 1), 2]
+    # 0 and 1 collapse into one row addressing both; 2 and 3 are left untouched.
+    assert _heads(planned, small_model, group={"head": [0, 1]}) == [(0, 1), 2, 3]
 
 
 def test_group_all_collapses_the_whole_axis(small_model, planned):
-    assert _layers(planned, small_model, group={"layer": "all"}) == [tuple(range(small_model.cfg.n_layers))]
+    assert _heads(planned, small_model, group={"head": "all"}) == [tuple(range(small_model.cfg.n_heads))]
 
 
 def test_group_drops_the_duplicate_rows_it_creates(small_model, planned):
     # Grouping one axis leaves one row per value of the other, not one per pair.
-    index_df = planned(small_model, {"activation": "attn.z", "location": ["layer", "head"], "group": {"layer": "all"}})
+    index_df = planned(small_model, {"activation": "attn.z", "location": ["layer", "head"], "group": {"head": "all"}})
 
     assert coordinates_of(index_df, ModelAxis.LAYER, ModelAxis.HEAD) == [
-        (tuple(range(small_model.cfg.n_layers)), head) for head in range(small_model.cfg.n_heads)
+        (layer, tuple(range(small_model.cfg.n_heads))) for layer in range(small_model.cfg.n_layers)
     ]
 
 
 def test_group_counts_a_negative_value_from_the_end_of_its_axis(small_model, planned):
     def heads(values: list[int]) -> list:
-        index_df = planned(small_model, {"activation": "attn.z", "location": ["head"], "group": {"head": values}})
+        index_df = planned(
+            small_model,
+            {
+                "activation": "attn.z",
+                "location": ["layer", "head"],
+                "filter": [{"layer": 0}],
+                "group": {"head": values},
+            },
+        )
         return values_of(index_df, ModelAxis.HEAD)
 
     n_heads = small_model.cfg.n_heads
@@ -308,9 +353,9 @@ def test_group_counts_a_negative_value_from_the_end_of_its_axis(small_model, pla
 
 
 def test_incremental_appends_growing_prefixes_to_every_row(model, planned):
-    layers = _layers(planned, model, filter=[{"layer": [0, 1]}], incremental={"layer": [7, 8]})
+    heads = _heads(planned, model, filter=[{"head": [0, 1]}], incremental={"head": [7, 8]})
 
-    assert layers == [(0,), (0, 7), (0, 7, 8), (1,), (1, 7), (1, 7, 8)]
+    assert heads == [(0,), (0, 7), (0, 7, 8), (1,), (1, 7), (1, 7, 8)]
 
 
 def test_incremental_can_add_a_location_the_index_does_not_have(small_model, planned):
@@ -327,8 +372,8 @@ def test_incremental_counts_a_negative_value_from_the_end_of_its_axis(small_mode
     def heads(values: list[int]) -> list:
         locator = {
             "activation": "attn.z",
-            "location": ["head"],
-            "filter": [{"head": 0}],
+            "location": ["layer", "head"],
+            "filter": [{"layer": 0, "head": 0}],
             "incremental": {"head": values},
         }
         return values_of(planned(small_model, locator), ModelAxis.HEAD)
@@ -361,28 +406,28 @@ def test_incremental_keeps_the_other_locations(model, planned):
     ("combination", "expected"),
     [
         # max_elements caps the size of a combination...
-        ({"location": ["layer"], "max_elements": 2}, [(0,), (1,), (2,), (0, 1), (0, 2), (1, 2)]),
+        ({"location": ["head"], "max_elements": 2}, [(0,), (1,), (2,), (0, 1), (0, 2), (1, 2)]),
         # ...and without it every non-empty combination is produced.
-        ({"location": ["layer"]}, [(0,), (1,), (2,), (0, 1), (0, 2), (1, 2), (0, 1, 2)]),
+        ({"location": ["head"]}, [(0,), (1,), (2,), (0, 1), (0, 2), (1, 2), (0, 1, 2)]),
     ],
 )
 def test_combination_expands_a_grouped_axis(small_model, planned, combination, expected):
-    assert small_model.cfg.n_layers == 3
+    heads = _heads(planned, small_model, filter=[{"head": [0, 1, 2]}], group={"head": "all"}, combination=combination)
 
-    assert _layers(planned, small_model, group={"layer": "all"}, combination=combination) == expected
+    assert heads == expected
 
 
 def test_filter_group_and_combination_run_in_that_order(model, planned):
-    # The filter narrows the axis to 0..2 first, so the combinations never mention any later layer.
-    layers = _layers(
+    # The filter narrows the axis to 0..2 first, so the combinations never mention any later head.
+    heads = _heads(
         planned,
         model,
-        filter=[{"layer": {"range": [0, 2]}}],
-        group={"layer": "all"},
-        combination={"location": ["layer"], "max_elements": 2},
+        filter=[{"head": {"range": [0, 2]}}],
+        group={"head": "all"},
+        combination={"location": ["head"], "max_elements": 2},
     )
 
-    assert layers == [(0,), (1,), (2,), (0, 1), (0, 2), (1, 2)]
+    assert heads == [(0,), (1,), (2,), (0, 1), (0, 2), (1, 2)]
 
 
 # --------------------------------------------------------------------------------------------------
@@ -502,7 +547,12 @@ def test_a_position_stays_symbolic_when_the_prompt_length_varies(
     small_model, planned_symbolic, filter_config, expected_positions
 ):
     index_df = planned_symbolic(
-        small_model, {"activation": "resid.post", "location": ["position"], "filter": filter_config}
+        small_model,
+        {
+            "activation": "resid.post",
+            "location": ["layer", "position"],
+            "filter": [{"layer": 0, **term} for term in filter_config],
+        },
     )
 
     assert values_of(index_df, ModelAxis.POSITION) == expected_positions
@@ -534,7 +584,8 @@ def test_a_symbolic_position_keeps_the_other_locations(small_model, planned_symb
 def test_a_known_prompt_length_resolves_a_negative_position(small_model, planned):
     # The contrast: with a length to count against, -1 collapses to its absolute index.
     index_df = planned(
-        small_model, {"activation": "resid.post", "location": ["position"], "filter": [{"position": -1}]}
+        small_model,
+        {"activation": "resid.post", "location": ["layer", "position"], "filter": [{"layer": 0, "position": -1}]},
     )
 
     assert values_of(index_df, ModelAxis.POSITION) == [n_positions(small_model) - 1]
@@ -555,8 +606,8 @@ def test_a_transform_treats_a_symbolic_position_like_any_other_value(small_model
         small_model,
         {
             "activation": "resid.post",
-            "location": ["position"],
-            "filter": [{"position": {"range": [-3, -1]}}],
+            "location": ["layer", "position"],
+            "filter": [{"layer": 0, "position": {"range": [-3, -1]}}],
             "group": {"position": [-2, -1]},
         },
     )

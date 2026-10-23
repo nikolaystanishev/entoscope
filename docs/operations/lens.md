@@ -71,15 +71,15 @@ stream, `ln_final(x) @ W_U + b_U`. What `x` is depends on the activation:
 | Activation | `x` |
 |---|---|
 | `embed`, `resid.pre`, `resid.mid`, `resid.post`, `attn.out`, `mlp.out` | the activation itself |
+| `attn.in`, `mlp.in` | the activation itself: the residual stream after the norm before the sublayer, as the sublayer reads it |
+| `attn.out_pre_norm`, `mlp.out_pre_norm` | the activation itself: what the sublayer writes before the norm after it, the same tensor as `attn.out` and `mlp.out` on a model without one |
 | `mlp.pre`, `mlp.pre_linear`, `mlp.post` | the activation written into the residual stream through the layer's `W_out`: what the indexed neurons write |
 | `attn.v`, `attn.z` | the activation written through the head's `W_O`: what the indexed heads write |
 
 Queries and keys are read differently, against the embedding through the other side of their head. A
 query is mapped through `W_K` and a key through `W_Q`, then scored against `W_E` and divided by the
 attention scale. A query's tokens are those whose embeddings, read as keys, it attends to most, and
-the other way around for a key. `attn.pattern` cannot be read out onto the vocabulary, and neither can
-a sublayer's input (`attn.in`, `mlp.in`) or its output before a post-norm (`attn.out_pre_norm`,
-`mlp.out_pre_norm`), since none of them is in the residual stream.
+the other way around for a key. `attn.pattern` cannot be read out onto the vocabulary.
 
 On a model with grouped-query attention, `attn.k` and `attn.v` have fewer heads than the weights that
 would read them out, and the lens rejects them.
@@ -120,6 +120,10 @@ the lens is built, so planning a tuned-lens run downloads nothing. How each acti
   its state's linear part, since the bias belongs to the state as a whole. `embed` is a component of
   state 0.
 - Queries and keys cannot be read: their translation would need the head's other side.
+- A sublayer's own input or output (`attn.in`, `mlp.in`, `attn.out_pre_norm`, `mlp.out_pre_norm`)
+  cannot be read either: the translators were trained on the residual states and what the sublayers
+  add to them, which a sublayer's input is not, nor its output before a post-norm. The logit lens reads
+  them.
 
 ## Parameter lens
 

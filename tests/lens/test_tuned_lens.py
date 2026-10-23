@@ -250,6 +250,15 @@ def test_queries_and_keys_have_no_tuned_projection(model, translators, activatio
         Lens(model).apply(LensInput(config, PROMPT), verbose=False)
 
 
+@pytest.mark.parametrize("activation_name", ["attn.in", "attn.out_pre_norm", "mlp.in", "mlp.out_pre_norm"])
+@pytest.mark.usefixtures("bridge_only")
+def test_a_sublayers_own_input_or_output_has_no_tuned_projection(model, translators, activation_name):
+    config = tuned_config({"activation": activation_name, "layer": 0, "position": -1}, resource=translators["zero"])
+
+    with pytest.raises(ValueError, match="TunedLens cannot project.*use the logit lens"):
+        Lens(model).apply(LensInput(config, PROMPT), verbose=False)
+
+
 def test_an_activation_without_a_vocabulary_projection_raises(model, translators):
     # The pattern has no position of its own to rank the tokens at, so its config is refused outright.
     with pytest.raises(ValueError, match="'attn.pattern' has no 'position' axis"):
