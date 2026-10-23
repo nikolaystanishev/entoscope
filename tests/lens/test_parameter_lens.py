@@ -272,7 +272,20 @@ def test_key_and_value_weights_are_rejected_on_grouped_query_attention(gqa_model
 
 
 @pytest.mark.parametrize(
-    "activation_name", ["embed", "resid.pre", "resid.mid", "resid.post", "attn.out", "attn.pattern", "mlp.out"]
+    "activation_name",
+    [
+        "embed",
+        "resid.pre",
+        "resid.mid",
+        "resid.post",
+        "attn.in",
+        "attn.pattern",
+        "attn.out_pre_norm",
+        "attn.out",
+        "mlp.in",
+        "mlp.out_pre_norm",
+        "mlp.out",
+    ],
 )
 def test_an_activation_that_names_no_weight_vector_raises(model, activation_name):
     # ``embed`` is not inside a block, so it is the one activation located without a layer.

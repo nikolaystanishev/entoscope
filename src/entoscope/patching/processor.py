@@ -79,12 +79,12 @@ class TargetStrategy(abc.ABC):
 
         Args:
             index: The target element.
-            target_activation: The patched run's activation, written in place.
+            target_activation: The patched run's activation, written in place unless it is a sublayer's input.
             extracted_source: What the source strategy produced.
             batch: The batch row of the patched run.
 
         Returns:
-            The patched activation.
+            The patched activation, the one the hook hands on.
         """
         raise NotImplementedError
 
@@ -173,8 +173,7 @@ class ReplaceTargetStrategy(TargetStrategy):
         extracted_source: torch.Tensor,
         batch: int,
     ) -> torch.Tensor:
-        index.write_slices(target_activation, extracted_source, batch)
-        return target_activation
+        return index.write_slices(target_activation, extracted_source, batch)
 
 
 class PatchProcessor:
@@ -192,11 +191,11 @@ class PatchProcessor:
         Args:
             index: The row to patch.
             patching_input: The prepared input.
-            target_activation: The patched run's activation, written in place.
+            target_activation: The patched run's activation, written in place unless it is a sublayer's input.
             batch: The batch row of the patched run.
 
         Returns:
-            The patched activation.
+            The patched activation, the one the hook hands on.
         """
         return TargetStrategy.get(index.target.config.type).set(
             index.target,

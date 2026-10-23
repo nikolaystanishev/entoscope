@@ -7,6 +7,7 @@ from jaxtyping import Float, Int
 from transformer_lens import ActivationCache
 
 from entoscope.model import Model
+from entoscope.model.activation import check_transformer_activations
 from entoscope.model.index import Index
 from entoscope.operation.input import OperationInput
 from entoscope.patching.config import PatchingConfig, PatchingElementConfig
@@ -86,8 +87,9 @@ class PatchingInput(OperationInput):
             The input itself, prepared in place.
 
         Raises:
-            ValueError: If the elements' row counts cannot be paired, or a token a metric reads is a string
-                that holds no token or an id outside the vocabulary.
+            ValueError: If the elements' row counts cannot be paired, the model computes no transformer activation
+                an element names, or a token a metric reads is a string that holds no token or an id outside the
+                vocabulary.
         """
         if self._index is None:
             if self.source_prompt is not None:
@@ -111,6 +113,7 @@ class PatchingInput(OperationInput):
                     f"Patch elements of {lengths} rows cannot be applied together: patched run i applies row i of "
                     "every element, so they need as many rows, or one"
                 ) from None
+            check_transformer_activations(model, {name for idx in index for name in idx.activation_names()})
             self._index = index
         if self._token_ids is None:
             self._token_ids = self._resolve_tokens(model)
@@ -180,20 +183,17 @@ class PatchingInput(OperationInput):
         activation in the common case, so caching both usually costs nothing.
 
         Returns:
-            The hook names, sorted.
+            The transformer activation names, sorted.
         """
-        names: set[str] = set()
-        for idx in self.index:
-            names |= idx.source_activation_names() | idx.target_activation_names()
-        return sorted(names)
+        return sorted({name for idx in self.index for name in idx.activation_names()})
 
     def target_activation_names(self) -> list[str]:
         """Name every activation a patch writes.
 
         Returns:
-            The hook names, sorted.
+            The transformer activation names, sorted.
         """
-        return sorted(set().union(*(idx.target_activation_names() for idx in self.index))) if self.index else []
+        return sorted({name for idx in self.index for name in idx.target_activation_names()})
 
     def _check_available(self) -> None:
         """Resolve every element's strategies, metric and comparison, and reject those needing a missing source run.
@@ -383,7 +383,7 @@ class PatchingInput(OperationInput):
         Measured once per activation rather than once per row that noises it.
 
         Args:
-            name: The activation's hook name.
+            name: The transformer activation name.
 
         Returns:
             Three times the target run's own spread there, as in causal tracing (Meng et al. 2022).

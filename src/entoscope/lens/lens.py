@@ -94,7 +94,7 @@ class Lens(Operator):
             forward_passes=1 if reads_activations else 0,
             index=[lens_input.index.to_df()],
             prompts=[("prompt", lens_input.prompt, lens_input.tokens.shape[1])] if reads_activations else [],
-            activations=sorted(lens_input.index.source_activation_names()) if reads_activations else [],
+            activations=lens_input.activation_names(),
             save_dir=save_dir,
             outputs=self.collector_class(lens_input, self.model, save_dir).output_files(),
         )

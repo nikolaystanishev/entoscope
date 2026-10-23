@@ -112,6 +112,47 @@ def test_a_coordinate_run_reads_each_coordinates_own_activation(model, activatio
     assert_row_reads(model, result.iloc[1], unembed(model, cache[f"blocks.{last}.hook_mlp_out"][:, -1]))
 
 
+@pytest.mark.parametrize(
+    ("activation_name", "transformer_activation"),
+    [
+        ("attn.in", "attn.hook_in"),
+        ("attn.out_pre_norm", "attn.hook_out"),
+        ("mlp.in", "mlp.hook_in"),
+        ("mlp.out_pre_norm", "mlp.hook_out"),
+    ],
+)
+@pytest.mark.usefixtures("bridge_only")
+def test_a_sublayers_own_input_or_output_is_read_out_as_it_is(
+    model, activations, activation_name, transformer_activation
+):
+    # What a sublayer reads after its norm, or writes before its post-norm, is in the residual stream's basis.
+    _, cache = activations
+    row = single_row(model, coordinates_config({"activation": activation_name, "layer": -1, "position": -1}))
+
+    last = model.cfg.n_layers - 1
+    assert_row_reads(model, row, unembed(model, cache[f"blocks.{last}.{transformer_activation}"][:, -1]))
+
+
+@pytest.mark.parametrize(
+    ("activation_name", "pre_norm", "post_norm"),
+    [("attn.out_pre_norm", "attn.hook_out", "hook_attn_out"), ("mlp.out_pre_norm", "mlp.hook_out", "hook_mlp_out")],
+)
+def test_a_sublayers_output_before_its_post_norm_is_read_as_the_sublayer_writes_it(
+    post_norm_model, activation_name, pre_norm, post_norm
+):
+    model = post_norm_model
+    last = model.cfg.n_layers - 1
+    before, after = f"blocks.{last}.{pre_norm}", f"blocks.{last}.{post_norm}"
+    with torch.no_grad():
+        _, cache = model.run_with_cache(model.to_tokens(PROMPT), names_filter=[before, after])
+
+    row = single_row(model, coordinates_config({"activation": activation_name, "layer": -1, "position": -1}))
+
+    assert_row_reads(model, row, unembed(model, cache[before][:, -1]))
+    # The norm after the sublayer stands between the two, so 'attn.out' and 'mlp.out' read something else.
+    assert not torch.allclose(unembed(model, cache[before][:, -1]), unembed(model, cache[after][:, -1]))
+
+
 # --------------------------------------------------------------------------------------------------
 # MLP-hidden activations - projected through the layer's W_out, so a row reads what its neurons write
 # --------------------------------------------------------------------------------------------------
@@ -252,10 +293,12 @@ def test_values_are_projected_through_the_same_route_as_the_head_output(model, a
 
 
 @pytest.mark.parametrize(
-    ("activation_name", "hook", "weight_name"),
+    ("activation_name", "transformer_activation", "weight_name"),
     [("attn.q", "hook_q", "W_K"), ("attn.k", "hook_k", "W_Q")],
 )
-def test_queries_and_keys_are_read_against_the_embedding(model, activations, activation_name, hook, weight_name):
+def test_queries_and_keys_are_read_against_the_embedding(
+    model, activations, activation_name, transformer_activation, weight_name
+):
     # A query is scored against the keys of every vocabulary item, and a key against every query.
     _, cache = activations
     layer = model.cfg.n_layers - 1
@@ -263,7 +306,7 @@ def test_queries_and_keys_are_read_against_the_embedding(model, activations, act
         model, coordinates_config({"activation": activation_name, "layer": -1, "position": -1, "head": HEAD})
     )
 
-    activation = cache[f"blocks.{layer}.attn.{hook}"][:, -1, HEAD]
+    activation = cache[f"blocks.{layer}.attn.{transformer_activation}"][:, -1, HEAD]
     with torch.no_grad():
         weight = getattr(model.blocks[layer].attn, weight_name)[HEAD]
         expected = activation @ weight.T @ model.W_E.T / _attention_scale(model)

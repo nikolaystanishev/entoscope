@@ -39,23 +39,33 @@ POSITION_AXES: tuple[ModelAxis, ...] = (ModelAxis.POSITION, ModelAxis.DESTINATIO
 class ModelLayerLocation(StrEnum):
     """The activations a locator can name, valued as a config file spells them.
 
-    Each maps onto a ``transformer_lens`` hook through ``TRANSFORMER_ACT_NAME``, and the comment beside a
+    Each maps onto a transformer activation name through ``TRANSFORMER_ACT_NAME``, and the comment beside a
     member is its tensor's axes. ``embed`` is not inside a block, so a locator reading it names no layer.
+    ``attn.in`` and ``mlp.in`` are what the sublayer itself reads, after the norm before it on a model that has
+    one, and ``attn.out`` and ``mlp.out`` what it adds to the residual stream, after the norm following it on a
+    model that norms a sublayer's output (Gemma 2 and 3 and OLMo 2, for instance). ``attn.out_pre_norm`` and
+    ``mlp.out_pre_norm`` are the sublayer's output before that norm, the same tensor as ``attn.out`` and
+    ``mlp.out`` on any other model. Those four are hooks of a ``TransformerBridge``'s sublayers, which a
+    ``HookedTransformer`` does not have.
     """
 
     EMBEDDING = "embed"  # [batch, position, neuron]
     RESIDUAL_PRE = "resid.pre"  # [batch, position, neuron]
     RESIDUAL_MID = "resid.mid"  # [batch, position, neuron]
     RESIDUAL_POST = "resid.post"  # [batch, position, neuron]
+    ATTENTION_IN = "attn.in"  # [batch, position, neuron]
     ATTENTION_Q = "attn.q"  # [batch, position, head, neuron]
     ATTENTION_K = "attn.k"  # [batch, position, head, neuron]
     ATTENTION_V = "attn.v"  # [batch, position, head, neuron]
     ATTENTION_PATTERN = "attn.pattern"  # [batch, head, dest_pos /query/, src_pos /key/]
     ATTENTION_Z = "attn.z"  # [batch, position, head, neuron]
+    ATTENTION_OUT_PRE_NORM = "attn.out_pre_norm"  # [batch, position, neuron]
     ATTENTION_OUT = "attn.out"  # [batch, position, neuron]
+    MLP_IN = "mlp.in"  # [batch, position, neuron]
     MLP_PRE = "mlp.pre"  # [batch, position, neuron]
     MLP_PRE_LINEAR = "mlp.pre_linear"  # [batch, position, neuron]
     MLP_POST = "mlp.post"  # [batch, position, neuron]
+    MLP_OUT_PRE_NORM = "mlp.out_pre_norm"  # [batch, position, neuron]
     MLP_OUT = "mlp.out"  # [batch, position, neuron]
 
 
@@ -83,15 +93,19 @@ MODEL_LOCATION_MAPPER: dict[ModelAxis, Callable] = {
             ModelLayerLocation.RESIDUAL_PRE: model.cfg.d_model,
             ModelLayerLocation.RESIDUAL_MID: model.cfg.d_model,
             ModelLayerLocation.RESIDUAL_POST: model.cfg.d_model,
+            ModelLayerLocation.ATTENTION_IN: model.cfg.d_model,
             ModelLayerLocation.ATTENTION_Q: model.cfg.d_head,
             ModelLayerLocation.ATTENTION_K: model.cfg.d_head,
             ModelLayerLocation.ATTENTION_V: model.cfg.d_head,
             ModelLayerLocation.ATTENTION_PATTERN: 0,
             ModelLayerLocation.ATTENTION_Z: model.cfg.d_head,
+            ModelLayerLocation.ATTENTION_OUT_PRE_NORM: model.cfg.d_model,
             ModelLayerLocation.ATTENTION_OUT: model.cfg.d_model,
+            ModelLayerLocation.MLP_IN: model.cfg.d_model,
             ModelLayerLocation.MLP_PRE: model.cfg.d_mlp,
             ModelLayerLocation.MLP_PRE_LINEAR: model.cfg.d_mlp,
             ModelLayerLocation.MLP_POST: model.cfg.d_mlp,
+            ModelLayerLocation.MLP_OUT_PRE_NORM: model.cfg.d_model,
             ModelLayerLocation.MLP_OUT: model.cfg.d_model,
         }[layer_location]
     ),
@@ -331,8 +345,8 @@ class Group(dict[ModelAxis, list[int] | str]):
 
     A mapping from axis to the values to merge: ``{head: [6, 9]}`` turns the rows of heads 6 and 9
     into a single row reading both heads, and ``"all"`` merges every value the axis has. The duplicate
-    rows a merge leaves are dropped. Merge heads, neurons or positions: every layer is a hook of its
-    own, so a row naming several layers names no activation a run can read.
+    rows a merge leaves are dropped. Merge heads, neurons or positions: every layer is a transformer
+    activation of its own, so a row naming several layers is refused when an operation resolves it.
     """
 
     def apply(self, index_df: pd.DataFrame, location_to_max_value: dict) -> pd.DataFrame:

@@ -114,8 +114,8 @@ in `self.method_config`.
   [`test_custom_patching_method.py`](https://github.com/nikolaystanishev/entoscope/blob/main/tests/patching/test_custom_patching_method.py)
   is a minimal worked example.
 - **Circuit discovery.** `build(prompt, tokens)` returns the prompt's `PromptCircuit`, and
-  `activation_names()` the hooks it caches, which a plan reports; left unset, a plan reports the full
-  activation cache. The result page
+  `activation_names()` the transformer activations it caches, which a plan reports; left unset, a plan
+  reports the full activation cache. The result page
   reads the node and edge attributes Information Flow Routes writes (see
   [The graph](../operations/circuit-discovery.md#the-graph)); a method writing other attributes runs
   with `collector_class=CircuitCollector`.

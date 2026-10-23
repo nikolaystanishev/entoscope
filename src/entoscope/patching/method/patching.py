@@ -96,7 +96,7 @@ class AbstractPatchingMethod(abc.ABC, Generic[PatchingMethodConfigT]):
 
         Args:
             patching_input: The input, its index resolved: ``rows()`` lists the patched runs and
-                ``target_activation_names()`` the hooks a patch writes.
+                ``target_activation_names()`` the transformer activations a patch writes.
             batches: The number of batches the patched runs fall into, for a batched method.
 
         Returns:

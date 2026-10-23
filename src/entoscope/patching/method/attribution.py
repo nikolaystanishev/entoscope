@@ -4,12 +4,13 @@ from dataclasses import dataclass
 import torch
 from tqdm import tqdm
 
+from entoscope.model.activation import writable
 from entoscope.patching.config import PatchingMethodConfig
 from entoscope.patching.input import PatchingInput
 from entoscope.patching.method.patching import AbstractPatchingMethod, PatchingMethodConfigT, RowResult
 from entoscope.patching.processor import SourceStrategy
 
-# Keyed by the metric's name, then by the hook's.
+# Keyed by the metric's name, then by the transformer activation's.
 Gradients = dict[str, dict[str, torch.Tensor]]
 
 
@@ -57,19 +58,19 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
         return [1.0]
 
     def _passes(self, names: list[str]) -> list[tuple[float, list[str]]]:
-        """Pair every interpolation point with the hooks each pass at it interpolates.
+        """Pair every interpolation point with the transformer activations each pass at it interpolates.
 
         At the clean point a hook leaves its activation as it is, so one pass reads the gradient at every
-        hook, each the total derivative through the layers above it. Anywhere else a hook is interpolated
+        activation, each the total derivative through the layers above it. Anywhere else an activation is interpolated
         on a pass of its own, as Marks et al. do: on a shared pass every later hook would scale the
         gradient reaching an earlier one by alpha and move that one off its own path, so a row's score
         would depend on what else the index holds.
 
         Args:
-            names: The hooks a patch writes.
+            names: The transformer activation names a patch writes.
 
         Returns:
-            One ``(alpha, hooks)`` per forward pass, every hook appearing once per alpha.
+            One ``(alpha, names)`` per forward pass, every name appearing once per alpha.
         """
         return [
             (alpha, group)
@@ -89,7 +90,7 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
 
         Returns:
             Each metric's gradient with respect to every patched activation, keyed by the metric's name and
-            the hook's.
+            the transformer activation's.
         """
         passes = self._passes(patching_input.target_activation_names())
         totals: Gradients = {metric: {} for metric in self.config.metric}
@@ -124,13 +125,15 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
 
         The tensor is left in the graph, since detaching it would cut the path back through the layers
         below and zero their gradients, and is handed to ``autograd.grad`` as a non-leaf input. One that
-        no parameter reaches, as on a frozen model, has no graph to cut and becomes a leaf instead.
+        no parameter reaches, as on a frozen model, has no graph to cut and becomes a leaf instead. At the
+        clean point the hook hands on the tensor ``writable`` picks, as a patch would write it, so a sublayer's
+        input is differentiated through that sublayer alone, as it is at every other point.
 
         Args:
-            name: The activation's hook name.
+            name: The transformer activation name.
             alpha: The interpolation point, 1.0 for the target activation.
             patching_input: The prepared input.
-            captured: Where the hook stores the activation it hands on, keyed by hook name.
+            captured: Where the hook stores the activation it hands on, keyed by transformer activation name.
 
         Returns:
             The hook function.
@@ -138,7 +141,7 @@ class AttributionPatchingMethod(AbstractPatchingMethod[PatchingMethodConfigT]):
 
         def interpolate(activation: torch.Tensor, hook) -> torch.Tensor:
             value = (
-                activation
+                writable(name, activation)
                 if alpha == 1.0
                 else alpha * activation + (1 - alpha) * patching_input.source_cache[name].to(activation)
             )
@@ -174,12 +177,12 @@ class IntegratedGradientsMethod(AttributionPatchingMethod[IntegratedGradientsCon
     Averages the gradient over ``interpolation_steps`` points on the straight path from the source
     activation to the target one instead of reading it once at the target. That recovers the
     effects a flat gradient at the clean point hides, at a forward and a backward pass per step for
-    each hook, still flat in the rows of the index.
+    each transformer activation, still flat in the rows of the index.
 
-    Each hooked activation is interpolated on passes of its own, one per step but the clean one, which
-    a single pass serves for every hook. The cost so grows with the number of hooks the index patches,
-    such as the layers it sweeps, and never with its rows: every position, head or neuron of a hook is
-    scored from the same passes.
+    Each patched activation is interpolated on passes of its own, one per step but the clean one, which
+    a single pass serves for all of them. The cost so grows with the number of transformer activations the
+    index patches, such as the layers it sweeps, and never with its rows: every position, head or neuron of
+    one is scored from the same passes.
 
     The path runs between the two runs' activations, so it is the path the intervention actually
     traverses only when the source resamples from the source run. A value-based source (zero

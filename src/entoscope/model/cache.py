@@ -57,7 +57,7 @@ def _normalize_names_filter(names_filter: Any) -> str | list[str]:
     Callables are not supported and are handled by the caller.
 
     Args:
-        names_filter: ``None`` for every activation, a hook name, or an iterable of hook names.
+        names_filter: ``None`` for every activation, a transformer activation name, or an iterable of them.
 
     Returns:
         A sentinel string for ``None``, otherwise the names as a sorted list.

@@ -9,12 +9,18 @@ import torch
 import yaml
 from transformers import (
     AutoTokenizer,
+    Gemma2Config,
+    Gemma2ForCausalLM,
     GPT2Config,
     GPT2LMHeadModel,
+    GPTJConfig,
+    GPTJForCausalLM,
     GPTNeoXConfig,
     GPTNeoXForCausalLM,
     LlamaConfig,
     LlamaForCausalLM,
+    Olmo2Config,
+    Olmo2ForCausalLM,
 )
 
 from entoscope.circuit.method.factory import CircuitMethodFactory
@@ -189,6 +195,48 @@ parallel_model = _backend_fixture(
     ),
     lambda: build_tiny_model(parallel_attn_mlp=True),
 )
+
+
+@pytest.fixture(scope="session")
+def bridge_only(backend):
+    """Skips a test on a ``HookedTransformer``, which has no hooks on its sublayers' own inputs and outputs."""
+    if backend == "hooked":
+        pytest.skip("a HookedTransformer has no hooks on its sublayers' own inputs and outputs")
+
+
+# The architectures below matter only for those hooks, so they are built as bridges alone.
+@pytest.fixture(scope="session")
+def post_norm_model(backend, bridge_only):
+    """A Gemma 2, which norms each sublayer's output before adding it to the residual stream."""
+    hf_model = _tiny_hf(Gemma2ForCausalLM, Gemma2Config, head_dim=TINY["d_head"], num_key_value_heads=TINY["n_heads"])
+    return build_tiny_bridge(hf_model, compatible=backend == "compat")
+
+
+@pytest.fixture(scope="session")
+def shared_norm_model(backend, bridge_only):
+    """A GPT-J, a parallel block whose attention and MLP both read the output of its one norm."""
+    torch.manual_seed(0)
+    hf_model = GPTJForCausalLM(
+        GPTJConfig(
+            n_layer=TINY["n_layers"],
+            n_embd=TINY["d_model"],
+            n_head=TINY["n_heads"],
+            n_inner=TINY["d_mlp"],
+            n_positions=TINY["n_ctx"],
+            vocab_size=TINY["d_vocab"],
+            rotary_dim=TINY["d_head"],
+        )
+    )
+    return build_tiny_bridge(hf_model, compatible=backend == "compat")
+
+
+@pytest.fixture(scope="session")
+def post_norm_only_model(backend, bridge_only):
+    """An OLMo 2, whose norms all follow their sublayer, so each sublayer reads the residual stream itself."""
+    hf_model = _tiny_hf(
+        Olmo2ForCausalLM, Olmo2Config, num_key_value_heads=TINY["n_heads"], architectures=["Olmo2ForCausalLM"]
+    )
+    return build_tiny_bridge(hf_model, compatible=backend == "compat")
 
 
 def forbid_model_runs(monkeypatch, model) -> None:

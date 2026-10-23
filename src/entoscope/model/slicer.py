@@ -47,10 +47,14 @@ class ActivationSlicer(abc.ABC):
                 | ModelLayerLocation.RESIDUAL_PRE
                 | ModelLayerLocation.RESIDUAL_MID
                 | ModelLayerLocation.RESIDUAL_POST
+                | ModelLayerLocation.ATTENTION_IN
+                | ModelLayerLocation.ATTENTION_OUT_PRE_NORM
                 | ModelLayerLocation.ATTENTION_OUT
+                | ModelLayerLocation.MLP_IN
                 | ModelLayerLocation.MLP_PRE
                 | ModelLayerLocation.MLP_PRE_LINEAR
                 | ModelLayerLocation.MLP_POST
+                | ModelLayerLocation.MLP_OUT_PRE_NORM
                 | ModelLayerLocation.MLP_OUT
             ):
                 return LinearActivationSlicer
@@ -68,7 +72,7 @@ class ActivationSlicer(abc.ABC):
 
 
 class LinearActivationSlicer(ActivationSlicer):
-    """Slices a ``[batch, pos, neuron]`` activation, such as the residual stream or an MLP's."""
+    """Slices a ``[batch, pos, neuron]`` activation, such as the residual stream, a sublayer's input or an MLP's."""
 
     AXES = ("batch", ModelAxis.POSITION, ModelAxis.NEURON)
 

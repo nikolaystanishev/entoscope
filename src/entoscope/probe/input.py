@@ -7,6 +7,7 @@ import torch
 from jaxtyping import Float, Int
 
 from entoscope.model import Model
+from entoscope.model.activation import check_transformer_activations
 from entoscope.model.config import POSITION_AXES, ModelLocatorConfig
 from entoscope.model.index import Index
 from entoscope.operation.input import OperationInput
@@ -55,8 +56,9 @@ class ProbeInput(OperationInput):
             The input itself, prepared in place.
 
         Raises:
-            ValueError: If either set of prompts is empty, an explicit position is out of range for the
-                shortest prompt, or a location's feature size varies across prompts.
+            ValueError: If either set of prompts is empty, the model computes no transformer activation the locator
+                names, an explicit position is out of range for the shortest prompt, or a location's feature size
+                varies across prompts.
         """
         if self._index is None:
             if not self.positive_prompts or not self.negative_prompts:
@@ -68,7 +70,9 @@ class ProbeInput(OperationInput):
             n_positions = next(iter(lengths)) if len(lengths) == 1 else None
             source = self.config.source.parse(model, n_positions)
             self._validate_positions(source.df, min(lengths))
-            self._index = Index[ModelLocatorConfig](self.config.source, source)
+            index = Index[ModelLocatorConfig](self.config.source, source)
+            check_transformer_activations(model, index.activation_names())
+            self._index = index
 
         if not index_only and self._features is None:
             self._features = self._collect_features(model, self.token_tensors, self.index)
@@ -81,6 +85,14 @@ class ProbeInput(OperationInput):
 
         return self
 
+    def activation_names(self) -> list[str]:
+        """Name the transformer activations the probes read, which a run caches and a plan reports.
+
+        Returns:
+            The transformer activation names, sorted.
+        """
+        return self.index.activation_names()
+
     def _collect_features(
         self,
         model: Model,
@@ -88,9 +100,10 @@ class ProbeInput(OperationInput):
         index: Index[ModelLocatorConfig],
     ) -> dict[int, Float[torch.Tensor, "examples features"]]:
         vectors: dict[int, list[torch.Tensor]] = defaultdict(list)
+        names = self.activation_names()
         for tokens in token_tensors:
             with torch.no_grad():
-                _, cache = model.run_with_cache(tokens, names_filter=sorted(index.source_activation_names()))
+                _, cache = model.run_with_cache(tokens, names_filter=names)
 
             for single_index in index:
                 activation = single_index.source.read_slices(cache[single_index.source.transformer_activation()])
