@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+import plotly.graph_objects as go
 import pytest
 import torch
 import yaml
@@ -299,6 +300,12 @@ class RenderedFigure:
     traces: list[dict]
     layout: dict
 
+    @classmethod
+    def of(cls, plot: go.Figure) -> "RenderedFigure":
+        """A plot a collector hands back, read as the JSON a page embeds."""
+        drawn = json.loads(plot.to_json())
+        return cls(drawn["data"], drawn["layout"])
+
     @property
     def trace(self) -> dict:
         assert len(self.traces) == 1
@@ -346,6 +353,11 @@ def rendered_figures(save_dir, name: str = "result.html") -> list[RenderedFigure
 def rendered_figure(save_dir, name: str = "result.html") -> RenderedFigure:
     """The first plot on the page - what a run drawing a single one wrote."""
     return rendered_figures(save_dir, name)[0]
+
+
+def returned_figures(figures: dict) -> dict:
+    """The plots a collector hands back, each read as ``RenderedFigure.of`` reads it, under the same keys."""
+    return {panel: RenderedFigure.of(plot) for panel, plot in figures.items()}
 
 
 @pytest.fixture

@@ -37,6 +37,7 @@ from ..conftest import (
     record_runs,
     rendered_figure,
     rendered_figures,
+    returned_figures,
 )
 
 SOURCE_PROMPT = "The capital of France is"
@@ -2840,9 +2841,10 @@ def test_every_column_the_config_names_is_drawn_as_its_own_plot(model: Model, tm
         }
     )
 
-    Patcher(model).apply(
+    collector = Patcher(model).apply(
         PatchingInput(config, SOURCE_PROMPT, TARGET_PROMPT, tokens={"correct": " Madrid", "distractor": " Paris"}),
         save_dir=str(save_dir),
+        return_collector=True,
         verbose=False,
     )
     figures = rendered_figures(save_dir)
@@ -2854,6 +2856,9 @@ def test_every_column_the_config_names_is_drawn_as_its_own_plot(model: Model, tm
         assert figure.trace["colorbar"]["title"]["text"] == column
         assert figure.title.startswith(f"Patching - exact · {column} (config: sweep)")
         assert [value for row in figure.trace["z"] for value in row] == pytest.approx(result[column].tolist())
+    # The collector hands back the same plots, keyed by the names the config gives its metrics.
+    assert collector is not None
+    assert returned_figures(collector.figures) == dict(zip(config.metric, figures, strict=True))
 
 
 def test_each_plot_is_centred_on_its_own_comparisons_ineffective_value(model: Model, tmp_path: Path) -> None:

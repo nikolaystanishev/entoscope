@@ -192,8 +192,8 @@ a distribution the model ever produces.
 
 `result.html` holds one grid per rank. A cell's colour is that rank's probability on a fixed 0 to 1
 scale, the cell is labelled with the rank's token (up to 600 cells a grid), and the hover lists the
-row's whole top-k. See [Running and reading results](../concepts/running.md) for the files and the
-grid's layout.
+row's whole top-k. The collector's `figures` hold the same grids, keyed by rank. See
+[Running and reading results](../concepts/running.md) for the files and the grid's layout.
 
 ## References
 

@@ -161,5 +161,6 @@ register when their operation's package is imported, so they are always known.
 per index row), implements `collect` and `_indices`, and declares the files it writes in
 `output_files` so that `plan` can report them. To draw a page as well, a collector extends
 `VisualizationCollector` and names a `GridFigure` subclass, which says what a panel plots: its
-`value_column`, its `hover` text, its title, and optionally its colour range. Both live in
+`value_column`, its `hover` text, its title, and optionally its colour range. The collector's `figures`
+then hand those plots back, keyed by the figure's panels. Both live in
 `entoscope.operation`; see the [API reference](../reference/operation.md).

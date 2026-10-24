@@ -101,7 +101,9 @@ print(routes.number_of_edges() == first.routes.number_of_edges())  # True
 The page holds two plots: the routes to the prediction, then the full graph. Token positions run
 across and layers up, with the inputs at the bottom. Attention edges are coloured by head and sized by
 weight; residual edges are dotted and MLP edges orange. Hovering an edge's marker gives its endpoints
-and weight, and for an attention edge its layer and head.
+and weight, and for an attention edge its layer and head. The collector's `figures` hold every page's
+plots, one dict per prompt keyed `routes` and `graph`, so `collector.figures[0]["routes"]` is the first
+prompt's routes.
 
 ## A method of your own
 

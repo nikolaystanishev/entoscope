@@ -223,13 +223,13 @@ class Figure(abc.ABC, Generic[PanelT]):
         """
         raise NotImplementedError
 
-    def figures(self) -> list[go.Figure]:
+    def figures(self) -> dict[PanelT, go.Figure]:
         """Draw every panel.
 
         Returns:
-            One figure per panel, in page order.
+            Each panel's plot, keyed by the panel, in page order.
         """
-        return [self.figure(panel) for panel in self.panels()]
+        return {panel: self.figure(panel) for panel in self.panels()}
 
     def render(self, path: str) -> None:
         """Write the page.
@@ -237,7 +237,7 @@ class Figure(abc.ABC, Generic[PanelT]):
         Args:
             path: The HTML file to write.
         """
-        write_html(path, self.title, *self.figures())
+        write_html(path, self.title, *self.figures().values())
 
 
 @dataclass(frozen=True)
@@ -551,15 +551,15 @@ class GridFigure(Figure[PanelT], Generic[InputT, PanelT]):
         """
         return {}
 
-    def figures(self) -> list[go.Figure]:
-        """Draw every panel, or a single empty plot when the index has no rows.
+    def figures(self) -> dict[PanelT, go.Figure]:
+        """Draw every panel, or only the first, saying so, when the index has no rows.
 
         Returns:
-            One figure per panel, in page order.
+            Each panel's plot, keyed by the panel, in page order.
         """
         panels = self.panels()
         if self.result.empty:
-            return [self.figure(panels[0])] if panels else []
+            return {panels[0]: self.figure(panels[0])} if panels else {}
         return super().figures()
 
     @property

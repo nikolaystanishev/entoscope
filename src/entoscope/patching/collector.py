@@ -41,4 +41,7 @@ class PatchingCollector(FrameCollector[PatchingInput]):
 
 
 class PatchingVisualizationCollector(VisualizationCollector[PatchingInput, PatchingFigure], PatchingCollector):
-    """A ``PatchingCollector`` that also draws its result as an interactive Plotly ``result.html``."""
+    """A ``PatchingCollector`` that also draws its result as an interactive Plotly ``result.html``.
+
+    Its ``figures`` are keyed by the metric names the config gives.
+    """

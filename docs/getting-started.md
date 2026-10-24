@@ -108,12 +108,17 @@ awk -F, 'NR == 1 || $2 == 5' runs/first_lens/result.csv
 ```
 
 To keep the results in memory instead, pass `return_collector=True`. The collector's `result` is the
-frame `result.csv` holds, and `save_dir` can be left out to write nothing at all:
+frame `result.csv` holds, its `figures` are the plots `result.html` holds, keyed by top-k rank, and
+`save_dir` can be left out to write nothing at all:
 
 ```python
 collector = Lens(model).apply(lens_input, return_collector=True, verbose=False)
 print(collector.result.shape)
+print(list(collector.figures))  # [0, 1, 2]
 ```
+
+Each is a plotly `Figure`, so in a notebook `collector.figures[0].show()` draws the top-1 grid
+inline.
 
 ## Plan before you run
 
