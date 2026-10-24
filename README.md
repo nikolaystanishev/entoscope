@@ -12,6 +12,10 @@ activation of the model, at the layers, heads, neurons and positions you choose,
 as a table and an interactive page. It is built on
 [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens).
 
+> [!NOTE]
+> entoscope is under active development. Feedback and feature requests are welcome: open an
+> [issue](https://github.com/nikolaystanishev/entoscope/issues).
+
 ## Operations
 
 entoscope supports four operations for now, each computed by one or more methods:

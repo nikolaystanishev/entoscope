@@ -12,7 +12,7 @@ from entoscope.circuit.method.circuit import AbstractCircuitMethod, PromptCircui
 from entoscope.circuit.method.factory import CircuitMethodFactory
 from entoscope.model.token import str_token_labels
 
-from ..conftest import rendered_figures
+from ..conftest import rendered_figures, returned_figures
 
 PROMPTS = ["The capital of France is", "The Eiffel Tower is in"]
 
@@ -53,6 +53,8 @@ def test_a_registered_method_discovers_and_draws_a_circuit_per_prompt(
     )
 
     n_layers = small_model.cfg.n_layers
+    figures = collector.figures
+    assert len(figures) == len(PROMPTS)
     for i, prompt in enumerate(PROMPTS):
         circuit = collector.result[i]
         assert circuit.graph.number_of_edges() == small_model.to_tokens(prompt).shape[1] * n_layers
@@ -62,6 +64,7 @@ def test_a_registered_method_discovers_and_draws_a_circuit_per_prompt(
         routes, graph = rendered_figures(save_dir, f"circuit_{i}.html")
         assert routes.title.startswith(f'Routes to the prediction · residual_chain · "{prompt}"')
         assert graph.title.startswith(f'Full contribution graph · residual_chain · "{prompt}"')
+        assert returned_figures(figures[i]) == {"routes": routes, "graph": graph}
         page = (save_dir / f"circuit_{i}.html").read_text(encoding="utf-8")
         assert f"<title>Circuit · residual_chain · {prompt} (config: chain)</title>" in page
 

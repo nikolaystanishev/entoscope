@@ -25,6 +25,7 @@ _KIND_COLOR = {
     "mlp": "#f59e0b",
     "after_ffn": "#111827",
 }
+_HEADINGS = {"routes": "Routes to the prediction", "graph": "Full contribution graph"}
 _ATTENTION_LINE = "rgba(120,120,120,0.35)"
 _RESIDUAL_LINE = "rgba(160,160,160,0.30)"
 _MLP_LINE = "rgba(245,158,11,0.45)"
@@ -64,10 +65,10 @@ def _line_trace(segments: list[tuple[float, float]], color: str, name: str, dash
     )
 
 
-class CircuitFigure(Figure[tuple[nx.MultiDiGraph, str]]):
+class CircuitFigure(Figure[str]):
     """The page of one prompt's circuit: the routes to the prediction, then the full contribution graph.
 
-    Each panel is a graph and its plot's title.
+    Each panel is named by the ``PromptCircuit`` attribute it draws, ``routes`` then ``graph``.
 
     Args:
         circuit: The prompt's circuit.
@@ -84,15 +85,13 @@ class CircuitFigure(Figure[tuple[nx.MultiDiGraph, str]]):
     def title(self) -> str:
         return titled(f"Circuit · {self.config.method.type} · {self.circuit.prompt}", self.config)
 
-    def panels(self) -> list[tuple[nx.MultiDiGraph, str]]:
-        method, prompt = escape(self.config.method.type), escape(self.circuit.prompt)
-        return [
-            (self.circuit.routes, titled(f'Routes to the prediction · {method} · "{prompt}"', self.config)),
-            (self.circuit.graph, titled(f'Full contribution graph · {method} · "{prompt}"', self.config)),
-        ]
+    def panels(self) -> list[str]:
+        return list(_HEADINGS)
 
-    def figure(self, panel: tuple[nx.MultiDiGraph, str]) -> go.Figure:
-        graph, title = panel
+    def figure(self, panel: str) -> go.Figure:
+        graph: nx.MultiDiGraph = getattr(self.circuit, panel)
+        method, prompt = escape(self.config.method.type), escape(self.circuit.prompt)
+        title = titled(f'{_HEADINGS[panel]} · {method} · "{prompt}"', self.config)
         str_tokens, n_layers = self.circuit.str_tokens, self.n_layers
         fig = go.Figure()
 

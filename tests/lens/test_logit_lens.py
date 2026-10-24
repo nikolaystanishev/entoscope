@@ -20,7 +20,14 @@ from entoscope.model.config import Filter, ModelAxis, ModelLayerLocation, ModelL
 from entoscope.operation.config import ConfigFactory
 from entoscope.operation.visualization import format_value
 
-from ..conftest import RenderedFigure, TransformerBridge, forbid_model_runs, rendered_figure, rendered_figures
+from ..conftest import (
+    RenderedFigure,
+    TransformerBridge,
+    forbid_model_runs,
+    rendered_figure,
+    rendered_figures,
+    returned_figures,
+)
 from .conftest import (
     HEAD,
     NEURON,
@@ -663,6 +670,27 @@ def test_every_rank_of_the_top_k_gets_its_own_plot(model, tmp_path):
         # Each plot reads its own rank's probability, and prints that rank's token in the cell.
         assert figure.trace["z"][0][0] == pytest.approx(expected[f"probability_{rank}"].iloc[0])
         assert figure.trace["text"][0][0] == format_value(expected[f"str_token_{rank}"].iloc[0])
+
+
+def test_the_collector_hands_back_the_plots_its_page_holds_by_rank(model, tmp_path):
+    save_dir = tmp_path / "top_k_plots"
+
+    collector = run_lens(model, declarative_config(**LAYER_POSITION_GRID, top_k=3), save_dir=save_dir)
+
+    assert returned_figures(collector.figures) == dict(enumerate(rendered_figures(save_dir)))
+
+
+def test_a_run_that_writes_nothing_still_draws_its_plots(model):
+    # In a notebook a run is looked at rather than saved, so drawing cannot wait for a page to be written.
+    collector = run_lens(model, declarative_config(**LAYER_POSITION_GRID, top_k=2))
+
+    figures = returned_figures(collector.figures)
+
+    assert list(figures) == [0, 1]
+    for rank, figure in figures.items():
+        assert figure.title.startswith(f"Lens - logit_lens · top-{rank + 1}")
+        z = [value for row in figure.trace["z"] for value in row]
+        assert z == pytest.approx(collector.result[f"probability_{rank}"].tolist())
 
 
 def test_a_top_1_run_is_drawn_as_a_single_plot(model, tmp_path):

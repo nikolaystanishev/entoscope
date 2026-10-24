@@ -12,7 +12,7 @@ from entoscope.lens.lens import Lens
 from entoscope.lens.method.parameter_lens import ParameterLensConfig, ProjectionSpace
 from entoscope.model.config import Filter, ModelAxis, ModelLayerLocation, ModelLocatorConfig
 
-from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures
+from ..conftest import RenderedFigure, forbid_model_runs, rendered_figure, rendered_figures, returned_figures
 from .conftest import (
     HEAD,
     LAYER,
@@ -441,8 +441,9 @@ def test_an_empty_index_still_writes_a_page(model, tmp_path):
     )
     save_dir = tmp_path / "empty"
 
-    _draw(model, config, save_dir)
+    collector = run_lens(model, config, save_dir=save_dir)
 
     assert len(pd.read_csv(save_dir / "result.csv")) == 0
     assert "No rows in the index" in (save_dir / "result.html").read_text(encoding="utf-8")
     assert len(rendered_figures(save_dir)) == 1
+    assert returned_figures(collector.figures) == {0: rendered_figure(save_dir)}

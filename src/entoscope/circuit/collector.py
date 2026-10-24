@@ -1,5 +1,7 @@
 import os
 
+import plotly.graph_objects as go
+
 from entoscope.circuit.input import CircuitInput
 from entoscope.circuit.method.circuit import PromptCircuit
 from entoscope.circuit.visualization import CircuitFigure
@@ -74,12 +76,22 @@ class CircuitVisualizationCollector(CircuitCollector, FigureMixin[CircuitFigure]
     figure, and so visualization is opt-in by collector choice rather than a config flag.
     """
 
+    @property
+    def figures(self) -> list[dict[str, go.Figure]]:
+        """The plots each prompt's ``circuit_{i}.html`` holds, drawn from what the run collected so far.
+
+        One dict per prompt, in prompt order, keyed ``routes`` then ``graph``. They are drawn afresh on
+        every read.
+        """
+        return [plots.figures() for plots in self._plots()]
+
+    def _plots(self) -> list[CircuitFigure]:
+        return [self.figure_class(circuit, self.model, self.operation_input.config) for circuit in self.result]
+
     def _save_result(self, save_dir: str) -> None:
         super()._save_result(save_dir)
-        for i, circuit in enumerate(self.result):
-            self.figure_class(circuit, self.model, self.operation_input.config).render(
-                os.path.join(save_dir, f"circuit_{i}.html")
-            )
+        for i, plots in enumerate(self._plots()):
+            plots.render(os.path.join(save_dir, f"circuit_{i}.html"))
 
     def output_files(self) -> list[str]:
         pages = [f"circuit_{i}.html" for i in range(len(self.operation_input.prompts))]

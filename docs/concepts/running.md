@@ -11,7 +11,10 @@ Every operator has the same two calls:
 
 - `save_dir` is where the files go; it is created if missing. Left as `None`, the run writes nothing.
 - `return_collector=True` returns the collector. Its `result` holds what the run collected: a
-  DataFrame for the lens, patching and probing, a list of `PromptCircuit` for circuit discovery.
+  DataFrame for the lens, patching and probing, a list of `PromptCircuit` for circuit discovery. A
+  collector that draws a [result page](#result-pages) also hands back its `figures`, the page's plotly
+  figures keyed by panel (a dict per prompt for circuit discovery), drawn whether or not `save_dir`
+  is set.
 - `verbose=False` hides the progress bar. Where the results were saved is logged either way (see
   [Logging](#logging)).
 

@@ -13,7 +13,7 @@ from entoscope.circuit.method.information_flow_routes import InformationFlowRout
 from entoscope.model import Model
 from entoscope.operation.config import ConfigFactory
 
-from ..conftest import forbid_model_runs, rendered_figures
+from ..conftest import forbid_model_runs, rendered_figures, returned_figures
 
 PROMPTS = ["The capital of France is", "The Eiffel Tower is in"]
 
@@ -64,6 +64,12 @@ def test_artifacts_saved_to_disk(model: Model, tmp_path: Path):
     routes, graph = rendered_figures(save_dir, "circuit_0.html")
     assert routes.layout["title"]["text"].startswith("Routes to the prediction · information_flow_routes")
     assert graph.layout["title"]["text"].startswith("Full contribution graph")
+
+    # The collector hands back every prompt's plots, each keyed by the graph it draws.
+    assert [returned_figures(figures) for figures in collector.figures] == [
+        dict(zip(("routes", "graph"), rendered_figures(save_dir, f"circuit_{i}.html"), strict=True))
+        for i in range(len(PROMPTS))
+    ]
 
     prompts = json.loads((save_dir / "prompts.json").read_text())
     assert [p["prompt"] for p in prompts] == PROMPTS

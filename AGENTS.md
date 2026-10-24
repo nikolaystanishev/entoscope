@@ -141,7 +141,9 @@ Passing `collector_class=LensCollector` / `PatchingCollector` / `CircuitCollecto
 each HTML collector lives beside the base one it extends, in `<op>/collector.py`. A `Figure` is a
 page of *panels* - `panels()` names them and `figure(panel)` draws one plot each, which is how a
 patching page gets a plot per metric column, a lens page one per top-k rank and a circuit page its
-routes and its full graph.
+routes and its full graph. A visualization collector hands what it draws back as `figures`, the
+`figures()` of the same `Figure` its `_save_result` renders, keyed by panel (a dict per prompt for
+circuits), so they need no `save_dir`.
 `GridFigure` (`operation/visualization.py`) derives the whole layout from the `Index`: position on x
 and layer on y when both vary, otherwise `AXIS_ORDER` with the last varying axis across; a
 one-dimensional index becomes a bar chart. That layout is shared by every panel, so a subclass

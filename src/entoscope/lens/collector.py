@@ -37,4 +37,7 @@ class LensCollector(FrameCollector[LensInput]):
 
 
 class LensVisualizationCollector(VisualizationCollector[LensInput, LensFigure], LensCollector):
-    """A ``LensCollector`` that also draws its result as an interactive Plotly ``result.html``."""
+    """A ``LensCollector`` that also draws its result as an interactive Plotly ``result.html``.
+
+    Its ``figures`` are keyed by top-k rank, from 0 (the best).
+    """

@@ -338,6 +338,8 @@ patch would score: the target run's own metric for `absolute`, zero otherwise. W
 model toward the source run. The subtitle names both prompts and what each predicts, then the plot's
 metric type and the tokens it reads, by name and as spelled, since a metric's name need not say. A
 cell's hover gives its value, its patched run's prediction and its full source and target coordinates.
+The collector's `figures` hold the same grids, keyed by metric name, such as
+`collector.figures["logit_diff"]`.
 
 ## Recipes
 
