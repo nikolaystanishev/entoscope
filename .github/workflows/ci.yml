@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   lint:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     steps:
       - uses: actions/checkout@v6
 
@@ -31,7 +31,7 @@ jobs:
         run: uv run ruff format --check .
 
   test:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
@@ -68,7 +68,7 @@ jobs:
           retention-days: 1
 
   lowest:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     env:
       UV_RESOLUTION: lowest-direct
     steps:
@@ -88,7 +88,7 @@ jobs:
         run: uv run pytest
 
   package:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     steps:
       - uses: actions/checkout@v6
 
@@ -123,7 +123,7 @@ jobs:
 
   coverage:
     needs: test
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     steps:
       - uses: actions/checkout@v6
 
@@ -157,7 +157,7 @@ jobs:
           path: htmlcov/
 
   docs:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     steps:
       - uses: actions/checkout@v6
 
