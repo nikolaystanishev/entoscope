@@ -63,6 +63,9 @@ dependencies = [
 
 [project.urls]
 Documentation = "https://nikolaystanishev.github.io/entoscope/"
+Source = "https://github.com/nikolaystanishev/entoscope"
+Issues = "https://github.com/nikolaystanishev/entoscope/issues"
+Changelog = "https://github.com/nikolaystanishev/entoscope/releases"
 
 [build-system]
 requires = ["uv_build>=0.13.0,<0.14"]
